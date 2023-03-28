@@ -3,23 +3,12 @@ import openai
 import aiosqlite
 import asyncio
 import json
+import os
 
 # Load the environment variables
-# Function to read API keys from a file
-def read_api_keys(filename):
-    keys = {}
-    with open(filename, 'r') as f:
-        for line in f:
-            key, value = line.strip().split('=')
-            keys[key] = value.strip()  # Strip any extra whitespace from the value
-    return keys
+DISCORD_TOKEN = os.environ['DISCORD_TOKEN']
+OPENAI_API_KEY = os.environ['OPENAI_API_KEY']
 
-# Read the API keys from the file
-api_keys = read_api_keys('keys.txt')
-
-# Load the environment variables
-DISCORD_TOKEN = api_keys['DISCORD_TOKEN']
-OPENAI_API_KEY = api_keys['OPENAI_API_KEY']
 intents = discord.Intents.default()
 intents.messages = True
 intents.guilds = True
