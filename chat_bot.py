@@ -60,7 +60,7 @@ async def get_message_history(channel, limit=3):
             break
         message_obj = {
             "role": "assistant" if message.author == client.user else "user",
-            "content": f"{message.author.display_name}: {message.content}"
+            "content": f"{message.author.mention}: {message.content}"
         }
         message_history.append(message_obj)
         i += 1
