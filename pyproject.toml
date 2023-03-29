@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "chatgpt-discord-bot"
+version = "0.1.0"
+description = ""
+authors = ["Replit user <<>>"]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+openai = "0.27.2"
+"discord.py" = "2.2.2"
+discord = "^2.2.2"
+
+[tool.poetry.dev-dependencies]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
