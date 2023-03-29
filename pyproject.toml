@@ -1,8 +1,12 @@
 [tool.poetry]
 name = "chatgpt-discord-bot"
 version = "0.1.0"
-description = ""
-authors = ["Replit user <<>>"]
+description = "A ChatGPT powered discord bot."
+authors = [
+"bturetzky <<>>",
+"jakkemerke <jakkemerke@riseup.net>",
+]
+
 
 [tool.poetry.dependencies]
 python = "^3.10"
@@ -10,7 +14,37 @@ openai = "0.27.2"
 "discord.py" = "2.2.2"
 discord = "^2.2.2"
 
+
 [tool.poetry.dev-dependencies]
+black = "^23.3.0"
+coverage = "^7.2.2"
+flake8 = "^6.0.0"
+mypy = "^1.1.1"
+isort = "^5.12.0"
+pyclean = "^2.7.0"
+
+
+[tool.coverage.report]
+exclude_lines = [
+"raise NotImplementedError",
+"pragma: no cover",
+"if __name__ == .__main__.:",
+]
+
+
+[tool.isort]
+profile = "black"
+skip_gitignore = true
+skip = [".venv"]
+
+
+[tool.mypy]
+python_version = "3.10"
+disable_error_code = ["var-annotated"]
+disallow_untyped_defs = false
+ignore_missing_imports = true
+strict_optional = true
+
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
