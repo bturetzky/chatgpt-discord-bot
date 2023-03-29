@@ -1,8 +1,6 @@
 import discord
 import openai
-import aiosqlite
 import asyncio
-import json
 import os
 
 # Load the environment variables
@@ -54,39 +52,6 @@ async def chatgpt_response(messages):
         print(f"Error while getting response from OpenAI API: {e}")
         return f"Sorry, there was an error processing your request. Please try again later."
 
-
-async def init_db():
-    db = await aiosqlite.connect("chatgpt_context.db")
-    await db.execute(
-        "CREATE TABLE IF NOT EXISTS context (channel_id TEXT PRIMARY KEY, context_json TEXT)"
-    )
-    await db.commit()
-    return db
-
-async def close_db(db):
-    await db.close()
-
-async def store_context(db, guild_id, messages):
-    limited_messages = messages[-4:]
-    limited_context_json = json.dumps(limited_messages)
-
-    async with db.execute(
-        "INSERT OR REPLACE INTO context (channel_id, context_json) VALUES (?, ?)",
-        (guild_id, limited_context_json),
-    ) as cursor:
-        await db.commit()
-
-async def get_stored_context(db, guild_id):
-    async with db.execute(
-        "SELECT context_json FROM context WHERE channel_id = ?", (guild_id,)
-    ) as cursor:
-        result = await cursor.fetchone()
-        if result:
-            messages = json.loads(result[0])
-            return messages
-        else:
-            return []
-
 async def get_message_history(channel, limit=3):
     message_history = []
     i = 0
@@ -109,7 +74,6 @@ async def get_message_history(channel, limit=3):
 @client.event
 async def on_ready():
     print(f'{client.user} has connected to Discord!')
-    client.db = await init_db()
 
 @client.event
 async def on_message(message):
@@ -120,9 +84,8 @@ async def on_message(message):
     if client.user.mentioned_in(message) and message.mention_everyone is False:
         print("Got a message")
         message_history = await get_message_history(message.channel, limit=21)
-        stored_context = await get_stored_context(client.db, str(message.guild.id))
-
-        messages = stored_context + message_history
+ 
+        messages = message_history
 
         try:
             response = await asyncio.wait_for(chatgpt_response(messages), timeout=10)
@@ -132,16 +95,10 @@ async def on_message(message):
 
         await message.channel.send(f"{response.replace('chatgpt:', '').strip()}")
 
-        # Update the stored context with the new message and the bot's response
-        messages.append({"role": "assistant", "content": f"{client.user.display_name}: {response}"})
-        await store_context(client.db, str(message.guild.id), messages)
-
 
 async def shutdown():
     print("Shutting down...")
     shutdown_event.set()
-    if hasattr(client, 'db'):
-        await close_db(client.db)
     await client.close()
 
 
