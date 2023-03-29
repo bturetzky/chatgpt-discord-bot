@@ -84,7 +84,8 @@ async def on_message(message):
   if message.author == client.user or shutdown_event.is_set():
     return
 
-  if client.user.mentioned_in(message) and message.mention_everyone is False:
+  if client.user.mentioned_in(
+      message) and message.mention_everyone is False or message.guild is None:
     print("Got a message")
     message_history = await get_message_history(message.channel, limit=21)
 
