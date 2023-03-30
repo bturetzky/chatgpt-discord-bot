@@ -30,6 +30,14 @@ python-versions = ">=3.7"
 frozenlist = ">=1.1.0"
 
 [[package]]
+name = "aiosqlite"
+version = "0.18.0"
+description = "asyncio bridge to the standard sqlite3 module"
+category = "main"
+optional = false
+python-versions = ">=3.7"
+
+[[package]]
 name = "async-timeout"
 version = "4.0.2"
 description = "Timeout context manager for asyncio programs"
@@ -385,11 +393,12 @@ multidict = ">=4.0"
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.10"
-content-hash = "409c7f9bdfffc82bf65e8ace4ce21a9a740fd209138f6b3d0777da6e48803722"
+content-hash = "2c5d84b03643a04b5416f0f97f23f23d890ca3a473475be488bc67aa95b00942"
 
 [metadata.files]
 aiohttp = []
 aiosignal = []
+aiosqlite = []
 async-timeout = []
 attrs = []
 black = []
