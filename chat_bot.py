@@ -1,8 +1,9 @@
-import discord
-import openai
 import asyncio
 import os
+
 import aiosqlite
+import discord
+import openai
 
 # Load the environment variables
 DISCORD_TOKEN = os.environ['DISCORD_TOKEN']
@@ -46,9 +47,9 @@ async def get_summary(db, guild_id):
 
 async def store_summary(db, guild_id, summary):
     async with db.execute(
-            "INSERT OR REPLACE INTO summaries (guild_id, summary) VALUES (?, ?)",
+        "INSERT OR REPLACE INTO summaries (guild_id, summary) VALUES (?, ?)",
         (guild_id, summary),
-    ) as cursor:
+    ) as _:
         await db.commit()
 
 
@@ -130,7 +131,7 @@ async def chatgpt_response(messages, guild_id):
         return response_content
     except Exception as e:
         print(f"Error while getting response from OpenAI API: {e}")
-        return f"Sorry, there was an error processing your request. Please try again later."
+        return "Sorry, there was an error processing your request. Please try again later."
 
 
 # Discord functions
