@@ -63,7 +63,7 @@ async def chatgpt_summary(messages):
     "role":
     "user",
     "content":
-    "Generate a one-line summary for each user ChatGPT has interacted.  Include info from any previous summary. Each line should start with the user's chat handle so we know which one it is.  Include any proper names or nicknames they may have, their interests, the topics they've discussed and any other relevant information the chatgpt bot may find useful.  Keep each summary fairly brief though. Only generate the summary, don't include any other text."
+    "Generate a one-line summary for each user ChatGPT has interacted.  Incorperate any info from previous summaries. Each line should start with the user's discord handle (the <@123...> thing) so we know which one it is.  Make sure to include any proper names or nicknames they use. Include their interests, the topics they've discussed and any other relevant information the chatgpt bot may find useful.  Keep each summary fairly brief though. Only generate the summary, don't include any other text."
   }
 
   messages.append(summary_prompt)
@@ -175,7 +175,10 @@ async def on_message(message):
       if guild_id != "DM":
         summary = await get_summary(client.db, guild_id)
         if summary:
-          summary_prompt = {"role": "user", "content": summary}
+          summary_prompt = {
+            "role": "user",
+            "content": f"Previous Summary:\n{summary}"
+          }
           messages.insert(0, summary_prompt)
 
       # Generate and store the summary
