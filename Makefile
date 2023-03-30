@@ -77,7 +77,7 @@ run-safety:
 
 
 .PHONY: dev
-dev: lint show-lacking-coverage
+dev: fix-all lint lint-types show-lacking-coverage
 
 
 .PHONY: test-coverage
