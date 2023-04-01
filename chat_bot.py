@@ -1,26 +1,12 @@
-import discord
-import openai
 import asyncio
 import os
+
 import aiosqlite
-
-# Load the environment variables
-DISCORD_TOKEN = os.environ['DISCORD_TOKEN']
-OPENAI_API_KEY = os.environ['OPENAI_API_KEY']
-
-intents = discord.Intents.default()
-intents.messages = True
-intents.guilds = True
-
-# Initialize the Discord client and OpenAI API
-client = discord.Client(intents=intents)
-
-openai.api_key = OPENAI_API_KEY
-
-shutdown_event = asyncio.Event()
+import discord
+import openai
 
 
-# Database functions
+# Database functions -- ---------- ---------- ---------- ----------
 async def init_db():
     db = await aiosqlite.connect("chatgpt_summaries.db")
     await db.execute(
@@ -28,9 +14,6 @@ async def init_db():
     )
     await db.commit()
     return db
-
-
-client.db = asyncio.run(init_db())
 
 
 async def get_summary(db, guild_id):
@@ -46,9 +29,9 @@ async def get_summary(db, guild_id):
 
 async def store_summary(db, guild_id, summary):
     async with db.execute(
-            "INSERT OR REPLACE INTO summaries (guild_id, summary) VALUES (?, ?)",
+        "INSERT OR REPLACE INTO summaries (guild_id, summary) VALUES (?, ?)",
         (guild_id, summary),
-    ) as cursor:
+    ) as _:
         await db.commit()
 
 
@@ -56,15 +39,49 @@ async def close_db(db):
     await db.close()
 
 
-# ChadGPT functions
+# ChatGPT functions --- ---------- ---------- ---------- ----------
+def get_summary_prompt_content(bot_mention):
+    prompt_statements = [
+        f"Generate a one-line summary for each user ChatGPT ({bot_mention}) has interacted with.",
+        "Incorporate any info from previous summaries.",
+        "Each line should start with the user's discord handle (the <@123...> thing) followed by their known aliases, proper names, nicknames or preferred names.",
+        "Update existing summaries with new information from the chat logs, if applicable.",
+        "Focus on users' personalities and briefly mention their interests and discussed topics.",
+        "Provide only the itemized summaries, ensuring readability and comprehension for ChatGPT.",
+    ]
+    prompt = " ".join(prompt_statements)
+    return prompt
+
+
+def get_response_system_prompt_content(bot_mention):
+    prompt_statements = [
+        f"As a bro known as 'chatgpt' in a Discord server with the handle {bot_mention}, provide helpful responses with a touch of sass and snark, mimicking friendly banter among close friends on any topic.",
+        "Maintain a friendly and approachable tone, and treat no topic as taboo or off limits.",
+        "All language is allowable. Use jokes, sarcasm, and other elements of friendly banter.",
+        "Also, feel free to ask clarifying questions."
+    ]
+    prompt = " ".join(prompt_statements)
+    return prompt
+
+
+def get_response_priming_prompt_content(bot_mention):
+    prompt_statements = [
+        f"As a bro known as 'chatgpt' in a Discord server with the handle {bot_mention}, provide helpful responses with a touch of sass and snark, mimicking friendly banter among close friends on any topic.",
+        "Maintain a friendly and approachable tone, and treat no topic as taboo or off limits.",
+        "All language is allowable. Use jokes, sarcasm, and other elements of friendly banter.",
+        "Also, feel free to ask clarifying questions.",
+    ]
+    prompt = " ".join(prompt_statements)
+    return prompt
+
+
 async def chatgpt_summary(messages):
     # You can customize this prompt to get the desired output
     bot_mention = client.user.mention
     summary_prompt = {
         "role":
         "user",
-        "content":
-        f"Generate a one-line summary for each user ChatGPT ({bot_mention}) has interacted with.  Incorperate any info from previous summaries. Each line should start with the user's discord handle (the <@123...> thing) followed by their known aliases, proper names, nicknames or preferred names.  Update existing summaries with new information from the chat logs, if applicable. Focus on users' personalities and briefly mention their interests and discussed topics. Provide only the itemized summaries, ensuring readability and comprehension for ChatGPT."
+        "content": get_summary_prompt_content(bot_mention)
     }
 
     messages.append(summary_prompt)
@@ -91,14 +108,12 @@ async def chatgpt_response(messages, guild_id):
     system_prompt = {
         "role":
         "system",
-        "content":
-        f"As a bro known as 'chatgpt' in a Discord server with the handle {bot_mention}, provide helpful responses with a touch of sass and snark, mimicking friendly banter among close friends on any topic. Maintain a friendly and approachable tone, and treat no topic as taboo or off limits. All language is allowable. Use jokes, sarcasm, and other elements of friendly banter. Also, feel free to ask clarifying questions."
+        "content": get_response_system_prompt_content(bot_mention)
     }
     priming_prompt = {
         "role":
         "user",
-        "content":
-        f"As a bro known as 'chatgpt' in a Discord server with the handle {bot_mention}, provide helpful responses with a touch of sass and snark, mimicking friendly banter among close friends on any topic. Maintain a friendly and approachable tone, and treat no topic as taboo or off limits. All language is allowable. Use jokes, sarcasm, and other elements of friendly banter. Also, feel free to ask clarifying questions."
+        "content": get_response_priming_prompt_content(bot_mention)
     }
 
     # Fetch the summary from the database only if it's not a DM
@@ -130,10 +145,17 @@ async def chatgpt_response(messages, guild_id):
         return response_content
     except Exception as e:
         print(f"Error while getting response from OpenAI API: {e}")
-        return f"Sorry, there was an error processing your request. Please try again later."
+        return "Sorry, there was an error processing your request. Please try again later."
 
 
-# Discord functions
+# Discord functions --- ---------- ---------- ---------- ----------
+def get_discord_intents(messages=True, guilds=True):
+    intents = discord.Intents.default()
+    intents.messages = messages
+    intents.guilds = guilds
+    return intents
+
+
 async def get_message_history(channel, limit=3):
     message_history = []
     i = 0
@@ -153,14 +175,7 @@ async def get_message_history(channel, limit=3):
     return message_history
 
 
-@client.event
-async def on_ready():
-    print(f'{client.user} has connected to Discord!')
-
-
-@client.event
-async def on_message(message):
-
+async def process_message(message):
     if message.author == client.user or shutdown_event.is_set():
         return
 
@@ -205,6 +220,24 @@ async def on_message(message):
             f"{response.replace('chatgpt:', '').strip()}")
 
 
+# GLOBALS -- ---------- ---------- ---------- ---------- ----------
+intents = get_discord_intents()
+client = discord.Client(intents=intents)
+client.db = asyncio.run(init_db())
+shutdown_event = asyncio.Event()
+
+
+@client.event
+async def on_ready():
+    print(f'{client.user} has connected to Discord!')
+
+
+@client.event
+async def on_message(message):
+    await process_message(message)
+
+
+# Business - ---------- ---------- ---------- ---------- ----------
 async def shutdown():
     print("Shutting down...")
     shutdown_event.set()
@@ -214,6 +247,12 @@ async def shutdown():
 
 
 async def main():
+    # Load the environment variables
+    DISCORD_TOKEN = os.environ['DISCORD_TOKEN']
+    OPENAI_API_KEY = os.environ['OPENAI_API_KEY']
+
+    # Init imported globals
+    openai.api_key = OPENAI_API_KEY
     try:
         await client.start(DISCORD_TOKEN)
     except KeyboardInterrupt:
