@@ -19,7 +19,8 @@ target: help
 
 define fix-python
 	@isort . || echo "isort returned nonzero"
-	@black --check . || echo "black returned nonzero"
+	@black --check . || echo "black check returned nonzero"
+	@black tests/ || echo "black returned nonzero"
 endef
 
 
