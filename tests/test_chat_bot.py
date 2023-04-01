@@ -143,3 +143,21 @@ class TestChatBot(TestCase):
         message = MagicMock()
         with patch("discord.Client.user.mentioned_in", return_value=True):
             asyncio.run(chat_bot.on_message(message))
+
+    def test_get_summary_prompt_content(self):
+        bot_mention = "foo"
+        result = chat_bot.get_summary_prompt_content(bot_mention)
+        self.assertTrue(result)
+        self.assertTrue(type(result) is str, type(result))
+
+    def test_get_response_system_prompt_content(self):
+        bot_mention = "foo"
+        result = chat_bot.get_response_system_prompt_content(bot_mention)
+        self.assertTrue(result)
+        self.assertTrue(type(result) is str, type(result))
+
+    def test_get_response_priming_prompt_content(self):
+        bot_mention = "foo"
+        result = chat_bot.get_response_priming_prompt_content(bot_mention)
+        self.assertTrue(result)
+        self.assertTrue(type(result) is str, type(result))
