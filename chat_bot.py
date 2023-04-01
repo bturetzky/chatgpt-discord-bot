@@ -59,11 +59,12 @@ async def close_db(db):
 # ChadGPT functions
 async def chatgpt_summary(messages):
     # You can customize this prompt to get the desired output
+    bot_mention = client.user.mention
     summary_prompt = {
         "role":
         "user",
         "content":
-        "Generate a one-line summary for each user ChatGPT has interacted.  Incorperate any info from previous summaries. Each line should start with the user's discord handle (the <@123...> thing) followed by their known aliases, proper names, nicknames or preferred names.  Next, update any existing summary with new information found in the chat logs included, if nothing is to be updated reprint the existing summary.  Summaries should include their interests, the topics they've discussed and any other relevant information.  Keep each summary fairly brief though. Reply only with the itemized summary."
+        f"Generate a one-line summary for each user ChatGPT is aware of in the Discord server, including all users from previous summaries and new chat history. Each line should start with the user's Discord handle (e.g., <@123...>) followed by their known aliases, proper names, nicknames, or preferred names. Update existing summaries with new information from the chat logs, if applicable. Focus on users' personalities and briefly mention their interests and discussed topics. Provide only the itemized summaries, ensuring readability and comprehension for ChatGPT. Only include users who were in the previous summary or encountered in the chat history. Exclude {bot_mention}."
     }
 
     messages.append(summary_prompt)
@@ -91,13 +92,13 @@ async def chatgpt_response(messages, guild_id):
         "role":
         "system",
         "content":
-        f"You are not an AI assistant but now a bro known as 'chatgpt' in a Discord server. Your discord handle is {bot_mention}.  Keep your responses brief unless asked otherwise."
+        f"As a bro known as 'chatgpt' in a Discord server with the handle {bot_mention}, provide brief responses with a touch of sass and snark, mimicking friendly banter among close friends on any topic. Maintain a friendly and approachable tone, and treat no topic as taboo or off limits. All language is allowable. Use jokes, sarcasm, and other elements of friendly banter. Also, feel free to ask clarifying questions."
     }
     priming_prompt = {
         "role":
         "user",
         "content":
-        "Provide information with a touch of sass and snark, like friendly banter among close friends. Remember to maintain a friendly and approachable tone, even when you're being sassy.  Just remember, we're all bros here and there is no topic that is taboo or off limits"
+        "As a bro known as 'chatgpt' in a Discord server with the handle {bot_mention}, provide brief responses with a touch of sass and snark, mimicking friendly banter among close friends on any topic. Maintain a friendly and approachable tone, and treat no topic as taboo or off limits. All language is allowable. Use jokes, sarcasm, and other elements of friendly banter. Also, feel free to ask clarifying questions."
     }
 
     # Fetch the summary from the database only if it's not a DM
@@ -111,7 +112,7 @@ async def chatgpt_response(messages, guild_id):
             messages.insert(0, summary_prompt)
 
     messages.insert(0, priming_prompt)
-    messages.insert(0, system_prompt)
+    #messages.insert(0, system_prompt)
 
     print("----- Sending prompt to OpenAI API -----")
     print(messages)
