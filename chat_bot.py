@@ -184,27 +184,11 @@ async def process_message(message):
     ) and message.mention_everyone is False or message.guild is None:
         print("Got a message")
         messages = await get_message_history(message.channel, limit=15)
+        guild_id = str(message.guild.id) if message.guild else "DM"
 
         try:
-            guild_id = str(message.guild.id) if message.guild else "DM"
             response = await asyncio.wait_for(chatgpt_response(
-                messages, guild_id),
-                                              timeout=10)
-
-            if guild_id != "DM":
-                summary = await get_summary(client.db, guild_id)
-                if summary:
-                    summary_prompt = {
-                        "role": "user",
-                        "content": f"Previous Summary:\n{summary}"
-                    }
-                    messages.insert(0, summary_prompt)
-
-            # Generate and store the summary
-            if guild_id != "DM":
-                messages_copy = messages.copy()
-                summary = await chatgpt_summary(messages_copy)
-                await store_summary(client.db, guild_id, summary)
+                messages, guild_id), timeout=10)
         except asyncio.TimeoutError:
             await message.channel.send(
                 f"{message.author.display_name} Sorry, the response is taking too long. Please try again later."
@@ -216,8 +200,28 @@ async def process_message(message):
                 f"{message.author.display_name} Sorry, there was an error processing your request. Please try again later."
             )
             return
-        await message.channel.send(
-            f"{response.replace('chatgpt:', '').strip()}")
+        try:
+            # Send the ACTUAL message...
+            await message.channel.send(f"{response.replace('chatgpt:', '').strip()}")
+        except Exception as e:
+            print(f"Error occurred while processing the message: {e}")
+            await message.channel.send(
+                f"{message.author.display_name} Sorry, there was an error processing your request. Please try again later."
+            )
+            return
+
+        # Generate and store the summary
+        if guild_id != "DM":
+            try:
+                summary = await chatgpt_summary(messages)
+            except Exception as e:
+                print(f"Error occurred while getting summary from chatGPT: {e}")
+                return
+            try:
+                await store_summary(client.db, guild_id, summary)
+            except Exception as e:
+                print(f"Error storing summary to database: {e}")
+                return
 
 
 # GLOBALS -- ---------- ---------- ---------- ---------- ----------
