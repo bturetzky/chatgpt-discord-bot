@@ -1,10 +1,10 @@
 import asyncio
 import os
-
+import re
 import aiosqlite
 import discord
 import openai
-
+from typing import List
 
 # Database functions -- ---------- ---------- ---------- ----------
 async def init_db():
@@ -175,6 +175,29 @@ async def get_message_history(channel, limit=3):
     return message_history
 
 
+def split_message(msg: str, max_len: int = 2000) -> List[str]:
+    if len(msg) <= max_len:
+        return [msg]
+
+    split_regex = r"\n{1,2}|(?<=```\n)"
+    parts = [m.group(0) for m in re.finditer(split_regex, msg)]
+
+    messages = []
+    current_msg = ""
+
+    for part in parts:
+        if len(current_msg) + len(part) > max_len:
+            messages.append(current_msg.strip())
+            current_msg = ""
+        
+        current_msg += part
+
+    if current_msg:
+        messages.append(current_msg.strip())
+
+    return messages
+
+
 async def process_message(message):
     if message.author == client.user or shutdown_event.is_set():
         return
@@ -202,7 +225,9 @@ async def process_message(message):
             return
         try:
             # Send the ACTUAL message...
-            await message.channel.send(f"{response.replace('chatgpt:', '').strip()}")
+            response_text = response.replace("chatgpt:", "").strip()
+            for message_part in split_message(response_text):
+                await message.channel.send(message_part)
         except Exception as e:
             print(f"Error occurred while processing the message: {e}")
             await message.channel.send(
