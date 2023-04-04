@@ -186,6 +186,9 @@ def split_message(msg: str, max_len: int = 2000) -> List[str]:
     current_msg = ""
 
     for part in parts:
+        if not part.strip():
+            continue
+
         if len(current_msg) + len(part) > max_len:
             messages.append(current_msg.strip())
             current_msg = ""
@@ -228,6 +231,7 @@ async def process_message(message):
             response_text = response.replace("chatgpt:", "").strip()
             for message_part in split_message(response_text):
                 await message.channel.send(message_part)
+                await asyncio.sleep(1)  # Add a 1-second delay between messages
         except Exception as e:
             print(f"Error occurred while processing the message: {e}")
             await message.channel.send(
