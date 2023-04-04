@@ -180,7 +180,7 @@ def split_message(msg: str, max_len: int = 2000) -> List[str]:
         return [msg]
 
     split_regex = r"\n{1,2}|(?<=```\n)"
-    parts = [m.group(0) for m in re.finditer(split_regex, msg)]
+    parts = re.split(split_regex, msg, flags=re.MULTILINE)
 
     messages = []
     current_msg = ""
@@ -226,10 +226,10 @@ async def process_message(message):
                 f"{message.author.display_name} Sorry, there was an error processing your request. Please try again later."
             )
             return
+        split_response = split_message(response.replace("chatgpt:", "").strip())
         try:
-            # Send the ACTUAL message...
-            response_text = response.replace("chatgpt:", "").strip()
-            for message_part in split_message(response_text):
+            # Send the ACTUAL message...            
+            for message_part in split_response:
                 await message.channel.send(message_part)
                 await asyncio.sleep(1)  # Add a 1-second delay between messages
         except Exception as e:
