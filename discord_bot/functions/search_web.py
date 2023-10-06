@@ -1,17 +1,30 @@
 from .base import BaseFunction
 from duckduckgo_search import AsyncDDGS
 
-DDGS_MAX_RESULTS = 3
+DDGS_DEFAULT_MAX_RESULTS = 1
 
 class SearchWeb(BaseFunction):
     name = "search_web"
-    description = ("Executes a web search on DuckDuckGo to retrieve general information, "
-                   "verify facts, or gather current data on a particular topic. Ideal for "
-                   "questions that demand real-time answers or a broad search.")
-    parameters = {"type": "object", "properties": {"query": {"type": "string"}}}
+    description = ("Performs a web search using DuckDuckGo to retrieve a list of relevant webpages. Use this function when you need a variety of sources or viewpoints, or when the query requires up-to-date information. Suitable for questions like 'What's trending?' or 'Give me multiple opinions on X.'")
+    parameters = {
+                    "type": "object", 
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The search query to execute. Be as specific as possible to get the most relevant results."
+                            },
+                            
+                        "max_results": {
+                            "type": "number",
+                            "description": "The maximum number of search results to return. Default is 1, but consider increasing for broader topics."
+                            }
+                        },
+                    "required": ["query"]
+                    }
 
     async def execute(self, args):
         query = args.get("query")
+        max_results = args.get("max_results", DDGS_DEFAULT_MAX_RESULTS)
         if not query:
             return "No search query provided."
 
@@ -19,7 +32,7 @@ class SearchWeb(BaseFunction):
         print(f"Searching the web for: {query}")
         try:
             async with AsyncDDGS() as ddgs:
-                results = [r async for r in ddgs.text(query, max_results=DDGS_MAX_RESULTS)]
+                results = [r async for r in ddgs.text(query, max_results=max_results)]
                 #print(f"Raw results: {results}")
         except Exception as e:
             print(f"Error occurred while searching the web: {e}")

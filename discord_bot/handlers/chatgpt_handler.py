@@ -10,12 +10,14 @@ class ChatGPTHandler:
         self.send_interim_message = send_interim_message_callback
         self.function_handler = FunctionHandler()
         
-    async def get_response(self, messages, context):
+    async def get_response(self, messages, channel, guild_id):
         # 1. Pass messages to OpenAI API
         # 2. If a function needs to be executed:
         #    a. Call self.send_interim_message if provided
         #    b. Call self.function_handler.process_functions()
         # 3. Return the response to DiscordHandler
+        # 4. Update the vector store with the response and context
+        # 5. Repeat from step 1
 
         system_prompt = {
             "role":
@@ -63,9 +65,13 @@ class ChatGPTHandler:
                     # Call the function handler to execute the function
                     function_response = await self.function_handler.execute_function(function_name, function_args)
 
+                    # If there is content send an interim message to the user
                     if response_content.get("content") is not None:
-                        self.send_interim_message(response_content["content"])  # Send the interim message to the user
+                        await self.send_interim_message(channel, response_content["content"])  # Send the interim message to the user
                         response_content["content"] = None  # Remove the content from the response
+                    if function_args.get("quick_update") is not None: 
+                        await self.send_interim_message(channel, function_args["quick_update"]) # Send the interim message to the user
+
                     # Send the info on the function call and function response to GPT
                     messages.append(response_content)  # extend conversation with assistant's reply
                     messages.append(

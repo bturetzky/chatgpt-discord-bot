@@ -44,7 +44,9 @@ class FunctionHandler:
             api_functions.append({
                 'name': func_name,
                 'description': instance.description,
-                'parameters': instance.parameters
+                'parameters': instance.get_parameters()
             })
         
+        print(f"API functions: {api_functions}")
+
         return api_functions

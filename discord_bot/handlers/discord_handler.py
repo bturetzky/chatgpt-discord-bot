@@ -21,11 +21,11 @@ class DiscordHandler:
         # This will start the Discord client and run until it's disconnected
         await self.client.start(self.token)
     
-    async def send_interim_message(self, original_message, interim_message):
+    async def send_interim_message(self, channel, interim_message):
         # Logic to send an interim message to Discord
         try:
             # Send the ACTUAL message...            
-            await original_message.channel.send(interim_message)
+            await channel.send(interim_message)
         except Exception as e:
             print(f"Error occurred while processing the message: {e}")
             # Don't send an error on a short message
@@ -49,8 +49,11 @@ class DiscordHandler:
             if message.author == self.client.user:
                 print("Suppressing embeds?")
                 await message.edit(suppress=True)  # Suppress the bot's message
+                # Why does this only work sometimes even if the bot has the right permissions?
             return
         
+        channel = message.channel
+
         # Hacky way to get the bot's mention
         if self.chatgpt_handler.bot_mention is None:
             self.chatgpt_handler.bot_mention = self.client.user.mention
@@ -60,7 +63,7 @@ class DiscordHandler:
             print(f"Got a message from {message.author.display_name}: {message.content}")
             # Tweak the limit here to get more or less context
             try:
-                messages = await self.get_message_history(message.channel, limit=7)
+                messages = await self.get_message_history(channel, limit=7)
             except Exception as e:
                 print(f"Error while getting message history: {e}")
             guild_id = str(message.guild.id) if message.guild else "DM"
@@ -68,7 +71,7 @@ class DiscordHandler:
             print(f"Got history for {guild_id}: {messages}")
 
             try:
-                response = await self.chatgpt_handler.get_response(messages, guild_id)
+                response = await self.chatgpt_handler.get_response(messages, channel, guild_id)
             except Exception as e:
                 print(f"Error occurred while processing the message: {e}")
                 await message.channel.send(
