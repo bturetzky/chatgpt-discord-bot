@@ -46,6 +46,9 @@ class DiscordHandler:
     async def process_message(self, message):
         # Logic to process the message, interact with ChatGPTHandler, etc.
         if message.author == self.client.user or self.shutdown_event.is_set():
+            if message.author == self.client.user:
+                print("Suppressing embeds?")
+                await message.edit(suppress=True)  # Suppress the bot's message
             return
         
         # Hacky way to get the bot's mention
@@ -57,7 +60,7 @@ class DiscordHandler:
             print(f"Got a message from {message.author.display_name}: {message.content}")
             # Tweak the limit here to get more or less context
             try:
-                messages = await self.get_message_history(message.channel, limit=3)
+                messages = await self.get_message_history(message.channel, limit=7)
             except Exception as e:
                 print(f"Error while getting message history: {e}")
             guild_id = str(message.guild.id) if message.guild else "DM"

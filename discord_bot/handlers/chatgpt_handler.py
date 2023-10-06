@@ -35,7 +35,7 @@ class ChatGPTHandler:
         #messages.insert(0, priming_prompt)
         messages.insert(0, system_prompt)
 
-        MAX_FUNCTION_CALLS = 3
+        MAX_FUNCTION_CALLS = 7  # Maximum number of function calls to make before giving up
 
         try:
             function_calls_count = 0
@@ -77,6 +77,7 @@ class ChatGPTHandler:
                     )  # extend conversation with function response
                     
                     # Go back to the start of the loop and ask the model again.
+                    await asyncio.sleep(1)  # Add a 1-second delay between messages
                     continue
                 else:
                     reply = response_content["content"]

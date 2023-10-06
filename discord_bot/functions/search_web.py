@@ -1,6 +1,8 @@
 from .base import BaseFunction
 from duckduckgo_search import AsyncDDGS
 
+DDGS_MAX_RESULTS = 3
+
 class SearchWeb(BaseFunction):
     name = "search_web"
     description = ("Executes a web search on DuckDuckGo to retrieve general information, "
@@ -17,7 +19,7 @@ class SearchWeb(BaseFunction):
         print(f"Searching the web for: {query}")
         try:
             async with AsyncDDGS() as ddgs:
-                results = [r async for r in ddgs.text(query, max_results=5)]
+                results = [r async for r in ddgs.text(query, max_results=DDGS_MAX_RESULTS)]
                 #print(f"Raw results: {results}")
         except Exception as e:
             print(f"Error occurred while searching the web: {e}")
@@ -27,6 +29,7 @@ class SearchWeb(BaseFunction):
         # For now, I'm just joining them with line breaks:
         # Extract titles and links and format
         formatted_results = [f"{result['title']} - {result['href']}" for result in results]
+
 
         # Join them together
         reply = "\n".join(formatted_results)
