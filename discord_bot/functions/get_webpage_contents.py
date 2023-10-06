@@ -28,6 +28,7 @@ class GetWebPageContents(BaseFunction):
                 tag.decompose()
             
             # Find the div with the most p tags inside it, assuming it's the main content
+            #TODO: do this better, it skips a lot of content sometimes
             main_content_div = max(soup.find_all('div', recursive=True), 
                                 key=lambda tag: len(tag.find_all('p', recursive=False)))
 
