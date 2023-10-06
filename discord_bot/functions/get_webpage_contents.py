@@ -13,6 +13,15 @@ class GetWebPageContents(BaseFunction):
         "required": ["url"]
     }
 
+    @staticmethod
+    def score_tag(tag):
+        score = 0
+        score += len(tag.find_all('p', recursive=False))
+        score += len(tag.find_all(['ul', 'ol'], recursive=False)) * 2  # Give more weight to lists
+        score += len(tag.find_all('li', recursive=False))
+        return score
+
+
     async def execute(self, args):
         url = args.get("url")
         if not url:
@@ -28,23 +37,17 @@ class GetWebPageContents(BaseFunction):
             for tag in soup.find_all(['script', 'style', 'footer']):
                 tag.decompose()
             
-            # Find the div with the most p tags inside it, assuming it's the main content
-            #TODO: do this better, it skips a lot of content sometimes
-            main_content_div = max(soup.find_all('div', recursive=True), 
-                                key=lambda tag: len(tag.find_all('p', recursive=False)))
+            # Find the tag with the highest score
+            main_content_tag = max(soup.find_all(['div', 'article'], recursive=True), key=self.score_tag)
 
-            text = main_content_div.get_text()
-
-            # Break into lines and remove leading and trailing whitespace
+            # Extract and clean up the text
+            text = main_content_tag.get_text()
             lines = (line.strip() for line in text.splitlines())
-            
-            # Break multi-headlines into a line each, and remove blank lines
             chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
             text = '\n'.join(chunk for chunk in chunks if chunk)
 
-            # Limit to a certain amount of text to not flood the chat
+            # Limit text length
             text = text[:4000] + "..." if len(text) > 4000 else text
-
             return text
         
         except requests.RequestException as e:
