@@ -4,7 +4,7 @@ from bs4 import BeautifulSoup
 
 class GetWebPageContents(BaseFunction):
     name = "get_webpage_contents"
-    description = "Fetches the full content of a specific webpage based on its URL. Use this function when you need detailed information from a single, reliable source. Ideal for extracting text, data, or specific sections from a webpage."
+    description = "Fetches the full content of a specific webpage based on its URL. Use this function to fetch detailed information from a specific webpage. Ideal for providing specific recommendations or in-depth answers. Use this especially when the query asks for specifics that a web search alone can't satisfy."
     parameters = {
         "type": "object",
         "properties": {
