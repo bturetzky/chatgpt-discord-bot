@@ -133,7 +133,7 @@ async def chatgpt_response(messages, guild_id):
     print(messages)
 
     try:
-        response = openai.ChatCompletion.create(model="gpt-3.5-turbo",
+        response = openai.ChatCompletion.create(model="gpt-4",
                                                 messages=messages)
         response_content = response.choices[0].message.content
 
