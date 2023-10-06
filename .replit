@@ -105,4 +105,6 @@ pattern = "**/*.py"
 start = "pylsp"
 
 [deployment]
-run = ["sh", "-c", "python3 chat_bot.py"]
+run = ["sh", "-c", "python3 run.py"]
+deploymentTarget = "gce"
+ignorePorts = true
