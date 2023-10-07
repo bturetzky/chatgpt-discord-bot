@@ -94,7 +94,7 @@ class DiscordHandler:
                 # Send the ACTUAL message...            
                 for message_part in split_response:
                     await message.channel.send(message_part)
-                    await asyncio.sleep(1)  # Add a 1-second delay between messages
+                    await asyncio.sleep(3)  # Add a 1-second delay between messages
             except Exception as e:
                 print(f"Error occurred while processing the message: {e}")
                 await message.channel.send(
