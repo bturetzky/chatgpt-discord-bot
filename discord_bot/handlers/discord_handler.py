@@ -6,8 +6,9 @@ class DiscordHandler:
     def __init__(self, discord_token, openai_key, pinecone_apikey):
         self.token = discord_token
         self.client = discord.Client(intents=self.get_discord_intents())
+        # Initialize the vector handler before chatgpt_handler
+        self.vector_handler = VectorHandler(openai_key, pinecone_apikey)
         self.chatgpt_handler = ChatGPTHandler(openai_key, self.send_interim_message)
-        self.vector_handler = VectorHandler(openai_key, pinecone_apikey) 
         self.shutdown_event = asyncio.Event()
         
         # Register Discord event callbacks
@@ -72,8 +73,8 @@ class DiscordHandler:
                 print(f"Error while getting message history: {e}")
             guild_id = str(message.guild.id) if message.guild else "DM"
 
-            print("Getting memories...")
-            memories = self.vector_handler.get_relevant_contexts(message.content, author_id)  # Get the relevant contexts from the vector store
+            print(f"Getting memories...")
+            memories = self.vector_handler.get_relevant_contexts(message.content)  # Get the relevant contexts from the vector store
             for memory in memories:
                 messages.insert(0, {
                     "role": "system",
@@ -94,7 +95,7 @@ class DiscordHandler:
                 # Send the ACTUAL message...            
                 for message_part in split_response:
                     await message.channel.send(message_part)
-                    await asyncio.sleep(3)  # Add a 1-second delay between messages
+                    await asyncio.sleep(3)  # Add a 3-second delay between messages
             except Exception as e:
                 print(f"Error occurred while processing the message: {e}")
                 await message.channel.send(
@@ -102,13 +103,14 @@ class DiscordHandler:
                 )
                 return
 
-            try:
-                summary = await self.chatgpt_handler.get_summary(messages)
-            except Exception as e:
-                print(f"Error occurred while summarizing the messages: {e}")
-                return
-            
-            self.vector_handler.store_additional_data(summary.content, author_id)  # Update the vector store with the summary
+            # Skipping this in lieu of memory function
+            #try:
+            #    summary = await self.chatgpt_handler.get_summary(messages)
+            #except Exception as e:
+            #    print(f"Error occurred while summarizing the messages: {e}")
+            #    return
+            #
+            #self.vector_handler.store_additional_data(summary.content, author_id)  # Update the vector store with the summary
             
     async def get_message_history(self, channel, limit=3):
         message_history = []

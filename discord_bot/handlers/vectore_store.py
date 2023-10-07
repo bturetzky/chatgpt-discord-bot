@@ -17,25 +17,23 @@ class VectorStore:
             pinecone.create_index(name=self.index_name, metric="cosine", dimension=DIMENSIONS)
         self.index = pinecone.Index(self.index_name)
 
-    def store_additional_data(self, vector, summary, namespace):
+    def store_additional_data(self, vector, summary):
         unique_id = str(uuid.uuid4())  # Generate a unique ID
-        #print(f"Storing additional data: {summary} with uuid {unique_id}")
+        #print(f"Storing additional data: {summary} with uuid {unique_id} in namespace {namespace}")
         self.index.upsert(vectors=[{
             'id': unique_id,
             'values': vector,
-            'metadata': {'summary': summary},
-            'namespace': namespace
+            'metadata': {'summary': summary}
         }])
 
-    def fetch_context(self, query_vector, namespace):
+    def fetch_context(self, query_vector):
         try:
             #print(f"index is...: {self.index}")
             results = self.index.query(
                 top_k=1,  # Number of closest vectors to retrieve
                 include_values=False,  # Whether to include the vectors themselves in the response
                 include_metadata=True,  # Whether to include any metadata stored alongside vectors
-                vector=query_vector,  # The query vector
-                namespace=namespace
+                vector=query_vector     # The query vector
             )
             #print(f"index query results: {results}")
             # Extract the metadata from the closest matches

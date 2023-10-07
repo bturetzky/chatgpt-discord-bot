@@ -1,7 +1,21 @@
 class BaseFunction:
     name = "base_function"
-    description = "Base function, not to be used directly."
-    parameters = {"type": "object", "properties": {}}
+    description = "Base function, not to be used directly.  A well crafted description is critical and informs the LLM about the purpose of the function."
+    parameters = {
+                    "type": "object", 
+                    "properties": {
+                        "param1": {
+                            "type": "string",
+                            "description": "A well crafted description informs the LLM about the purpose of the parameter."
+                            },
+                            
+                        "param2": {
+                            "type": "number",
+                            "description": "Some parameters can be optional, but should still have a well crafted description."
+                            }
+                        },
+                    "required": ["param1"]
+                    }
 
 
     async def execute(self, args):
@@ -14,7 +28,7 @@ class BaseFunction:
             "properties": {
                 "quick_update": {
                     "type": "string",
-                    "description": "A very brief message to send back to the user explaining your thought process and telling them what you're doing."
+                    "description": "A very brief message to send back to the user explaining your thought process and telling them what you're doing.  Include this every so often, but not when storing a memory."
                 }
             },
             "required": []

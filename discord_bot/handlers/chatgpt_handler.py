@@ -33,7 +33,7 @@ class ChatGPTHandler:
             while True:  # Start a loop to keep asking the model until we get a non-function reply
                 print("----- Sending prompt to OpenAI API -----")
                 # True debug spam
-                #print(messages)
+                print(messages)
 
                 if function_calls_count >= MAX_FUNCTION_CALLS:
                     force_final_response = {"function_call": None}
@@ -96,7 +96,7 @@ class ChatGPTHandler:
     async def get_summary(self, messages):
         messages.append({
             "role": "system",
-            "content": "Hey, you're now in 'Memory Mode.' Can you summarize the conversation you just had?"
+            "content": utilities.get_summary_prompt_content(self.bot_mention)
         })
         try:
             summary_response = openai.ChatCompletion.create(model="gpt-4",
