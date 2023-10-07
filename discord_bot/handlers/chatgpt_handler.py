@@ -44,6 +44,7 @@ class ChatGPTHandler:
                                                         functions=self.function_handler.api_functions,
                                                         **force_final_response)
                 response_content = response.choices[0].message
+                await asyncio.sleep(1)  # Add a 1-second delay between messages
 
                 print(f"response_content: {response_content}")
 
@@ -73,7 +74,7 @@ class ChatGPTHandler:
                     )  # extend conversation with function response
                     
                     # Go back to the start of the loop and ask the model again.
-                    await asyncio.sleep(1)  # Add a 1-second delay between messages
+                    
                     continue
                 else:
                     reply = response_content["content"]
@@ -100,7 +101,7 @@ class ChatGPTHandler:
         try:
             summary_response = openai.ChatCompletion.create(model="gpt-4",
                                                 messages=messages)
-
+            await asyncio.sleep(1)  # Add a 1-second delay between messages
         except OpenAIError as e:
             print(f"Error from OpenAI: {e}")
             return "Sorry, there was an error processing your request with OpenAI. Please try again later."
