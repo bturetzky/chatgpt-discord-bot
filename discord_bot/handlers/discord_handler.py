@@ -1,11 +1,13 @@
 import discord, asyncio
 from .chatgpt_handler import ChatGPTHandler
+from .vector_handler import VectorHandler
 
 class DiscordHandler:
-    def __init__(self, discord_token, openai_key):
+    def __init__(self, discord_token, openai_key, pinecone_apikey):
         self.token = discord_token
         self.client = discord.Client(intents=self.get_discord_intents())
         self.chatgpt_handler = ChatGPTHandler(openai_key, self.send_interim_message)
+        self.vector_handler = VectorHandler(openai_key, pinecone_apikey) 
         self.shutdown_event = asyncio.Event()
         
         # Register Discord event callbacks
@@ -35,6 +37,7 @@ class DiscordHandler:
         # Close any resources, db connections, etc.
         print("Shutting down...")
         self.shutdown_event.set()
+        await self.vector_store.close()
         await self.client.close()
 
     def get_discord_intents(self, messages=True, guilds=True):
@@ -61,6 +64,7 @@ class DiscordHandler:
         if self.client.user.mentioned_in(message) and message.mention_everyone is False or message.guild is None:
             # Do all the work here
             print(f"Got a message from {message.author.display_name}: {message.content}")
+            author_id = str(message.author.id)  # Get the author's ID
             # Tweak the limit here to get more or less context
             try:
                 messages = await self.get_message_history(channel, limit=7)
@@ -68,10 +72,17 @@ class DiscordHandler:
                 print(f"Error while getting message history: {e}")
             guild_id = str(message.guild.id) if message.guild else "DM"
 
-            print(f"Got history for {guild_id}: {messages}")
+            print("Getting memories...")
+            memories = self.vector_handler.get_relevant_contexts(message.content, author_id)  # Get the relevant contexts from the vector store
+            for memory in memories:
+                messages.insert(0, {
+                    "role": "system",
+                    "content": f"Memory: {memory}"
+                })
+            print(f"Got memories: {memories}")
 
             try:
-                response = await self.chatgpt_handler.get_response(messages, channel, guild_id)
+                response = await self.chatgpt_handler.get_response(messages, channel)
             except Exception as e:
                 print(f"Error occurred while processing the message: {e}")
                 await message.channel.send(
@@ -91,8 +102,13 @@ class DiscordHandler:
                 )
                 return
 
-            # Generate and store the summary
-            # TODO: Implement this, actually, no, move this to chatgpt_handler and then implement it
+            try:
+                summary = await self.chatgpt_handler.get_summary(messages)
+            except Exception as e:
+                print(f"Error occurred while summarizing the messages: {e}")
+                return
+            
+            self.vector_handler.store_additional_data(summary.content, author_id)  # Update the vector store with the summary
             
     async def get_message_history(self, channel, limit=3):
         message_history = []

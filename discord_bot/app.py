@@ -8,9 +8,10 @@ async def _main():
     # Read in configurations and credentials
     DISCORD_TOKEN = os.environ['DISCORD_TOKEN']
     OPENAI_API_KEY = os.environ['OPENAI_API_KEY']
+    PINECONE_API_KEY = os.environ['PINECONE_API_KEY']
 
     # Initialize the main DiscordHandler
-    discord_bot = DiscordHandler(DISCORD_TOKEN, OPENAI_API_KEY)
+    discord_bot = DiscordHandler(DISCORD_TOKEN, OPENAI_API_KEY, PINECONE_API_KEY)
 
     # Start the bot and handle shutdown
     try:

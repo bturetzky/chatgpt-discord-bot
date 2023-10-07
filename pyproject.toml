@@ -16,6 +16,7 @@ discord = "^2.2.2"
 aiosqlite = "^0.18.0"
 duckduckgo-search = "^3.9.2"
 beautifulsoup4 = "^4.12.2"
+pinecone-client = "^2.2.4"
 
 
 

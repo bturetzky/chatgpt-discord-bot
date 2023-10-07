@@ -10,7 +10,7 @@ class ChatGPTHandler:
         self.send_interim_message = send_interim_message_callback
         self.function_handler = FunctionHandler()
         
-    async def get_response(self, messages, channel, guild_id):
+    async def get_response(self, messages, channel):
         # 1. Pass messages to OpenAI API
         # 2. If a function needs to be executed:
         #    a. Call self.send_interim_message if provided
@@ -20,21 +20,10 @@ class ChatGPTHandler:
         # 5. Repeat from step 1
 
         system_prompt = {
-            "role":
-            "system",
+            "role": "system",
             "content": utilities.get_response_system_prompt_content(self.bot_mention)
         }
-        priming_prompt = {
-            "role":
-            "user",
-            "content": utilities.get_response_priming_prompt_content(self.bot_mention)
-        }
 
-        # Fetch the context here
-        #TODO: Implement the vector store
-
-        # Supposed to be better at not needing the priming prompt, lets just try it with the system prompt only
-        #messages.insert(0, priming_prompt)
         messages.insert(0, system_prompt)
 
         MAX_FUNCTION_CALLS = 7  # Maximum number of function calls to make before giving up
@@ -43,7 +32,8 @@ class ChatGPTHandler:
             function_calls_count = 0
             while True:  # Start a loop to keep asking the model until we get a non-function reply
                 print("----- Sending prompt to OpenAI API -----")
-                print(messages)
+                # True debug spam
+                #print(messages)
 
                 if function_calls_count >= MAX_FUNCTION_CALLS:
                     force_final_response = {"function_call": None}
@@ -87,6 +77,7 @@ class ChatGPTHandler:
                     continue
                 else:
                     reply = response_content["content"]
+                    messages.append(response_content)
                     # Remove the AI's mention from the response
                     reply = reply.replace(f"{self.bot_mention}: ", '').strip()
                     print(reply)
@@ -100,3 +91,25 @@ class ChatGPTHandler:
             return "Sorry, there was a network error. Please try again later."
         except asyncio.TimeoutError:
             return "Sorry, the request took too long. Please try again later."
+        
+    async def get_summary(self, messages):
+        messages.append({
+            "role": "system",
+            "content": "Hey, you're now in 'Memory Mode.' Can you summarize the conversation you just had?"
+        })
+        try:
+            summary_response = openai.ChatCompletion.create(model="gpt-4",
+                                                messages=messages)
+
+        except OpenAIError as e:
+            print(f"Error from OpenAI: {e}")
+            return "Sorry, there was an error processing your request with OpenAI. Please try again later."
+        except RequestException as e:
+            print(f"Network error: {e}")
+            return "Sorry, there was a network error. Please try again later."
+        summary = summary_response.choices[0].message
+        #print(f"Summary: {summary}")
+        print("Got summary from OpenAI API...")
+        return summary
+
+        
