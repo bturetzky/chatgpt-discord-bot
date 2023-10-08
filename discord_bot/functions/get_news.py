@@ -2,6 +2,8 @@ from discord_bot.functions.base import BaseFunction
 import os, json
 from newsapi import NewsApiClient
 
+RESULTS_LIMIT = 4
+
 class GetNews(BaseFunction):
     name = "get_news"
     description = "Fetches news articles based on given criteria. Can retrieve top headlines or a broader set of news articles."
@@ -57,9 +59,9 @@ class GetNews(BaseFunction):
 
         try:
             if mode == 'top_headlines':
-                response = self.api.get_top_headlines(q=keywords, category=category, language=language, country=country, page_size=10)
+                response = self.api.get_top_headlines(q=keywords, category=category, language=language, country=country, page_size=RESULTS_LIMIT)
             elif mode == 'everything':
-                response = self.api.get_everything(q=keywords, from_param=from_date, to=to_date, language=language, sort_by='relevancy', page_size=10)
+                response = self.api.get_everything(q=keywords, from_param=from_date, to=to_date, language=language, sort_by='relevancy', page_size=RESULTS_LIMIT)
             else:
                 return "Invalid mode specified."
             
