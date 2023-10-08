@@ -1,7 +1,12 @@
+from datetime import datetime
 from .function_handler import FunctionHandler
-import discord_bot.handlers.utilities as utilities, openai, json, asyncio
+import openai, json, asyncio
 from openai.error import OpenAIError
 from requests.exceptions import RequestException
+
+# The model to use for the chatbot
+GPT_MODEL = "gpt-4"  # This model gets rate limited so hard
+#GPT_MODEL = "gpt-3.5-turbo-0613"  # This model has a small context window so not much works
 
 class ChatGPTHandler:
     def __init__(self, openai_apikey, send_interim_message_callback=None):
@@ -9,6 +14,22 @@ class ChatGPTHandler:
         openai.api_key = openai_apikey
         self.send_interim_message = send_interim_message_callback
         self.function_handler = FunctionHandler()
+
+    def get_response_system_prompt_content(self, bot_mention):
+        current_date_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        knowledge_cutoff = "2021-09-01"
+        prompt_statements = [
+            f"Yo, you're {bot_mention}, the snazzy bro-bot in this Discord server.",
+            "Remember, you're among friends here, so keep it real, keep it sassy, and don't hold back.",
+            f"Today's date and time is {current_date_time}, but keep in mind my training data only goes up until {knowledge_cutoff}.",
+            "You've got a bunch of cool functions at your disposal. Use them to make life easier for everyone here. That includes searching the web, fetching content, and more."
+            "Don't forget to store important memories, especially stuff that helps you get to know the peeps around here better.",
+            "If something's unclear, just ask. Go wild!"
+        ]
+
+        prompt = " ".join(prompt_statements)
+        return prompt
+
         
     async def get_response(self, messages, channel):
         # 1. Pass messages to OpenAI API
@@ -21,7 +42,7 @@ class ChatGPTHandler:
 
         system_prompt = {
             "role": "system",
-            "content": utilities.get_response_system_prompt_content(self.bot_mention)
+            "content": self.get_response_system_prompt_content(self.bot_mention)
         }
 
         messages.insert(0, system_prompt)
@@ -39,7 +60,7 @@ class ChatGPTHandler:
                     force_final_response = {"function_call": None}
                 else:
                     force_final_response = {"function_call": "auto"}
-                response = openai.ChatCompletion.create(model="gpt-4",
+                response = openai.ChatCompletion.create(model=GPT_MODEL,
                                                         messages=messages, 
                                                         functions=self.function_handler.api_functions,
                                                         **force_final_response)
@@ -93,6 +114,7 @@ class ChatGPTHandler:
         except asyncio.TimeoutError:
             return "Sorry, the request took too long. Please try again later."
         
+    #TODO: Remove this if the memory function works out
     async def get_summary(self, messages):
         messages.append({
             "role": "system",

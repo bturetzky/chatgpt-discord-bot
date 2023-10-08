@@ -52,8 +52,8 @@ class DiscordHandler:
         if message.author == self.client.user or self.shutdown_event.is_set():
             if message.author == self.client.user:
                 print("Suppressing embeds?")
+                await asyncio.sleep(5)  # Add a delay before suppressing the embeds or it won't work
                 await message.edit(suppress=True)  # Suppress the bot's message
-                # Why does this only work sometimes even if the bot has the right permissions?
             return
         
         channel = message.channel
