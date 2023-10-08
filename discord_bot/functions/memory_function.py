@@ -3,13 +3,13 @@ from discord_bot.handlers.vector_handler import VectorHandler
 
 class WeatherLookup(BaseFunction):
     name = "store_memory"
-    description = "Stores important or information-rich details into memories. Use this function to save key details or insights that should be remembered for future interactions. Prioritize storing memories that help the bot understand individual users and their preferences for more personalized future interactions."
+    description = "This function is your go-to for storing the good stuff. Use it to save key details or insights that you'll need for future interactions. This is especially important for understanding individual users and their preferences. Think of it as building your personal cheat sheet for each user."
     parameters = {
         "type": "object",
         "properties": {
             "memory": {
                 "type": "string",
-                "description": "The specific memory to store. This should be a concise yet detailed summary of important information or insights. Prioritize storing memories that help the bot understand individual users and their preferences for more personalized future interactions."
+                "description": "Here's where you jot down what you want to remember. Make it concise but info-packed. This is your chance to store things like user preferences, important dates, or any other tidbits that'll help you be more personalized and helpful in the future."
             }
         },
         "required": ["memory"]
