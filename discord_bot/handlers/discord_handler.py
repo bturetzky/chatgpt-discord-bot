@@ -1,6 +1,7 @@
 import discord, asyncio
 from .chatgpt_handler import ChatGPTHandler
 from .vector_handler import VectorHandler
+import traceback
 
 class DiscordHandler:
     def __init__(self, discord_token, openai_key, pinecone_apikey):
@@ -86,6 +87,7 @@ class DiscordHandler:
                 response = await self.chatgpt_handler.get_response(messages, channel)
             except Exception as e:
                 print(f"Error occurred while processing the message: {e}")
+                print(traceback.format_exc())
                 await message.channel.send(
                     f"{message.author.display_name} Sorry, there was an error processing your request. Please try again later."
                 )
