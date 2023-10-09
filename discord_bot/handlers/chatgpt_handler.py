@@ -107,7 +107,7 @@ class ChatGPTHandler:
 
         except OpenAIError as e:
             print(f"Error from OpenAI: {e}")
-            return "Sorry, there was an error processing your request with OpenAI. Please try again later."
+            return f"Sorry, there was an error processing your request with OpenAI. Please try again later. {e}"
         except RequestException as e:
             print(f"Network error: {e}")
             return "Sorry, there was a network error. Please try again later."

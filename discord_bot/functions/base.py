@@ -28,7 +28,7 @@ class BaseFunction:
             "properties": {
                 "quick_update": {
                     "type": "string",
-                    "description": "A very brief message to send back to the user explaining your thought process and telling them what you're doing.  Include this every so often, but not when storing a memory."
+                    "description": "A very brief message to send back to the user explaining your thought process and telling them what you're doing.  Don't include this when storing a memory."
                 }
             },
             "required": []

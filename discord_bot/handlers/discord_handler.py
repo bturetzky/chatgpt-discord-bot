@@ -131,7 +131,35 @@ class DiscordHandler:
 
         return message_history
         
-    def split_message(self, message):
+    def split_message(self, message, limit=1950):
         # Logic to split the message into multiple messages if needed
-        #TODO: Implement this
-        return [message]
+        chunks = []
+        current_chunk = ""
+        in_code_block = False
+        lines = message.split('\n')
+        
+        for line in lines:
+            # Detect code block start or end
+            if line.startswith("```"):
+                in_code_block = not in_code_block
+            
+            # Check if adding the new line would exceed the limit
+            if len(current_chunk) + len(line) + 1 > limit:
+                # If it does and we're not in a code block, add the current chunk to the list and start a new one
+                if not in_code_block:
+                    chunks.append(current_chunk)
+                    current_chunk = ""
+                else:
+                    # If we're in a code block, add a warning and close the code block
+                    current_chunk += "\n```"
+                    chunks.append(current_chunk)
+                    current_chunk = "```"  # Start a new code block in the next chunk
+            
+            # Add the line to the current chunk
+            current_chunk += line + "\n"
+        
+        # Add the last chunk
+        if current_chunk:
+            chunks.append(current_chunk)
+        
+        return chunks

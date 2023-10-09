@@ -12,14 +12,10 @@ class VectorHandler:
 
     def __new__(cls, openai_apikey=None, pinecone_apikey=None):
         if cls._instance is None:
-            print("Creating new instance")
             cls._instance = super(VectorHandler, cls).__new__(cls)
             openai.api_key = openai_apikey
             cls._instance.vector_store = VectorStore(pinecone_apikey)
             cls._instance.vector_store.initialize_pinecone()
-        else:
-            print("Returning existing instance")
-            #traceback.print_stack() 
         return cls._instance
 
     def encode_message(self, message):
