@@ -16,9 +16,9 @@ class IGDBGameInfo(BaseFunction):
                 "type": "string",
                 "description": (
                     "The Apicalypse query string to specify which game details to fetch. "
-                    "You can include the fields: 'name', 'id'(IGDB's internal ID of the game), 'genres', "
+                    "You can include the fields: 'name', 'id'(IGDB's internal ID of the game, don't guess at these), 'genres', "
                     "'platforms' (Array of Platform IDs, look these up first, don't guess), 'first_release_date' (unix timestamp format; "
-                    "please convert this to a human-readable date format like 'MM-DD-YYYY' when reporting to the user), 'similar_games', "
+                    "please convert this to a human-readable date format like 'MM-DD-YYYY' when reporting to the user), 'similar_games' (array of game IDs), "
                     "'total_rating' (an average rating based on various sources), "
                     "'summary', 'status' (game release status: 0 for released, 2 for alpha, 3 for beta, 4 for early_access, "
                     "5 for offline, 6 for cancelled, 7 for rumored, 8 for delisted -- Don't rely on all games to have this field set), "
