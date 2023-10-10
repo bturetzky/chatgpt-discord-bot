@@ -69,7 +69,7 @@ class DiscordHandler:
             author_id = str(message.author.id)  # Get the author's ID
             # Tweak the limit here to get more or less context
             try:
-                messages = await self.get_message_history(channel, limit=7)
+                messages = await self.get_message_history(channel, limit=3)
             except Exception as e:
                 print(f"Error while getting message history: {e}")
             guild_id = str(message.guild.id) if message.guild else "DM"
