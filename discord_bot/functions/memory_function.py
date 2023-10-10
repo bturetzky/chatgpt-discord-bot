@@ -1,5 +1,6 @@
 from discord_bot.functions.base import BaseFunction
 from discord_bot.handlers.vector_handler import VectorHandler
+from datetime import datetime
 
 class WeatherLookup(BaseFunction):
     name = "store_memory"
@@ -19,5 +20,7 @@ class WeatherLookup(BaseFunction):
         self.vector_handler = VectorHandler()
 
     async def execute(self, args):
-        self.vector_handler.store_additional_data(args['memory'])
+        current_date_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        formatted_memory = f"{current_date_time}: {args['memory']}"
+        self.vector_handler.store_additional_data(formatted_memory)
         return "Memory stored."

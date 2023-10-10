@@ -75,7 +75,8 @@ class DiscordHandler:
             guild_id = str(message.guild.id) if message.guild else "DM"
 
             print(f"Getting memories...")
-            memories = self.vector_handler.get_relevant_contexts(message.content)  # Get the relevant contexts from the vector store
+            memory_query = f"{author_id} says: {message.content}"
+            memories = self.vector_handler.get_relevant_contexts(memory_query)  # Get the relevant contexts from the vector store
             for memory in memories:
                 messages.insert(0, {
                     "role": "system",

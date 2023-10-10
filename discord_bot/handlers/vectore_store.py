@@ -4,6 +4,7 @@ INDEX_NAME = "discord-bot-context"
 ENVIRONMENT = "us-west4-gcp-free"
 # This comes from the model we're using for embeddings, ada-002
 DIMENSIONS = 1536
+RETRIEVAL_LIMIT = 7
 
 class VectorStore:
     def __init__(self, pinecone_api_key):
@@ -30,7 +31,7 @@ class VectorStore:
         try:
             #print(f"index is...: {self.index}")
             results = self.index.query(
-                top_k=1,  # Number of closest vectors to retrieve
+                top_k=RETRIEVAL_LIMIT,  # Number of closest vectors to retrieve
                 include_values=False,  # Whether to include the vectors themselves in the response
                 include_metadata=True,  # Whether to include any metadata stored alongside vectors
                 vector=query_vector     # The query vector
