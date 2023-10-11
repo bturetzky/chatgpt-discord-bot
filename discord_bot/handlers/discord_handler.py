@@ -3,6 +3,8 @@ from .chatgpt_handler import ChatGPTHandler
 from .vector_handler import VectorHandler
 import traceback
 
+CONTEXT_LIMIT = 5  # Number of messages to use as context
+
 class DiscordHandler:
     def __init__(self, discord_token, openai_key, pinecone_apikey):
         self.token = discord_token
@@ -69,7 +71,7 @@ class DiscordHandler:
             author_id = str(message.author.id)  # Get the author's ID
             # Tweak the limit here to get more or less context
             try:
-                messages = await self.get_message_history(channel, limit=3)
+                messages = await self.get_message_history(channel, limit=CONTEXT_LIMIT)
             except Exception as e:
                 print(f"Error while getting message history: {e}")
             guild_id = str(message.guild.id) if message.guild else "DM"
