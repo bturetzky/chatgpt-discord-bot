@@ -3,7 +3,7 @@ from .chatgpt_handler import ChatGPTHandler
 from .vector_handler import VectorHandler
 import traceback
 
-CONTEXT_LIMIT = 5  # Number of messages to use as context
+CONTEXT_LIMIT = 3  # Number of messages to use as context
 
 class DiscordHandler:
     def __init__(self, discord_token, openai_key, pinecone_apikey):
