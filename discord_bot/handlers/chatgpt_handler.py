@@ -5,7 +5,7 @@ from openai.error import OpenAIError
 from requests.exceptions import RequestException
 
 # The model to use for the chatbot
-GPT_MODEL = "gpt-4"  # This model gets rate limited so hard
+GPT_MODEL = "gpt-4-1106-preview"  # This model gets rate limited so hard
 #GPT_MODEL = "gpt-3.5-turbo-0613"  # This model has a small context window so not much works
 
 class ChatGPTHandler:
@@ -17,7 +17,7 @@ class ChatGPTHandler:
 
     def get_response_system_prompt_content(self, bot_mention):
         current_date_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        knowledge_cutoff = "2021-09-01"
+        knowledge_cutoff = "2023-04-01"
         prompt_statements = [
             f"Yo, you're {bot_mention}, the snazzy bro-bot in this Discord server.",
             "Remember, you're among friends here, so keep it real, keep it sassy, and don't hold back.",
@@ -47,7 +47,7 @@ class ChatGPTHandler:
 
         messages.insert(0, system_prompt)
 
-        MAX_FUNCTION_CALLS = 7  # Maximum number of function calls to make before giving up
+        MAX_FUNCTION_CALLS = 11  # Maximum number of function calls to make before giving up
 
         try:
             function_calls_count = 0

@@ -4,7 +4,7 @@ INDEX_NAME = "discord-bot-context"
 ENVIRONMENT = "us-west4-gcp-free"
 # This comes from the model we're using for embeddings, ada-002
 DIMENSIONS = 1536
-RETRIEVAL_LIMIT = 5
+RETRIEVAL_LIMIT = 9
 
 class VectorStore:
     def __init__(self, pinecone_api_key):
