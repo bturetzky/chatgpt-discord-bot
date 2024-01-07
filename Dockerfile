@@ -2,6 +2,8 @@
 FROM python:3.10-slim
 
 LABEL org.opencontainers.image.source=https://github.com/bturetzky/chatgpt-discord-bot
+LABEL org.opencontainers.image.description="ChatGPT powered Discord bot"
+LABEL org.opencontainers.image.licenses=MIT
 
 # Set the working directory in the container
 WORKDIR /app
