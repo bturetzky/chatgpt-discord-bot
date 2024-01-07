@@ -31,4 +31,4 @@ jobs:
       with:
         context: .
         push: true
-        tags: ghcr.io/${{ github.repository_owner }}/discord-chatbot:${{ env.VERSION || 'latest' }}
+        tags: ghcr.io/${{ github.repository_owner }}/chatgpt-discord-bot:${{ env.VERSION || 'latest' }}
