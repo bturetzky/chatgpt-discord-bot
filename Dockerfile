@@ -19,4 +19,4 @@ RUN poetry config virtualenvs.create false
 RUN poetry install --no-dev # Exclude development dependencies
 
 # Run the bot script when the container launches
-CMD ["python", "-m", "run.py"]
+CMD ["python", "-m", "run"]
