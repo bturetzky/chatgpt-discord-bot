@@ -5,7 +5,8 @@ from openai.error import OpenAIError
 from requests.exceptions import RequestException
 
 # The model to use for the chatbot
-GPT_MODEL = "gpt-4-1106-preview"  # This model gets rate limited so hard
+GPT_MODEL = "gpt-4o"  # This model gets rate limited so hard
+#GPT_MODEL = "gpt-4-1106-preview"  # This model gets rate limited so hard
 #GPT_MODEL = "gpt-3.5-turbo-0613"  # This model has a small context window so not much works
 
 class ChatGPTHandler:

@@ -5,7 +5,7 @@ DDGS_DEFAULT_MAX_RESULTS = 1
 
 class SearchWeb(BaseFunction):
     name = "search_web"
-    description = ("Performs a web search using DuckDuckGo to retrieve a list of relevant webpages. Use this function as a starting point to find multiple sources or viewpoints. If the query asks for specific recommendations or detailed information, follow up by using 'get_webpage_contents' to dive into the links."
+    description = ("Performs a web search using DuckDuckGo to retrieve a list of relevant webpages. Use this function as a starting point to find multiple sources or viewpoints for current events or topics outside your memory cut-off date. If the query asks for specific recommendations or detailed information, you can follow up by using 'get_webpage_contents' to dive into the links."
 )
     parameters = {
                     "type": "object", 
