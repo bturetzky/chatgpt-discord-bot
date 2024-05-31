@@ -8,10 +8,16 @@ CONTEXT_LIMIT = 9  # Number of messages to use as context
 class DiscordHandler:
     def __init__(self, discord_token, openai_key, pinecone_apikey):
         self.token = discord_token
+        print('Initializing discord client')
         self.client = discord.Client(intents=self.get_discord_intents())
+        print('Discord client initialized')
         # Initialize the vector handler before chatgpt_handler
+        print('Initiazliaing Vector store')
         self.vector_handler = VectorHandler(openai_key, pinecone_apikey)
+        print('Vector store initialized')
+        print('Initiazliaing ChatGPT client')
         self.chatgpt_handler = ChatGPTHandler(openai_key, self.send_interim_message)
+        print('ChatGPT client initialized')
         self.shutdown_event = asyncio.Event()
         
         # Register Discord event callbacks

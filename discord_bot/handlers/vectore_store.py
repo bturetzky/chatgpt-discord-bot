@@ -2,7 +2,6 @@ import uuid
 from pinecone import Pinecone, ServerlessSpec
 
 INDEX_NAME = "discord-bot-context2"
-ENVIRONMENT = "us-west4-gcp-free"
 # This comes from the model we're using for embeddings, ada-002
 DIMENSIONS = 1536
 RETRIEVAL_LIMIT = 9
