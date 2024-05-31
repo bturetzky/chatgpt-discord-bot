@@ -1,7 +1,7 @@
 from datetime import datetime
 from .function_handler import FunctionHandler
 import openai, json, asyncio
-from openai import OpenAIError
+from openai.error import OpenAIError
 from requests.exceptions import RequestException
 
 # The model to use for the chatbot

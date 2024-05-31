@@ -10,7 +10,7 @@ authors = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-openai = "^1.30.5"
+openai = "0.28"
 "discord.py" = "^2.3.2"
 discord = "^2.2.2"
 aiosqlite = "^0.18.0"
