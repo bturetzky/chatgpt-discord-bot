@@ -1,4 +1,5 @@
-import pinecone, uuid
+import uuid
+from pinecone import Pinecone, ServerlessSpec
 
 INDEX_NAME = "discord-bot-context2"
 ENVIRONMENT = "us-west4-gcp-free"
@@ -13,10 +14,10 @@ class VectorStore:
         self.index_name = INDEX_NAME
 
     def initialize_pinecone(self):
-        pinecone.init(api_key=self.pinecone_api_key)
-        if self.index_name not in pinecone.list_indexes():
-            pinecone.create_index(name=self.index_name, metric="cosine", dimension=DIMENSIONS)
-        self.index = pinecone.Index(self.index_name)
+        pc = Pinecone(api_key=self.pinecone_api_key)
+        if self.index_name not in pc.list_indexes():
+            pc.create_index(name=self.index_name, metric="cosine", dimension=DIMENSIONS)
+        self.index = pc.Index(self.index_name)
 
     def store_additional_data(self, vector, summary):
         unique_id = str(uuid.uuid4())  # Generate a unique ID
