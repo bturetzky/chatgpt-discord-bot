@@ -34,7 +34,7 @@ class SearchWeb(BaseFunction):
         print(f"Searching the web for: {query}")
         try:
             async with AsyncDDGS() as ddgs:
-                results = await ddgs.text(query, max_results=max_results)
+                results = ddgs.text(query, max_results=max_results)
                 logging.debug(f"Raw results: {results}")
         except Exception as e:
             print(f"Error occurred while searching the web: {e}")
