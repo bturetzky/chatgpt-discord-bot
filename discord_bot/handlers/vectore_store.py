@@ -1,6 +1,6 @@
 import pinecone, uuid
 
-INDEX_NAME = "discord-bot-context"
+INDEX_NAME = "discord-bot-context2"
 ENVIRONMENT = "us-west4-gcp-free"
 # This comes from the model we're using for embeddings, ada-002
 DIMENSIONS = 1536
@@ -13,7 +13,7 @@ class VectorStore:
         self.index_name = INDEX_NAME
 
     def initialize_pinecone(self):
-        pinecone.init(api_key=self.pinecone_api_key, environment=ENVIRONMENT)
+        pinecone.init(api_key=self.pinecone_api_key)
         if self.index_name not in pinecone.list_indexes():
             pinecone.create_index(name=self.index_name, metric="cosine", dimension=DIMENSIONS)
         self.index = pinecone.Index(self.index_name)
