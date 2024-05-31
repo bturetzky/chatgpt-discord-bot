@@ -1,7 +1,7 @@
 from .base import BaseFunction
 from duckduckgo_search import AsyncDDGS
 
-DDGS_DEFAULT_MAX_RESULTS = 1
+DDGS_DEFAULT_MAX_RESULTS = 4
 
 class SearchWeb(BaseFunction):
     name = "search_web"
