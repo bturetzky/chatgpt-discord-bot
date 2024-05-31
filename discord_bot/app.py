@@ -1,4 +1,4 @@
-import asyncio, os
+import asyncio, os, logging
 from .handlers.discord_handler import DiscordHandler
 
 def run():
