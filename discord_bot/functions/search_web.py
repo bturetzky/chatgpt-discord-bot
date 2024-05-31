@@ -1,7 +1,8 @@
 from .base import BaseFunction
 from duckduckgo_search import AsyncDDGS
+import logging
 
-DDGS_DEFAULT_MAX_RESULTS = 4
+DDGS_DEFAULT_MAX_RESULTS = 1
 
 class SearchWeb(BaseFunction):
     name = "search_web"
@@ -33,8 +34,8 @@ class SearchWeb(BaseFunction):
         print(f"Searching the web for: {query}")
         try:
             async with AsyncDDGS() as ddgs:
-                results = [r async for r in ddgs.text(query, max_results=max_results)]
-                #print(f"Raw results: {results}")
+                results = await ddgs.text(query, max_results=max_results)
+                logging.debug(f"Raw results: {results}")
         except Exception as e:
             print(f"Error occurred while searching the web: {e}")
             return "An error occurred while searching the web."
