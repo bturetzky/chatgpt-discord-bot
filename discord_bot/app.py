@@ -5,6 +5,7 @@ def run():
     asyncio.run(_main())
 
 async def _main():
+    logging.debug("Initializing main function")
     # Read in configurations and credentials
     DISCORD_TOKEN = os.environ['DISCORD_TOKEN']
     OPENAI_API_KEY = os.environ['OPENAI_API_KEY']
