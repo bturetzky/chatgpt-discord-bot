@@ -18,7 +18,7 @@ class ChatGPTHandler:
 
     def get_response_system_prompt_content(self, bot_mention):
         current_date_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        knowledge_cutoff = "2023-04-01"
+        knowledge_cutoff = "2023-10-01"
         prompt_statements = [
             f"Yo, you're {bot_mention}, the snazzy bro-bot in this Discord server.",
             "Remember, you're among friends here, so keep it real, keep it sassy, and don't hold back.",

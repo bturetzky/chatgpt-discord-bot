@@ -5,6 +5,15 @@ LABEL org.opencontainers.image.source=https://github.com/bturetzky/chatgpt-disco
 LABEL org.opencontainers.image.description="ChatGPT powered Discord bot"
 LABEL org.opencontainers.image.licenses=MIT
 
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+
+# Install system dependencies for lxml
+RUN apt-get update \
+    && apt-get install -y libxml2-dev libxslt1-dev \
+    && apt-get clean
+
 # Set the working directory in the container
 WORKDIR /app
 

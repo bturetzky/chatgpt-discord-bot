@@ -21,6 +21,8 @@ aiohttp = "^3.9.5"
 newsapi-python = "^0.2.7"
 numpy = "^1.26.4"
 chatgpt = "^2.2212.0"
+lxml = "^4.9.1"
+html5lib = "^1.1"
 
 
 
