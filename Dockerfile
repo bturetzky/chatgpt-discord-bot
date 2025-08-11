@@ -25,7 +25,7 @@ RUN pip install poetry
 
 # Disable virtualenv creation by Poetry and install dependencies
 RUN poetry config virtualenvs.create false
-RUN poetry install --only main # Exclude development dependencies
+RUN poetry install --only main --no-root # Exclude development dependencies
 
 # Run the bot script when the container launches
 CMD ["python", "-m", "run"]
