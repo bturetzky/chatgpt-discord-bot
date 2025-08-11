@@ -11,7 +11,7 @@ ENV PYTHONUNBUFFERED=1
 
 # Install system dependencies for lxml
 RUN apt-get update \
-    && apt-get install -y libxml2-dev libxslt1-dev build-essential gcc\
+    && apt-get install -y libxml2-dev libxslt1-dev \
     && apt-get clean
 
 # Set the working directory in the container
@@ -25,7 +25,7 @@ RUN pip install poetry
 
 # Disable virtualenv creation by Poetry and install dependencies
 RUN poetry config virtualenvs.create false
-RUN poetry install --no-dev # Exclude development dependencies
+RUN poetry install --only main # Exclude development dependencies
 
 # Run the bot script when the container launches
 CMD ["python", "-m", "run"]
