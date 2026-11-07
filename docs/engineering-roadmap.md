@@ -129,6 +129,13 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 
 **Phase 4: User-facing improvements.** Prioritize new capabilities based on actual usage after stability is demonstrated.
 
+## Memory capture and recall improvement (proposed PR, 2026-11-07)
+
+- Encourage proactive capture of durable ordinary facts, plans, preferences and ongoing project context, with standalone statements identifying the subject. Do not store credentials or repeat identical facts in a turn.
+- Embed the actual incoming message for recall instead of prefixing the query with a numeric Discord author ID; shared memory remains intentional.
+- Pass the stored summary strings to the model instead of raw Pinecone metadata dictionaries. Preserve existing Pinecone index, embeddings, top-nine nearest-neighbor retrieval and stored records.
+- Add focused regression coverage. **CI and live dev validation pending.** No score threshold, automatic deduplication or index migration in this change; evaluate retrieval relevance and conflicting memories separately.
+
 ## Memory implementation review (2026-11-07)
 
 - **Confirmed in code:** `DiscordHandler.process_message` embeds `author_id says: <message>` and retrieves Pinecone context on each handled message. `VectorStore.fetch_context` requests `top_k=9` with metadata but does not inspect match scores or apply a similarity threshold; it returns metadata dictionaries rather than the `summary` field alone.
