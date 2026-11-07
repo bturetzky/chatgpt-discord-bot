@@ -1,6 +1,6 @@
 # Discord bot CI/CD and promotion design
 
-**Status:** CI build/publish and first dev GitOps rollout verified; automated dev deployment proposed in PR #8  
+**Status:** Automated digest-pinned dev deployment implemented and verified; manual production promotion workflow proposed in this PR  
 **Discussed:** 2026-11-06  
 **Repositories:** [chatgpt-discord-bot](https://github.com/bturetzky/chatgpt-discord-bot) (application and CI) and [homelab-gitops](https://github.com/bturetzky/homelab-gitops) (deployment manifests and Argo CD)
 
@@ -11,7 +11,16 @@
 - **Proposed in this PR:** after publishing on main, the bot workflow opens a dev-only GitOps PR pinned to the exact published **image digest** and immediately squash-merges the resulting PR with the GitHub App token. Version-tag builds and PR builds do not deploy.
 - **Prerequisites before merge:** create a GitHub App installed on `homelab-gitops` with repository **Contents: Read and write** and **Pull requests: Read and write**; configure bot repository variable `GITOPS_APP_ID` and Actions secret `GITOPS_APP_PRIVATE_KEY`. GitOps must permit squash merging and the App must be allowed to merge PRs. GitHub Free does not offer native auto-merge for private repos, so CI calls `gh pr merge --squash` directly (no `--auto`). Standard merge restrictions are enforced; checks that are not required may still be pending. Do not use branch protection bypass.
 - **Validation:** merge a bot PR, check the `deploy-dev` job and GitOps PR, then confirm Argo CD and the dev pod use the expected digest. If required checks or reviews are not satisfied, the direct merge fails, leaving the PR open and failing the workflow. A new workflow will not deploy merely by merging this CI PR unless its resulting main push publishes a new image.
-- **Production promotion:** still manual and not yet implemented.
+- **Production promotion:** proposed as a manually dispatched workflow that opens a reviewable GitOps PR; no auto-merge or image rebuild.
+
+## Manual production promotion workflow (proposed)
+
+- After dev validation, run **Actions → Promote Discord bot to production → Run workflow** on the application repository's main branch.
+- The workflow uses the existing GitHub App credentials to check out `homelab-gitops/main` and reads the current digest-pinned image from `apps/discord/dev/deployment.yaml`.
+- It validates that dev uses `ghcr.io/bturetzky/chatgpt-discord-bot@sha256:...` and that production has an expected bot image reference, then changes **only** the image in `apps/discord/prod/deployment.yaml`.
+- It opens a GitOps PR and stops. **Production requires a human PR merge.** Argo CD deploys after that merge; promotion never rebuilds an image.
+- If production already references the same digest, the workflow exits without a PR. Revert the GitOps promotion commit to roll back.
+- Verify that dev is running the expected image before dispatching; the workflow selects the digest currently committed in GitOps dev, not a historical release or an unverified runtime observation.
 
 ## Goal
 

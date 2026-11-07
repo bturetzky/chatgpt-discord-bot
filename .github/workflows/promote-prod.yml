@@ -1,0 +1,107 @@
+name: Promote Discord bot to production
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: discord-prod-promotion
+  cancel-in-progress: false
+
+jobs:
+  propose-promotion:
+    name: Open production GitOps promotion PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create short-lived GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.GITOPS_APP_ID }}
+          private-key: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
+          owner: bturetzky
+          repositories: homelab-gitops
+
+      - name: Check out GitOps repository
+        uses: actions/checkout@v4
+        with:
+          repository: bturetzky/homelab-gitops
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+          path: gitops
+          persist-credentials: true
+
+      - name: Pin production to the current development digest
+        id: image
+        working-directory: gitops
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          image = "ghcr.io/bturetzky/chatgpt-discord-bot"
+          dev_path = Path("apps/discord/dev/deployment.yaml")
+          prod_path = Path("apps/discord/prod/deployment.yaml")
+          dev = dev_path.read_text()
+          prod = prod_path.read_text()
+          image_line = re.compile(r"(?m)^([ \t]*image:[ \t]*)(\S+)[ \t]*$")
+          dev_images = image_line.findall(dev)
+          prod_images = image_line.findall(prod)
+          if len(dev_images) != 1 or len(prod_images) != 1:
+              raise SystemExit("Expected exactly one image in each Discord deployment")
+
+          dev_ref = dev_images[0][1]
+          match = re.fullmatch(re.escape(image) + r"@(sha256:[a-f0-9]{64})", dev_ref)
+          if not match:
+              raise SystemExit(f"Development image is not pinned to a valid bot digest: {dev_ref}")
+          digest = match.group(1)
+
+          prod_ref = prod_images[0][1]
+          if not re.fullmatch(re.escape(image) + r"(?::[^\s]+|@sha256:[a-f0-9]{64})", prod_ref):
+              raise SystemExit(f"Unexpected production image reference: {prod_ref}")
+
+          new_ref = image + "@" + digest
+          updated, count = image_line.subn(
+              lambda m: m.group(1) + new_ref if m.group(2) == prod_ref else m.group(0),
+              prod,
+          )
+          if count != 1 or updated == prod and prod_ref != new_ref:
+              raise SystemExit("Failed to update exactly one production image")
+          prod_path.write_text(updated)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              print(f"digest={digest}", file=output)
+              print(f"unchanged={str(prod_ref == new_ref).lower()}", file=output)
+          PY
+
+      - name: Open production promotion PR (never auto-merge)
+        if: steps.image.outputs.unchanged != 'true'
+        working-directory: gitops
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          branch="promotion/discord-prod-${RUN_ID}-${RUN_ATTEMPT}"
+          git config user.name "discord-gitops[bot]"
+          git config user.email "discord-gitops[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add apps/discord/prod/deployment.yaml
+          git commit -m "gitops(discord-prod): promote dev image digest"
+          git push --set-upstream origin "$branch"
+          pr_url="$(gh pr create --repo bturetzky/homelab-gitops --base main --head "$branch" \
+            --title "gitops(discord-prod): promote tested dev image" \
+            --body "Manual production promotion request from [workflow run](https://github.com/bturetzky/chatgpt-discord-bot/actions/runs/$RUN_ID). Promotes the image digest currently pinned in dev: \`ghcr.io/bturetzky/chatgpt-discord-bot@$IMAGE_DIGEST\`. Changes only the production Deployment image. **Review and merge this PR to authorize production rollout.** No image rebuild or automatic merge.")"
+          echo "Promotion PR: $pr_url"
+          echo "### Production promotion" >> "$GITHUB_STEP_SUMMARY"
+          echo "Review and merge: $pr_url" >> "$GITHUB_STEP_SUMMARY"
+          echo "Image digest: \`$IMAGE_DIGEST\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Already promoted
+        if: steps.image.outputs.unchanged == 'true'
+        run: echo "Production already references the current development digest; no PR needed." >> "$GITHUB_STEP_SUMMARY"
