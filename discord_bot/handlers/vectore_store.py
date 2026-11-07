@@ -1,4 +1,5 @@
-import uuid
+import hashlib
+import re
 from pinecone import Pinecone, ServerlessSpec
 
 INDEX_NAME = "discord-bot-context2"
@@ -19,7 +20,11 @@ class VectorStore:
         self.index = pc.Index(self.index_name)
 
     def store_additional_data(self, vector, summary):
-        unique_id = str(uuid.uuid4())  # Generate a unique ID
+        # Stable IDs make repeated writes of the same fact idempotent, even when
+        # the tool prepends a different timestamp on each invocation.
+        fact = re.sub(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}:\s*", "", summary).strip()
+        normalized = " ".join(fact.casefold().split())
+        unique_id = "memory-v1-" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()
         #print(f"Storing additional data: {summary} with uuid {unique_id} in namespace {namespace}")
         self.index.upsert(vectors=[{
             'id': unique_id,
@@ -39,7 +44,13 @@ class VectorStore:
             #print(f"index query results: {results}")
             # Extract the metadata from the closest matches
             if results and 'matches' in results and len(results['matches']) > 0:
-                closest_matches = [match['metadata'] for match in results['matches']]
+                closest_matches = [
+                    match["metadata"]["summary"]
+                    for match in results["matches"]
+                    if isinstance(match.get("metadata"), dict)
+                    and isinstance(match["metadata"].get("summary"), str)
+                    and match["metadata"]["summary"].strip()
+                ]
             else:
                 print("No matches found.")
                 closest_matches = []
