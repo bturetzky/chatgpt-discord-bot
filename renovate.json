@@ -12,19 +12,6 @@
   "timezone": "America/Los_Angeles",
   "automerge": false,
   "dependencyDashboard": true,
-  "packageRules": [
-    {
-      "matchManagers": [
-        "poetry"
-      ],
-      "matchUpdateTypes": [
-        "major"
-      ],
-      "groupName": "major Python dependency updates",
-      "groupSlug": "major-python-dependencies",
-      "separateMajorMinor": true
-    }
-  ],
   "lockFileMaintenance": {
     "enabled": true,
     "schedule": [
