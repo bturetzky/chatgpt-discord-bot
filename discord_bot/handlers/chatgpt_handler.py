@@ -48,7 +48,7 @@ class ChatGPTHandler:
                     tools=tools,
                     tool_choice="none" if attempt == MAX_FUNCTION_CALLS else "auto",
                 )
-                usage_metrics.add(response.usage)
+                usage_metrics.add(getattr(response, "usage", None))
                 # Retain all model output, including reasoning items and tool calls,
                 # so subsequent tool results have the context they require.
                 conversation.extend(
