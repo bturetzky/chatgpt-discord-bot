@@ -17,7 +17,6 @@ async def _main():
     # Start the bot and handle shutdown
     try:
         await discord_bot.start()
-    except KeyboardInterrupt:
-        print("Shutting down...")
+    finally:
         await discord_bot.shutdown()
 

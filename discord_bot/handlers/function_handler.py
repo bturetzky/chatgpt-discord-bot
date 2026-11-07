@@ -1,5 +1,5 @@
 from ..functions.base import BaseFunction
-import importlib, inspect, json, pkgutil
+import asyncio, importlib, inspect, json, pkgutil
 
 class FunctionHandler:
     def __init__(self):
@@ -29,7 +29,7 @@ class FunctionHandler:
                     args = json.loads(args)
                 instance = function_class()
                 result = instance.execute(args)
-                return await result if inspect.isawaitable(result) else result
+                return await asyncio.wait_for(result, timeout=30) if inspect.isawaitable(result) else result
             raise ValueError(f"Function {function_name} not found.")
         #TODO: Catch specific exceptions and return a more specific error message
         #TODO: handle timeouts errors

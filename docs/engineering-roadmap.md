@@ -14,6 +14,14 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 - **Verified:** Manual production promotion workflow implemented (PR #12). User ran it against main, reviewed and merged the resulting GitOps PR, confirmed dev/prod image digests match, observed production rollout, and confirmed the production bot remains responsive. No image rebuild or automatic production merge.
 - **Remaining:** SSRF protection, sensitive logging, memory isolation/retention, test coverage, shutdown/error handling, and search reliability remain open; see original findings below.
 
+## Reliability hardening PR (2026-11-07)
+
+- **Proposed, pending merge/dev validation:** Correct Discord shutdown to close the actual vector handler and always close resources when the client exits. Remove the obsolete Pinecone `deinit` call.
+- **Proposed:** Run synchronous Pinecone/embedding lookups and blocking weather, news and webpage HTTP calls off the Discord event loop; add network timeouts to weather calls and a 30-second async tool execution timeout.
+- **Proposed:** Continue responding if Discord history or memory retrieval fails; handle empty geocoding results and pages without article/div tags; add focused regression tests.
+- **Scope decision:** This bot serves five trusted friends on one Discord server. Shared memory across guild and DMs is intentional and acceptable. Defer Pinecone namespace/schema changes, retention work, logging cleanup and SSRF protections; revisit SSRF as P1 rather than a release blocker. No Pinecone data migration is planned.
+- **Validation needed:** Run regression tests and smoke-test dev (conversation, weather, memory retrieval, shutdown/restart) after merge. The existing legacy test suite remains a separate cleanup item.
+
 ## Priority guide
 
 - **P0:** security/correctness risks to address before expanding features
@@ -26,7 +34,7 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 1. **Completed — Fix async function dispatch** — `handlers/function_handler.py` defines synchronous `execute_function` returning `instance.execute(args)`, where the tool's `execute` is async; `chatgpt_handler.py` awaits the wrapper once, receiving a coroutine rather than its resolved value. Make dispatch async, await the implementation, and return a consistently serialized result. Add mocked tool-call round-trip tests.
 2. **Protect webpage fetching against SSRF** — `functions/get_webpage_contents.py` fetches model-provided URLs with `requests.get`. Restrict to http/https, reject loopback/private/link-local/metadata IPs (including DNS resolution and redirect targets), bound response size/content type, and consider an egress policy. This is particularly relevant inside a home Kubernetes network.
 3. **Remove sensitive prompt and memory logging** — `chatgpt_handler.py` prints full messages and model responses; `discord_handler.py` prints user messages and retrieved memories. Switch to structured, redacted logging with request IDs and no secrets/private conversation bodies by default.
-4. **Scope vector memory per user and environment** — `vectore_store.py` queries the shared index without namespace or metadata filter; `discord_handler.py` includes the author in query text but that is not an access boundary. Define explicit bot/environment, guild and user scope in stored metadata and query filters. Decide whether any shared memories are intentional; plan migration for existing unscoped entries.
+4. **Deferred — Memory namespace/retention improvements (shared memory intentional)** — `vectore_store.py` queries the shared index without namespace or metadata filter; `discord_handler.py` includes the author in query text but that is not an access boundary. Shared recall between server and DMs is intentional for this small trusted community. Do not migrate existing Pinecone records now; revisit optional metadata, retention and inspection only if useful.
 5. **Partially verified — Verify and repair memory tool end-to-end** — `functions/memory_function.py` calls `VectorHandler()` during function discovery; singleton initialization depends on ordering. Validate persistence, namespace metadata, and retrieval with integration tests. Memory is currently encouraged automatically in the system prompt; introduce deliberate retention/consent behavior.
 
 ## P1 — reliability and modern API
@@ -73,7 +81,7 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 ## Decisions and validation still needed
 
 - Live conversation and weather tool confirmed; memory retrieval observed in logs and write reported successful. Additional memory isolation/retention validation remains open.
-- Establish expected memory privacy: per-user by default, and whether guild-shared memory is ever desired.
+- Decision: guild/DM-shared memory is acceptable; no per-user isolation or schema migration planned now.
 - Decide which bot interactions need retention, deletion or opt-in.
 - Production bot responded successfully after promotion of the tested Responses API image; precise API model identity was not independently verified from response metadata.
 - Dev smoke tests completed for conversation and weather; web search exposed DuckDuckGo rate limiting. Expand automated coverage later.

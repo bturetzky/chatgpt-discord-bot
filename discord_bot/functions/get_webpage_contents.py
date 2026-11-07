@@ -1,3 +1,4 @@
+import asyncio
 import requests
 from .base import BaseFunction
 from bs4 import BeautifulSoup
@@ -28,7 +29,7 @@ class GetWebPageContents(BaseFunction):
             return "You need to provide a URL."
 
         try:
-            response = requests.get(url, timeout=10)
+            response = await asyncio.to_thread(requests.get, url, timeout=10)
             response.raise_for_status()  # Raise an HTTPError if one occurred
 
             soup = BeautifulSoup(response.content, 'lxml')
@@ -38,7 +39,7 @@ class GetWebPageContents(BaseFunction):
                 tag.decompose()
             
             # Find the tag with the highest score
-            main_content_tag = max(soup.find_all(['div', 'article'], recursive=True), key=self.score_tag)
+            main_content_tag = max(soup.find_all(['div', 'article'], recursive=True), key=self.score_tag, default=soup)
 
             # Extract and clean up the text
             text = main_content_tag.get_text()
@@ -50,5 +51,5 @@ class GetWebPageContents(BaseFunction):
             text = text[:4000] + "..." if len(text) > 4000 else text
             return text
         
-        except requests.RequestException as e:
+        except (requests.RequestException, ValueError) as e:
             return f"Error fetching the webpage: {e}"

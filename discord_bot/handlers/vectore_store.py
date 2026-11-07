@@ -51,4 +51,5 @@ class VectorStore:
 
 
     async def close(self):
-        pinecone.deinit()
+        # Pinecone's client/index use HTTP connections; no global deinit API exists.
+        # The SDK manages connection cleanup; retain this hook for the handler.
