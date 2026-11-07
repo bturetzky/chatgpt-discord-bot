@@ -31,7 +31,17 @@ class FunctionHandler:
                 instance = function_class()
                 result = instance.execute(args)
                 result = await asyncio.wait_for(result, timeout=30) if inspect.isawaitable(result) else result
-                logging.info('Tool completed: name=%s duration_ms=%d', function_name, int((time.monotonic() - started) * 1000))
+                failed = False
+                if isinstance(result, str):
+                    try:
+                        payload = json.loads(result)
+                        failed = isinstance(payload, dict) and payload.get("ok") is False
+                    except (ValueError, TypeError):
+                        pass
+                logging.log(logging.WARNING if failed else logging.INFO,
+                            'Tool %s: name=%s duration_ms=%d',
+                            'reported failure' if failed else 'completed',
+                            function_name, int((time.monotonic() - started) * 1000))
                 return result
             raise ValueError(f"Function {function_name} not found.")
         #TODO: Catch specific exceptions and return a more specific error message
