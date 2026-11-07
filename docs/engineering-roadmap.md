@@ -132,9 +132,9 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 ## Memory capture and recall improvement (proposed PR, 2026-11-07)
 
 - Encourage proactive capture of durable ordinary facts, plans, preferences and ongoing project context, with standalone statements identifying the subject. Do not store credentials or repeat identical facts in a turn.
-- Include the speaker's readable Discord display name and numeric ID alongside the incoming message for recall. This is a relevance hint, not an ownership boundary; existing memories have no user-ID metadata. Shared memory remains intentional.
+- Retrieve against the recent multi-person conversation: up to six user turns (bounded to 2400 characters), with readable Discord names and stable IDs in history. The model sees the wider recent conversation and is instructed to attribute facts to any participant, not just the user who mentioned the bot. This is a relevance hint, not an ownership boundary; existing memories have no user-ID metadata. Shared memory remains intentional.
 - Pass the stored summary strings to the model instead of raw Pinecone metadata dictionaries. Preserve existing Pinecone index, embeddings, top-nine nearest-neighbor retrieval and stored records.
-- Add focused regression coverage. **CI and live dev validation pending.** No score threshold, automatic deduplication or index migration in this change; evaluate retrieval relevance and conflicting memories separately.
+- Add focused regression coverage for multi-person queries, bounds and clean memory summaries. **CI and live dev validation pending.** No score threshold, automatic deduplication or index migration in this change; evaluate retrieval relevance and conflicting memories separately.
 
 ## Memory implementation review (2026-11-07)
 
