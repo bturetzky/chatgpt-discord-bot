@@ -27,6 +27,16 @@ class ChatUsageTests(unittest.TestCase):
         with patch.dict(os.environ, {"OPENAI_INPUT_USD_PER_1M": "0", "OPENAI_OUTPUT_USD_PER_1M": "0"}):
             self.assertIsNone(ChatUsage("test-model").estimated_cost_usd())
 
+    def test_terra_default_rates(self):
+        with patch.dict(os.environ, {}, clear=True):
+            usage = ChatUsage("gpt-6.1-terra")
+            usage.add(SimpleNamespace(input_tokens=1000, output_tokens=200, input_tokens_details=SimpleNamespace(cached_tokens=300)))
+            self.assertAlmostEqual(usage.estimated_cost_usd(), (700 * 1 + 300 * .05 + 200 * 5) / 1_000_000)
+
+    def test_unknown_model_is_unconfigured(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertIsNone(ChatUsage("unknown-model").estimated_cost_usd())
+
     def test_missing_usage(self):
         usage = ChatUsage("test-model")
         usage.add(None)
