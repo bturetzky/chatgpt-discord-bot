@@ -9,10 +9,14 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 - **Implemented:** Modern OpenAI Responses API integration, configurable model, updated SDK and Poetry lockfile, async tool dispatch, focused regression tests, and serialization of response output for follow-up tool calls (PRs #10 and #11). Dev Discord basic conversation and weather tool succeeded after the fix.
 - **Observed:** Memory retrieval appears in dev logs and the bot reported a successful memory write; a separate retrieval test is not required for the current promotion decision. Memory privacy and retention quality remain open engineering concerns.
 - **Observed:** Web search failed twice because DuckDuckGo returned HTTP `202 Ratelimit`. The bot reported failure without crashing. Search-provider reliability is a separate issue, not a blocker for promoting the working API migration.
-- **Deferred:** Improve search provider reliability/fallback, make rate-limit errors explicit to the model to avoid immediate retries, and tighten memory-write criteria to avoid saving trivial interactions.
+- **In progress (PR pending, 2026-11-07):** Web search returns structured, model-readable rate-limit/timeout/provider/no-result errors; no immediate rate-limit retry, with one lightweight-backend attempt only for empty results. Dispatcher distinguishes reported tool failures from successes. Live DDG reliability remains provider-dependent; consider a separate provider if limits persist. Memory-write criteria still need tightening.
 - **Deferred:** Add Renovate for Poetry `pyproject.toml` and `poetry.lock`: weekly dependency PRs, periodic lockfile maintenance, major upgrades separate, no automerge initially. Bot main merges automatically deploy to dev, so dependency PRs should be reviewed and validated before merge. Not started.
 - **Verified:** Manual production promotion workflow implemented (PR #12). User ran it against main, reviewed and merged the resulting GitOps PR, confirmed dev/prod image digests match, observed production rollout, and confirmed the production bot remains responsive. No image rebuild or automatic production merge.
 - **Remaining:** SSRF protection, sensitive logging, memory isolation/retention, test coverage, shutdown/error handling, and search reliability remain open; see original findings below.
+
+## Production validation (2026-11-07)
+
+- **Confirmed by operator:** Logging cleanup and gateway intent changes deployed to production, production bot responsive. Dev smoke test exercised weather, webpage fetch, IGDB, news and memory write. DDG search returned RatelimitException and was handled without crashing. New search error-handling work remains unvalidated.
 
 ## Logging cleanup and smoke-test correction (proposed PR, 2026-11-07)
 
