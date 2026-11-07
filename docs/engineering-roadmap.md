@@ -4,6 +4,12 @@
 
 This roadmap covers application code. The separate [deployment workflow](deployment-workflow.md) covers CI, image publishing, dev deployment and production promotion. Deployment manifests remain authoritative in [homelab-gitops](https://github.com/bturetzky/homelab-gitops).
 
+## Runtime modernization PR — Python 3.12 compatibility step (2026-11-07)
+
+- **Proposed, not yet validated:** Switch the container from `python:3.10-slim` to `python:3.12-slim` while retaining the existing Poetry 1.8.3 and dependency lockfile. The current locked NumPy 1.26.4 and lxml 4.9.4 make a direct jump to Python 3.14 inappropriate without a dependency refresh.
+- CI Docker build must install locked packages and pass the full regression suite; after merge, smoke-test the dev bot (conversation, memory, Brave search, weather) before production promotion.
+- **Next:** Audit and remove unused dependencies, refresh Poetry and the lockfile, then target Python 3.14. Do not claim this interim runtime upgrade completes dependency modernization.
+
 ## Latest checkpoint — memory PR #22 and next modernization work (2026-11-07)
 
 - **Confirmed:** PR #22 passed the Docker build and test suite, was merged to main, and deployed to dev. Operator reports satisfactory limited dev testing. A two-person conversation test with Alan remains outstanding because he was unavailable; do not claim full multi-person recall was validated.
