@@ -52,9 +52,13 @@ class ResponsesTests(unittest.IsolatedAsyncioTestCase):
             "get_weather", {"city": "Seattle"}
         )
         second_input = self.handler.client.responses.create.await_args.kwargs["input"]
-        self.assertEqual(second_input[-1], {
+        tool_outputs = [
+            item for item in second_input
+            if isinstance(item, dict) and item.get("type") == "function_call_output"
+        ]
+        self.assertEqual(tool_outputs, [{
             "type": "function_call_output", "call_id": "call-123", "output": "Rain"
-        })
+        }])
 
     async def test_function_handler_awaits_coroutines(self):
         handler = FunctionHandler.__new__(FunctionHandler)
