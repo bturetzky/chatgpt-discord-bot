@@ -14,11 +14,18 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 - **Verified:** Manual production promotion workflow implemented (PR #12). User ran it against main, reviewed and merged the resulting GitOps PR, confirmed dev/prod image digests match, observed production rollout, and confirmed the production bot remains responsive. No image rebuild or automatic production merge.
 - **Remaining:** SSRF protection, sensitive logging, memory isolation/retention, test coverage, shutdown/error handling, and search reliability remain open; see original findings below.
 
-## Tool and API regression coverage (proposed PR, 2026-11-07)
+## Memory regression coverage and dev smoke runbook (proposed PR, 2026-11-07)
+
+- Add mocked embedding/Pinecone retrieval, upsert, error and empty-result tests, memory tool persistence, and Discord injection of retrieved memories into model context. No live Pinecone changes, migrations or credentials.
+- Add [dev smoke-test runbook](dev-smoke-test.md) for rollout, conversation, weather, DDG search, webpage fetching, existing-memory recall, optional restart and explicit production promotion.
+- **Validation pending:** PR CI. Manual dev smoke checks remain separate from CI; memory writes are not part of routine smoke tests.
+- **Confirmed:** User reported PR #16 green and merged.
+
+## Tool and API regression coverage (merged PR #16, 2026-11-07)
 
 - Add mocked tests for multi-call Responses API correlation, malformed/non-object tool arguments, tool error propagation, empty responses, and OpenAI timeouts.
 - Cover weather geocoding and forecast failures, forecast trimming, webpage HTTP failures and parser fallback/truncation, and DDG rate-limit fallback. No external requests or credentials.
-- **Pending PR CI:** New tests are discovered automatically by the Docker image build; CI success is required before merge. This is deterministic component-level testing, not live integration.
+- **Validated:** User reported green CI and merged PR #16. New tests are discovered automatically by the Docker image build; CI success is required before merge. This is deterministic component-level testing, not live integration.
 - Next: memory write/retrieval tests, message edge cases, and documented post-deployment live smoke tests. Do not change shared Pinecone memory behavior.
 
 ## Test suite modernization (merged PR #15, 2026-11-07)
