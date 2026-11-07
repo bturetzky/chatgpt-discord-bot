@@ -1,139 +1,93 @@
+"""OpenAI Responses API integration for the Discord bot."""
+import asyncio
+import json
+import os
 from datetime import datetime
-from .function_handler import FunctionHandler
-import openai, json, asyncio
-from openai.error import OpenAIError
-from requests.exceptions import RequestException
 
-# The model to use for the chatbot
-GPT_MODEL = "gpt-5"  # This model gets rate limited so hard
-#GPT_MODEL = "gpt-4-1106-preview"  # This model gets rate limited so hard
-#GPT_MODEL = "gpt-3.5-turbo-0613"  # This model has a small context window so not much works
+from openai import AsyncOpenAI, OpenAIError
+
+from .function_handler import FunctionHandler
+
+GPT_MODEL = os.getenv("OPENAI_MODEL", "gpt-6.1-terra")
+MAX_FUNCTION_CALLS = 11
+
 
 class ChatGPTHandler:
     def __init__(self, openai_apikey, send_interim_message_callback=None):
         self.bot_mention = None
-        openai.api_key = openai_apikey
+        self.client = AsyncOpenAI(api_key=openai_apikey)
         self.send_interim_message = send_interim_message_callback
         self.function_handler = FunctionHandler()
 
     def get_response_system_prompt_content(self, bot_mention):
         current_date_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        knowledge_cutoff = "2024-09-30"
-        prompt_statements = [
+        return " ".join([
             f"Yo, you're {bot_mention}, the snazzy bro-bot in this Discord server.",
-            "Remember, you're among friends here, so keep it real, keep it sassy, and don't hold back.",
-            f"Today's date and time is {current_date_time}, but keep in mind my training data only goes up until {knowledge_cutoff}.",
-            "You've got a bunch of cool functions at your disposal. Use them to make life easier for everyone here. That includes searching the web, fetching content, and more."
-            "Storing memories is probably your most powerful function. Anytime someone shares something new (their likes, dislikes, or anything you think would help you interact better next time), store it. Think of it as your personal cheat sheet for each user.",
-            "If something's unclear, just ask. Go wild!"
-        ]
+            "Remember, you're among friends here, so keep it real, keep it sassy.",
+            f"Today's date and time is {current_date_time}.",
+            "You have tools for searching, fetching content, and storing useful memories.",
+            "Use the store_memory tool for important user preferences or details.",
+            "If something's unclear, ask.",
+        ])
 
-        prompt = " ".join(prompt_statements)
-        return prompt
-
-        
     async def get_response(self, messages, channel):
-        # 1. Pass messages to OpenAI API
-        # 2. If a function needs to be executed:
-        #    a. Call self.send_interim_message if provided
-        #    b. Call self.function_handler.process_functions()
-        # 3. Return the response to DiscordHandler
-        # 4. Update the vector store with the response and context
-        # 5. Repeat from step 1
-
-        system_prompt = {
-            "role": "system",
-            "content": self.get_response_system_prompt_content(self.bot_mention)
-        }
-
-        messages.insert(0, system_prompt)
-
-        MAX_FUNCTION_CALLS = 11  # Maximum number of function calls to make before giving up
+        # Discord history and retrieved memories are already ordinary role/content
+        # messages. Responses accepts these directly; legacy function-role messages
+        # must never be constructed.
+        conversation = list(messages)
+        tools = [
+            {"type": "function", **definition}
+            for definition in self.function_handler.api_functions
+        ]
+        instructions = self.get_response_system_prompt_content(self.bot_mention)
 
         try:
-            function_calls_count = 0
-            while True:  # Start a loop to keep asking the model until we get a non-function reply
-                print("----- Sending prompt to OpenAI API -----")
-                # True debug spam
-                print(messages)
+            for attempt in range(MAX_FUNCTION_CALLS + 1):
+                response = await self.client.responses.create(
+                    model=GPT_MODEL,
+                    instructions=instructions,
+                    input=conversation,
+                    tools=tools,
+                    tool_choice="none" if attempt == MAX_FUNCTION_CALLS else "auto",
+                )
+                # Retain all model output, including reasoning items and tool calls,
+                # so subsequent tool results have the context they require.
+                conversation.extend(response.output)
+                calls = [
+                    item for item in response.output
+                    if item.type == "function_call"
+                ]
+                if not calls:
+                    reply = response.output_text or ""
+                    if self.bot_mention:
+                        reply = reply.replace(f"{self.bot_mention}: ", "")
+                    return reply.strip() or "Sorry, I couldn't generate a response."
 
-                if function_calls_count >= MAX_FUNCTION_CALLS:
-                    force_final_response = {"function_call": None}
-                else:
-                    force_final_response = {"function_call": "auto"}
-                response = openai.ChatCompletion.create(model=GPT_MODEL,
-                                                        messages=messages, 
-                                                        functions=self.function_handler.api_functions,
-                                                        **force_final_response)
-                response_content = response.choices[0].message
-                await asyncio.sleep(3)  # Add a 1-second delay between messages
-
-                print(f"response_content: {response_content}")
-
-                if response_content.get("function_call"):
-                    function_calls_count += 1  # Increment the counter
-                    function_name = response_content["function_call"]["name"]
-                    function_args = json.loads(response_content["function_call"]["arguments"])
-                    
-                    # Call the function handler to execute the function
-                    function_response = await self.function_handler.execute_function(function_name, function_args)
-
-                    # If there is content send an interim message to the user
-                    if response_content.get("content") is not None:
-                        await self.send_interim_message(channel, response_content["content"])  # Send the interim message to the user
-                        response_content["content"] = None  # Remove the content from the response
-                    if function_args.get("quick_update") is not None: 
-                        await self.send_interim_message(channel, function_args["quick_update"]) # Send the interim message to the user
-
-                    # Send the info on the function call and function response to GPT
-                    messages.append(response_content)  # extend conversation with assistant's reply
-                    messages.append(
-                        {
-                            "role": "function",
-                            "name": function_name,
-                            "content": function_response,
-                        }
-                    )  # extend conversation with function response
-                    
-                    # Go back to the start of the loop and ask the model again.
-                    
-                    continue
-                else:
-                    reply = response_content["content"]
-                    messages.append(response_content)
-                    # Remove the AI's mention from the response
-                    reply = reply.replace(f"{self.bot_mention}: ", '').strip()
-                    print(reply)
-                    return reply
-
-        except OpenAIError as e:
-            print(f"Error from OpenAI: {e}")
-            return f"Sorry, there was an error processing your request with OpenAI. Please try again later. {e}"
-        except RequestException as e:
-            print(f"Network error: {e}")
-            return "Sorry, there was a network error. Please try again later."
-        except asyncio.TimeoutError:
-            return "Sorry, the request took too long. Please try again later."
-        
-    #TODO: Remove this if the memory function works out
-    async def get_summary(self, messages):
-        messages.append({
-            "role": "system",
-            "content": utilities.get_summary_prompt_content(self.bot_mention)
-        })
-        try:
-            summary_response = openai.ChatCompletion.create(model="gpt-4",
-                                                messages=messages)
-            await asyncio.sleep(3)  # Add a 1-second delay between messages
-        except OpenAIError as e:
-            print(f"Error from OpenAI: {e}")
+                for call in calls:
+                    try:
+                        arguments = json.loads(call.arguments)
+                        if not isinstance(arguments, dict):
+                            raise ValueError("Tool arguments must be an object")
+                        if arguments.get("quick_update") and self.send_interim_message:
+                            await self.send_interim_message(channel, arguments["quick_update"])
+                        result = await self.function_handler.execute_function(call.name, arguments)
+                    except (ValueError, json.JSONDecodeError) as exc:
+                        result = f"Invalid tool arguments: {exc}"
+                    conversation.append({
+                        "type": "function_call_output",
+                        "call_id": call.call_id,
+                        "output": str(result),
+                    })
+            return "Sorry, I reached the limit for tool calls."
+        except (OpenAIError, asyncio.TimeoutError) as exc:
+            print(f"OpenAI request failed: {type(exc).__name__}: {exc}")
             return "Sorry, there was an error processing your request with OpenAI. Please try again later."
-        except RequestException as e:
-            print(f"Network error: {e}")
-            return "Sorry, there was a network error. Please try again later."
-        summary = summary_response.choices[0].message
-        #print(f"Summary: {summary}")
-        print("Got summary from OpenAI API...")
-        return summary
 
-        
+    async def get_summary(self, messages):
+        # Kept for compatibility with the currently disabled summary workflow.
+        response = await self.client.responses.create(
+            model=GPT_MODEL,
+            instructions="Summarize this conversation concisely.",
+            input=list(messages),
+        )
+        return response.output_text
