@@ -7,9 +7,14 @@ import logging
 import os
 
 
-def _price(name):
+DEFAULT_MODEL_RATES = {
+    "gpt-6.1-terra": (1.0, 0.05, 5.0),  # Standard API USD per 1M tokens, 2026-11-07
+}
+
+
+def _price(name, default=0):
     try:
-        value = float(os.getenv(name, "0"))
+        value = float(os.getenv(name, str(default)))
         return value if value >= 0 else 0.0
     except ValueError:
         return 0.0
@@ -33,9 +38,10 @@ class ChatUsage:
         self.cached_input_tokens += (getattr(details, "cached_tokens", 0) or 0)
 
     def estimated_cost_usd(self):
-        input_rate = _price("OPENAI_INPUT_USD_PER_1M")
-        cached_rate = _price("OPENAI_CACHED_INPUT_USD_PER_1M")
-        output_rate = _price("OPENAI_OUTPUT_USD_PER_1M")
+        defaults = DEFAULT_MODEL_RATES.get(self.model, (0, 0, 0))
+        input_rate = _price("OPENAI_INPUT_USD_PER_1M", defaults[0])
+        cached_rate = _price("OPENAI_CACHED_INPUT_USD_PER_1M", defaults[1])
+        output_rate = _price("OPENAI_OUTPUT_USD_PER_1M", defaults[2])
         if not input_rate or not output_rate:
             return None
         cached = min(self.cached_input_tokens, self.input_tokens)
