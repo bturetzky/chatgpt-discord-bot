@@ -62,6 +62,9 @@ jobs:
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    concurrency:
+      group: discord-dev-gitops
+      cancel-in-progress: true
     steps:
       - name: Create short-lived GitHub App token
         id: app-token
@@ -105,7 +108,7 @@ jobs:
           path.write_text(updated)
           PY
 
-      - name: Open and enable auto-merge for GitOps PR
+      - name: Open and immediately merge dev-only GitOps PR
         working-directory: gitops
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -128,4 +131,4 @@ jobs:
             --title "gitops(discord-dev): deploy bot ${SOURCE_SHA:0:12}" \
             --body "Automated dev-only deployment from [bot commit](https://github.com/bturetzky/chatgpt-discord-bot/commit/$SOURCE_SHA). Image: \`ghcr.io/bturetzky/chatgpt-discord-bot@$IMAGE_DIGEST\`. Production unchanged.")"
           echo "Created $pr_url"
-          gh pr merge "$pr_url" --squash --auto --delete-branch
+          gh pr merge "$pr_url" --squash --delete-branch --match-head-commit "$(git rev-parse HEAD)"
