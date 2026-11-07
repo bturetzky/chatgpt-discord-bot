@@ -52,7 +52,10 @@ class ChatGPTHandler:
                 )
                 # Retain all model output, including reasoning items and tool calls,
                 # so subsequent tool results have the context they require.
-                conversation.extend(response.output)
+                conversation.extend(
+                    item.model_dump(exclude_none=True, mode="json")
+                    for item in response.output
+                )
                 calls = [
                     item for item in response.output
                     if item.type == "function_call"

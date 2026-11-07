@@ -2,15 +2,23 @@
 import json
 import unittest
 from types import SimpleNamespace
+from pydantic import BaseModel
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from discord_bot.handlers.chatgpt_handler import ChatGPTHandler
 from discord_bot.handlers.function_handler import FunctionHandler
 
 
+class OutputItem(BaseModel):
+    type: str
+    call_id: str | None = None
+    name: str | None = None
+    arguments: str | None = None
+
+
 def text_response(text):
     return SimpleNamespace(
-        output=[SimpleNamespace(type="message")],
+        output=[OutputItem(type="message")],
         output_text=text,
     )
 
@@ -34,7 +42,7 @@ class ResponsesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["input"][0], history[0])
 
     async def test_tool_round_trip_uses_call_id(self):
-        call = SimpleNamespace(
+        call = OutputItem(
             type="function_call", call_id="call-123",
             name="get_weather", arguments=json.dumps({"city": "Seattle"}),
         )
@@ -56,6 +64,7 @@ class ResponsesTests(unittest.IsolatedAsyncioTestCase):
             item for item in second_input
             if isinstance(item, dict) and item.get("type") == "function_call_output"
         ]
+        self.assertIsInstance(second_input[0], dict)
         self.assertEqual(tool_outputs, [{
             "type": "function_call_output", "call_id": "call-123", "output": "Rain"
         }])
