@@ -165,17 +165,87 @@ class LoggingRegressions(unittest.TestCase):
 
 
 class SearchToolRegressions(unittest.IsolatedAsyncioTestCase):
-    async def test_missing_query(self):
-        self.assertIn("No search query", await SearchWeb().execute({}))
+    def mock_response(self, status=200, payload=None):
+        response = MagicMock()
+        response.status = status
+        response.json = AsyncMock(return_value=payload if payload is not None else {
+            "web": {"results": [{"title": "Python docs", "url": "https://docs.python.org/3/"}]}
+        })
+        response.__aenter__ = AsyncMock(return_value=response)
+        response.__aexit__ = AsyncMock(return_value=None)
+        session = MagicMock()
+        session.get.return_value = response
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=None)
+        return session
 
-    async def test_ddg_rate_limit_is_graceful(self):
-        client = MagicMock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=None)
-        client.text.side_effect = RuntimeError("202 Ratelimit")
-        with patch("discord_bot.functions.search_web.AsyncDDGS", return_value=client):
-            result = await SearchWeb().execute({"query": "Python docs"})
-        self.assertIn("error occurred while searching", result)
+    async def test_missing_query(self):
+        self.assertEqual(json.loads(await SearchWeb().execute({}))["error"]["code"], "INVALID_ARGUMENT")
+
+    async def test_missing_key(self):
+        with patch.dict("os.environ", {}, clear=True):
+            result = json.loads(await SearchWeb().execute({"query": "Python"}))
+        self.assertEqual(result["error"]["code"], "CONFIG_ERROR")
+
+    async def test_success(self):
+        session = self.mock_response()
+        with patch.dict("os.environ", {"BRAVE_SEARCH_API_KEY": "test-secret"}), \
+             patch("discord_bot.functions.search_web.aiohttp.ClientSession", return_value=session):
+            result = json.loads(await SearchWeb().execute({"query": "Python"}))
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["results"][0]["url"], "https://docs.python.org/3/")
+        self.assertEqual(session.get.call_args.kwargs["headers"]["X-Subscription-Token"], "test-secret")
+
+    async def test_rate_limit_is_explicit(self):
+        session = self.mock_response(status=429)
+        with patch.dict("os.environ", {"BRAVE_SEARCH_API_KEY": "test-secret"}), \
+             patch("discord_bot.functions.search_web.aiohttp.ClientSession", return_value=session):
+            result = json.loads(await SearchWeb().execute({"query": "Python"}))
+        self.assertEqual(result["error"]["code"], "RATE_LIMITED")
+        self.assertFalse(result["error"]["retryable"])
+        session.get.assert_called_once()
+
+    async def test_auth_error(self):
+        session = self.mock_response(status=401)
+        with patch.dict("os.environ", {"BRAVE_SEARCH_API_KEY": "test-secret"}), \
+             patch("discord_bot.functions.search_web.aiohttp.ClientSession", return_value=session):
+            result = json.loads(await SearchWeb().execute({"query": "Python"}))
+        self.assertEqual(result["error"]["code"], "AUTH_ERROR")
+
+    async def test_no_results(self):
+        session = self.mock_response(payload={"web": {"results": []}})
+        with patch.dict("os.environ", {"BRAVE_SEARCH_API_KEY": "test-secret"}), \
+             patch("discord_bot.functions.search_web.aiohttp.ClientSession", return_value=session):
+            result = json.loads(await SearchWeb().execute({"query": "Python"}))
+        self.assertEqual(result["error"]["code"], "NO_RESULTS")
+
+    async def test_timeout_returns_structured_error(self):
+        session = self.mock_response()
+        session.get.side_effect = asyncio.TimeoutError()
+        with patch.dict("os.environ", {"BRAVE_SEARCH_API_KEY": "test-secret"}), \
+             patch("discord_bot.functions.search_web.aiohttp.ClientSession", return_value=session):
+            result = json.loads(await SearchWeb().execute({"query": "Python"}))
+        self.assertEqual(result["error"]["code"], "TIMEOUT")
+
+    async def test_network_failure_returns_structured_error(self):
+        from aiohttp import ClientConnectionError
+        session = self.mock_response()
+        session.get.side_effect = ClientConnectionError("connection refused")
+        with patch.dict("os.environ", {"BRAVE_SEARCH_API_KEY": "test-secret"}), \
+             patch("discord_bot.functions.search_web.aiohttp.ClientSession", return_value=session):
+            result = json.loads(await SearchWeb().execute({"query": "Python"}))
+        self.assertEqual(result["error"]["code"], "PROVIDER_ERROR")
+
+    async def test_malformed_provider_response_returns_error(self):
+        session = self.mock_response(payload={"web": {"results": "not a list"}})
+        with patch.dict("os.environ", {"BRAVE_SEARCH_API_KEY": "test-secret"}), \
+             patch("discord_bot.functions.search_web.aiohttp.ClientSession", return_value=session):
+            result = json.loads(await SearchWeb().execute({"query": "Python"}))
+        self.assertEqual(result["error"]["code"], "PROVIDER_ERROR")
+
+    async def test_invalid_result_count(self):
+        result = json.loads(await SearchWeb().execute({"query": "Python", "max_results": 99}))
+        self.assertEqual(result["error"]["code"], "INVALID_ARGUMENT")
 
 
 if __name__ == "__main__":
