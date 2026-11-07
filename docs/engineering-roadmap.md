@@ -11,6 +11,10 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 - **Scope:** USD estimate covers Responses usage only; embedding calls, Pinecone, Brave/weather services and infrastructure are not included. Actual billing can differ. Logs are emitted even when a Responses request fails (with usage collected up to that point).
 - **Validation:** Verify log line after a simple message and a tool-using message, then check configured prices and totals against API usage.
 
+## Memory retrieval observability (2026-11-07)
+
+- Log semantic, relationship, and deduplicated memory counts at INFO level for each processed Discord request. Counts only; no memory content or participant identifiers are logged. This supports dev validation and production troubleshooting alongside the existing per-chat token/cost metrics.
+
 ## Relationship memory retrieval (proposed, 2026-11-07)
 
 - **Implementation proposed:** Store optional `memory_type` and `participant_ids` in existing Pinecone metadata. New relationship memories can be filtered by Discord ID; older unstructured records remain available via ordinary semantic search without migration.
