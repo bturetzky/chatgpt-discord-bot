@@ -1,19 +1,19 @@
 # Engineering roadmap and code review
 
-**Reviewed:** 2026-11-07 | **Status:** Living roadmap; recent memory improvements merged and dev-tested, production promotion underway.
+**Reviewed:** 2026-11-07 | **Status:** Living roadmap; Python 3.12 runtime upgrade validated and promoted.
 
 This roadmap covers application code. The separate [deployment workflow](deployment-workflow.md) covers CI, image publishing, dev deployment and production promotion. Deployment manifests remain authoritative in [homelab-gitops](https://github.com/bturetzky/homelab-gitops).
 
-## Runtime modernization PR — Python 3.12 compatibility step (2026-11-07)
+## Runtime modernization PR #23 — Python 3.12 compatibility step (2026-11-07)
 
-- **Proposed, not yet validated:** Switch the container from `python:3.10-slim` to `python:3.12-slim` while retaining the existing Poetry 1.8.3 and dependency lockfile. The current locked NumPy 1.26.4 and lxml 4.9.4 make a direct jump to Python 3.14 inappropriate without a dependency refresh.
-- CI Docker build must install locked packages and pass the full regression suite; after merge, smoke-test the dev bot (conversation, memory, Brave search, weather) before production promotion.
+- **Completed and verified:** PR #23 switched the container from `python:3.10-slim` to `python:3.12-slim` while retaining Poetry 1.8.3 and the dependency lockfile. Operator confirmed green CI, successful dev smoke tests, and production promotion. The current locked NumPy 1.26.4 and lxml 4.9.4 make a direct jump to Python 3.14 inappropriate without a dependency refresh.
+- **Validation:** Docker build and regression suite passed; dev smoke tests passed; operator confirmed production promotion. Individual dev smoke test coverage was not enumerated.
 - **Next:** Audit and remove unused dependencies, refresh Poetry and the lockfile, then target Python 3.14. Do not claim this interim runtime upgrade completes dependency modernization.
 
 ## Latest checkpoint — memory PR #22 and next modernization work (2026-11-07)
 
 - **Confirmed:** PR #22 passed the Docker build and test suite, was merged to main, and deployed to dev. Operator reports satisfactory limited dev testing. A two-person conversation test with Alan remains outstanding because he was unavailable; do not claim full multi-person recall was validated.
-- **In progress:** Operator initiated production promotion of the memory changes. Production rollout and post-promotion smoke checks are **not yet confirmed**.
+- **Historical checkpoint:** Operator initiated production promotion of the memory changes; later confirmed Python 3.12 deployment was promoted after dev smoke tests. Separate memory-specific production recall validation was not reported.
 - **Implemented in PR #22:** Recent multi-person Discord history now carries readable speaker names and stable IDs; Pinecone retrieval queries use up to six recent user turns (2400-character bound); memory guidance encourages capturing useful attributed facts from any participant; retrieved metadata is presented as clean summary text; deterministic IDs make exact normalized repeated writes idempotent. Existing UUID memories remain; paraphrases and conflicting facts are not deduplicated.
 - **Next recommended work:** Upgrade the Python 3.10 container runtime (upstream EOL October 2026), clean unused direct dependencies such as `duckduckgo-search` after import verification, and update the Poetry lockfile in small validated PRs. Current Dockerfile uses `python:3.10-slim` and Poetry 1.8.3; `pyproject.toml` allows Python ^3.10 and retains several legacy packages. Prefer a supported Python 3.13/3.14 target after compatibility checks; do not combine wholesale library majors with the runtime change.
 - **Dependency maintenance:** Audit direct imports and transitive constraints before removing packages; configure Renovate for weekly Poetry dependency PRs with no automerge once the runtime/lockfile baseline is healthy. Keep major upgrades separate and smoke-test dev before production promotion.
