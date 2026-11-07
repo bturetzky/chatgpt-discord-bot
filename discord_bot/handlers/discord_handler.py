@@ -103,7 +103,7 @@ class DiscordHandler:
             for item in reversed(messages):
                 if item.get("role") != "user":
                     continue
-                for match in re.findall(r"<@!?(\d+)>", item.get("content", "")):
+                for match in re.findall(r"Discord ID (\d+)", item.get("content", "")):
                     if match not in participant_ids and len(participant_ids) < 3:
                         participant_ids.append(match)
             try:
