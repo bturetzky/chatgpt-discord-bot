@@ -22,7 +22,7 @@ class VectorStore:
     def store_additional_data(self, vector, summary):
         # Stable IDs make repeated writes of the same fact idempotent, even when
         # the tool prepends a different timestamp on each invocation.
-        fact = re.sub(r"^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}:\\s*", "", summary).strip()
+        fact = re.sub(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}:\s*", "", summary).strip()
         normalized = " ".join(fact.casefold().split())
         unique_id = "memory-v1-" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()
         #print(f"Storing additional data: {summary} with uuid {unique_id} in namespace {namespace}")
