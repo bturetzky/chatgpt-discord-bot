@@ -4,12 +4,13 @@
 **Verified:** 2026-11-07  
 **Repositories:** [chatgpt-discord-bot](https://github.com/bturetzky/chatgpt-discord-bot) and [homelab-gitops](https://github.com/bturetzky/homelab-gitops)
 
-## Verified implementation and first production promotion
+## Verified implementation and production promotions
 
 - PR checks run focused Responses API tests and Docker build without publishing; main builds publish a SHA-tagged GHCR image and update dev GitOps to the published immutable digest through a GitHub App-created, automatically merged PR.
 - Dev Argo CD rollout and Discord conversation/weather behavior were verified. The Responses API serialization bug was corrected in PR #11.
 - Manual promotion workflow [`promote-prod.yml`](../.github/workflows/promote-prod.yml) was implemented in PR #12. It reads the digest currently pinned in dev GitOps and opens a **review-only** production GitOps PR; it never rebuilds or auto-merges.
 - **First production promotion confirmed by user:** workflow run against main; resulting GitOps PR reviewed and merged; dev/prod digests matched; production rollout occurred; production Discord bot remained responsive.
+- **Latest checkpoint (2026-11-07):** operator confirmed the PR #27 unused-dependency cleanup was merged and promoted to production after a green Docker build. Post-promotion live smoke-test details were not separately reported.
 - **To promote again:** verify dev, run **Actions → Promote Discord bot to production → Run workflow** on main, review and merge the GitOps production PR, verify Argo CD rollout and live bot response. If prod already pins the same digest, no PR is opened.
 - **Rollback:** revert the production promotion commit in GitOps and verify the resulting rollout. Data/external side effects may not roll back with the image.
 
@@ -50,7 +51,7 @@ Make bot changes safely and repeatably: validate pull requests, publish one immu
 
 - Update deprecated/old GitHub Actions versions.
 - Improve Docker layer caching and pin build tooling/dependencies appropriately.
-- Evaluate moving from Python 3.10 to a newer supported version, with compatibility testing.
+- Python 3.12 runtime migration is complete and promoted; assess future Python 3.14 compatibility only after dependency updates.
 - Reconcile application version metadata (`0.2.0`) with published image versioning (`1.0.4`); decide whether semantic release tags are needed alongside SHA images.
 - OpenAI SDK and Responses API modernization completed; continue expanding integration tests.
 - Assess test quality/coverage and add meaningful bot behavior tests.
