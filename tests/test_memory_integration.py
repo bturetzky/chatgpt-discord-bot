@@ -70,6 +70,7 @@ class DiscordMemoryIntegrationTests(unittest.IsolatedAsyncioTestCase):
         handler.vector_handler.get_relevant_contexts.return_value = [
             "likes gardening", "likes sci-fi"
         ]
+        handler.vector_handler.get_relationship_contexts.return_value = []
         with patch("discord_bot.handlers.discord_handler.asyncio.sleep", new_callable=AsyncMock):
             await handler.process_message(message)
         history = handler.chatgpt_handler.get_response.await_args.args[0]
@@ -94,6 +95,7 @@ class DiscordMemoryIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_empty_memory_keeps_history_intact(self):
         handler, message = make_handler(), make_message()
         handler.vector_handler.get_relevant_contexts.return_value = []
+        handler.vector_handler.get_relationship_contexts.return_value = []
         with patch("discord_bot.handlers.discord_handler.asyncio.sleep", new_callable=AsyncMock):
             await handler.process_message(message)
         history = handler.chatgpt_handler.get_response.await_args.args[0]
