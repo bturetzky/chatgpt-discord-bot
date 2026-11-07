@@ -166,7 +166,7 @@ class LoggingRegressions(unittest.TestCase):
 
 class SearchToolRegressions(unittest.IsolatedAsyncioTestCase):
     async def test_missing_query(self):
-        self.assertIn("No search query", await SearchWeb().execute({}))
+        self.assertEqual(json.loads(await SearchWeb().execute({}))["error"]["code"], "INVALID_ARGUMENT")
 
     async def test_ddg_rate_limit_is_graceful(self):
         client = MagicMock()
@@ -175,7 +175,38 @@ class SearchToolRegressions(unittest.IsolatedAsyncioTestCase):
         client.text.side_effect = RuntimeError("202 Ratelimit")
         with patch("discord_bot.functions.search_web.AsyncDDGS", return_value=client):
             result = await SearchWeb().execute({"query": "Python docs"})
-        self.assertIn("error occurred while searching", result)
+        self.assertEqual(json.loads(result)["error"]["code"], "RATE_LIMITED")
+
+    async def test_empty_results_try_lite_backend(self):
+        client = MagicMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        client.text.side_effect = [[], [{"title": "Python docs", "href": "https://docs.python.org/3/"}]]
+        with patch("discord_bot.functions.search_web.AsyncDDGS", return_value=client):
+            result = await SearchWeb().execute({"query": "Python docs"})
+        self.assertIn("https://docs.python.org/3/", result)
+        self.assertEqual(client.text.call_count, 2)
+        self.assertEqual(client.text.call_args.kwargs["backend"], "lite")
+
+    async def test_rate_limit_does_not_retry(self):
+        client = MagicMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        client.text.side_effect = RuntimeError("202 Ratelimit")
+        with patch("discord_bot.functions.search_web.AsyncDDGS", return_value=client):
+            result = json.loads(await SearchWeb().execute({"query": "Python docs"}))
+        self.assertEqual(result["error"]["code"], "RATE_LIMITED")
+        self.assertFalse(result["error"]["retryable"])
+        client.text.assert_called_once()
+
+    async def test_no_results_is_explicit(self):
+        client = MagicMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        client.text.return_value = []
+        with patch("discord_bot.functions.search_web.AsyncDDGS", return_value=client):
+            result = json.loads(await SearchWeb().execute({"query": "unknown"}))
+        self.assertEqual(result["error"]["code"], "NO_RESULTS")
 
 
 if __name__ == "__main__":
