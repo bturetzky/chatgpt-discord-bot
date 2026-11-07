@@ -1,4 +1,4 @@
-import os, requests, json
+import os, requests, json, asyncio
 from .base import BaseFunction
 
 class WeatherLookup(BaseFunction):
@@ -36,13 +36,22 @@ class WeatherLookup(BaseFunction):
         # Get latitude and longitude for the location using OpenWeather's geocoding API
         geocode_url = f"http://api.openweathermap.org/geo/1.0/direct?q={location}&limit=1&appid={self.api_key}"
         #print(geocode_url)
-        geocode_response = requests.get(geocode_url)
-        geocode_data = json.loads(geocode_response.text)
-        lat, lon = geocode_data[0]['lat'], geocode_data[0]['lon']
+        geocode_response = await asyncio.to_thread(requests.get, geocode_url, timeout=10)
+        try:
+            geocode_response.raise_for_status()
+            geocode_data = geocode_response.json()
+            if not geocode_data:
+                return f"No weather location found for {location}."
+            lat, lon = geocode_data[0]['lat'], geocode_data[0]['lon']
+        except (requests.RequestException, ValueError, KeyError, IndexError) as exc:
+            return f"Unable to look up weather location: {type(exc).__name__}"
 
         # Make the API request for weather data
         url = f"https://api.openweathermap.org/data/3.0/onecall?lat={lat}&lon={lon}&exclude={exclude}&appid={self.api_key}&units=imperial"
-        response = requests.get(url)
+        try:
+            response = await asyncio.to_thread(requests.get, url, timeout=10)
+        except requests.RequestException as exc:
+            return f"Unable to fetch weather: {type(exc).__name__}"
         #print(response.text)
 
         if response.status_code == 200:
