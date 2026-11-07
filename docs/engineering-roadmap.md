@@ -4,6 +4,13 @@
 
 This roadmap covers application code. The separate [deployment workflow](deployment-workflow.md) covers CI, image publishing, dev deployment and production promotion. Deployment manifests remain authoritative in [homelab-gitops](https://github.com/bturetzky/homelab-gitops).
 
+## Relationship memory retrieval (proposed, 2026-11-07)
+
+- **Implementation proposed:** Store optional `memory_type` and `participant_ids` in existing Pinecone metadata. New relationship memories can be filtered by Discord ID; older unstructured records remain available via ordinary semantic search without migration.
+- **Retrieval:** Discord history defaults to 30 messages (was 13), semantic memories to eight (was nine), and relationship memories to four for the current/recent speakers. Configure with `DISCORD_CONTEXT_LIMIT`, `SEMANTIC_MEMORY_LIMIT`, and `RELATIONSHIP_MEMORY_LIMIT`.
+- **Limitations:** This is not a profile database. Relationship retrieval only covers newly tagged records; existing memories do not acquire participant metadata automatically. Model-selected memory categories and IDs require live validation.
+- **Validation:** Run CI, smoke-test dev, inspect sanitized memory counts, test writing and retrieving a confirmed relationship memory, and compare token usage and latency. Multi-person recall remains unverified.
+
 ## Personality iteration — v2 (proposed, 2026-11-07)
 
 - **Observed in dev after v1:** Disagreement, roast, technical answers and weather tone were strong. Casual greetings and weekend suggestions still sounded like an overly helpful assistant. Memory recall worked but mostly surfaced old factual snippets; multi-person relationship continuity remains untested.
