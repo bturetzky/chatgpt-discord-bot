@@ -1,7 +1,6 @@
 import discord, asyncio, logging
 from .chatgpt_handler import ChatGPTHandler
 from .vector_handler import VectorHandler
-import traceback
 
 CONTEXT_LIMIT = 13  # Number of messages to use as context
 
@@ -27,7 +26,7 @@ class DiscordHandler:
         
         @self.client.event
         async def on_message(message):
-            logging.info('Discord message received: guild=%s is_dm=%s mentioned=%s content_available=%s',
+            logging.debug('Discord message received: guild=%s is_dm=%s mentioned=%s content_available=%s',
                          getattr(message.guild, 'id', None), message.guild is None,
                          self.client.user.mentioned_in(message) if self.client.user else False,
                          bool(message.content))
@@ -50,7 +49,7 @@ class DiscordHandler:
         try:
             # Send the ACTUAL message...            
             await channel.send(interim_message)
-        except Exception as e:
+        except Exception:
             logging.exception('Discord interim message send failed')
             # Don't send an error on a short message
         return
@@ -75,7 +74,7 @@ class DiscordHandler:
         # Logic to process the message, interact with ChatGPTHandler, etc.
         if message.author == self.client.user or self.shutdown_event.is_set():
             if message.author == self.client.user:
-                print("Suppressing embeds?")
+                logging.debug('Suppressing bot message embeds')
                 await asyncio.sleep(5)  # Add a delay before suppressing the embeds or it won't work
                 await message.edit(suppress=True)  # Suppress the bot's message
             return
@@ -96,7 +95,6 @@ class DiscordHandler:
             except Exception:
                 logging.exception("Unable to retrieve Discord history; using current message")
                 messages = [{"role": "user", "content": f"{message.author.mention}: {message.content}"}]
-            guild_id = str(message.guild.id) if message.guild else "DM"
 
             logging.debug('Retrieving memories')
             memory_query = f"{author_id} says: {message.content}"
@@ -111,11 +109,11 @@ class DiscordHandler:
                     "role": "system",
                     "content": f"Memory: {memory}"
                 })
-            logging.info('Memory retrieval completed: count=%d', len(memories))
+            logging.debug('Memory retrieval completed: count=%d', len(memories))
 
             try:
                 response = await self.chatgpt_handler.get_response(messages, channel)
-            except Exception as e:
+            except Exception:
                 logging.exception('Discord message processing failed')
 
                 await message.channel.send(
@@ -128,7 +126,7 @@ class DiscordHandler:
                 for message_part in split_response:
                     await message.channel.send(message_part)
                     await asyncio.sleep(3)  # Add a 3-second delay between messages
-            except Exception as e:
+            except Exception:
                 logging.exception('Discord message send failed')
                 await message.channel.send(
                     f"{message.author.display_name} Sorry, there was an error with sending the message itself. Please try again later."

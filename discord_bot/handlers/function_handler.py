@@ -1,5 +1,5 @@
 from ..functions.base import BaseFunction
-import asyncio, importlib, inspect, json, pkgutil
+import asyncio, importlib, inspect, json, pkgutil, logging, time
 
 class FunctionHandler:
     def __init__(self):
@@ -21,6 +21,7 @@ class FunctionHandler:
         return loaded_functions
 
     async def execute_function(self, function_name, args):
+        started = time.monotonic()
         try:
             function_class = self.functions.get(function_name)
             if function_class:
@@ -29,12 +30,14 @@ class FunctionHandler:
                     args = json.loads(args)
                 instance = function_class()
                 result = instance.execute(args)
-                return await asyncio.wait_for(result, timeout=30) if inspect.isawaitable(result) else result
+                result = await asyncio.wait_for(result, timeout=30) if inspect.isawaitable(result) else result
+                logging.info('Tool completed: name=%s duration_ms=%d', function_name, int((time.monotonic() - started) * 1000))
+                return result
             raise ValueError(f"Function {function_name} not found.")
         #TODO: Catch specific exceptions and return a more specific error message
         #TODO: handle timeouts errors
         except Exception as e:
-            print(f"Error occurred while executing function {function_name}: {e}")
+            logging.warning('Tool failed: name=%s error_type=%s duration_ms=%d', function_name, type(e).__name__, int((time.monotonic() - started) * 1000))
             return "An error occurred while executing the function."
 
     def get_api_functions(self):
@@ -48,6 +51,6 @@ class FunctionHandler:
                 'parameters': instance.get_parameters()
             })
         
-        print(f"API functions: {api_functions}")
+        logging.info('Registered %d tools: %s', len(api_functions), ', '.join(item['name'] for item in api_functions))
 
         return api_functions

@@ -1,6 +1,7 @@
 """OpenAI Responses API integration for the Discord bot."""
 import asyncio
 import json
+import logging
 import os
 from datetime import datetime
 
@@ -83,7 +84,7 @@ class ChatGPTHandler:
                     })
             return "Sorry, I reached the limit for tool calls."
         except (OpenAIError, asyncio.TimeoutError) as exc:
-            print(f"OpenAI request failed: {type(exc).__name__}: {exc}")
+            logging.warning('OpenAI request failed: error_type=%s', type(exc).__name__)
             return "Sorry, there was an error processing your request with OpenAI. Please try again later."
 
     async def get_summary(self, messages):

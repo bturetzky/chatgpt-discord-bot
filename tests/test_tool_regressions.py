@@ -150,6 +150,20 @@ class WebpageToolRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.endswith("..."))
 
 
+class LoggingRegressions(unittest.TestCase):
+    def test_tool_registration_logs_names_not_schema(self):
+        from discord_bot.handlers.function_handler import FunctionHandler
+        handler = object.__new__(FunctionHandler)
+        handler.functions = {"search_web": MagicMock(name="search_web")}
+        handler.functions["search_web"].return_value.description = "secret-description"
+        handler.functions["search_web"].return_value.get_parameters.return_value = {"secret": "hidden"}
+        with self.assertLogs(level="INFO") as logs:
+            handler.get_api_functions()
+        self.assertIn("search_web", logs.output[0])
+        self.assertNotIn("secret-description", logs.output[0])
+        self.assertNotIn("hidden", logs.output[0])
+
+
 class SearchToolRegressions(unittest.IsolatedAsyncioTestCase):
     async def test_missing_query(self):
         self.assertIn("No search query", await SearchWeb().execute({}))
