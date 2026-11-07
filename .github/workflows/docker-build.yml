@@ -17,6 +17,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -45,6 +47,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build image (push only on main or version tags)
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -53,3 +56,79 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy-dev:
+    name: Propose and auto-merge development deployment
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: discord-dev-gitops
+      cancel-in-progress: true
+    steps:
+      - name: Create short-lived GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.GITOPS_APP_ID }}
+          private-key: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
+          owner: bturetzky
+          repositories: homelab-gitops
+
+      - name: Check out GitOps repository
+        uses: actions/checkout@v4
+        with:
+          repository: bturetzky/homelab-gitops
+          token: ${{ steps.app-token.outputs.token }}
+          path: gitops
+          persist-credentials: true
+
+      - name: Update development image to published digest
+        working-directory: gitops
+        env:
+          IMAGE_DIGEST: ${{ needs.build.outputs.digest }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          digest = os.environ["IMAGE_DIGEST"]
+          if not re.fullmatch(r"sha256:[a-f0-9]{64}", digest):
+              raise SystemExit(f"Unexpected image digest: {digest}")
+          path = Path("apps/discord/dev/deployment.yaml")
+          source = path.read_text()
+          updated, count = re.subn(
+              r"(?m)^([ \t]*image:[ \t]*)ghcr\.io/bturetzky/chatgpt-discord-bot(?::[^\s]+|@sha256:[a-f0-9]{64})[ \t]*$",
+              lambda match: match.group(1) + "ghcr.io/bturetzky/chatgpt-discord-bot@" + digest,
+              source,
+          )
+          if count != 1:
+              raise SystemExit(f"Expected exactly one dev bot image, found {count}")
+          path.write_text(updated)
+          PY
+
+      - name: Open and immediately merge dev-only GitOps PR
+        working-directory: gitops
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SOURCE_SHA: ${{ github.sha }}
+          IMAGE_DIGEST: ${{ needs.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- apps/discord/dev/deployment.yaml; then
+            echo "Dev already references this image digest."
+            exit 0
+          fi
+          branch="automation/discord-dev-${SOURCE_SHA:0:12}"
+          git config user.name "discord-gitops[bot]"
+          git config user.email "discord-gitops[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add apps/discord/dev/deployment.yaml
+          git commit -m "gitops(discord-dev): deploy ${SOURCE_SHA:0:12}"
+          git push --set-upstream origin "$branch"
+          pr_url="$(gh pr create --repo bturetzky/homelab-gitops --base main --head "$branch" \
+            --title "gitops(discord-dev): deploy bot ${SOURCE_SHA:0:12}" \
+            --body "Automated dev-only deployment from [bot commit](https://github.com/bturetzky/chatgpt-discord-bot/commit/$SOURCE_SHA). Image: \`ghcr.io/bturetzky/chatgpt-discord-bot@$IMAGE_DIGEST\`. Production unchanged.")"
+          echo "Created $pr_url"
+          gh pr merge "$pr_url" --squash --delete-branch --match-head-commit "$(git rev-parse HEAD)"

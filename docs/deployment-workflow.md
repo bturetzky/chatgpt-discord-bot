@@ -1,8 +1,17 @@
 # Discord bot CI/CD and promotion design
 
-**Status:** Proposed; not implemented  
+**Status:** CI build/publish and first dev GitOps rollout verified; automated dev deployment proposed in PR #8  
 **Discussed:** 2026-11-06  
 **Repositories:** [chatgpt-discord-bot](https://github.com/bturetzky/chatgpt-discord-bot) (application and CI) and [homelab-gitops](https://github.com/bturetzky/homelab-gitops) (deployment manifests and Argo CD)
+
+## Implementation status (2026-11-06)
+
+- **Verified:** PR builds do not publish images; successful main builds publish a `sha-<commit>` GHCR image. The `sha-549aad6` image was deployed to `discord-dev` through GitOps; Argo CD was Synced/Healthy and Kubernetes rollout succeeded.
+- **Known application limitation:** the dev bot connects to Discord but OpenAI rejects legacy `function` role messages with the configured model. Application compatibility remains separate technical debt; production remains unchanged.
+- **Proposed in this PR:** after publishing on main, the bot workflow opens a dev-only GitOps PR pinned to the exact published **image digest** and immediately squash-merges the resulting PR with the GitHub App token. Version-tag builds and PR builds do not deploy.
+- **Prerequisites before merge:** create a GitHub App installed on `homelab-gitops` with repository **Contents: Read and write** and **Pull requests: Read and write**; configure bot repository variable `GITOPS_APP_ID` and Actions secret `GITOPS_APP_PRIVATE_KEY`. GitOps must permit squash merging and the App must be allowed to merge PRs. GitHub Free does not offer native auto-merge for private repos, so CI calls `gh pr merge --squash` directly (no `--auto`). Standard merge restrictions are enforced; checks that are not required may still be pending. Do not use branch protection bypass.
+- **Validation:** merge a bot PR, check the `deploy-dev` job and GitOps PR, then confirm Argo CD and the dev pod use the expected digest. If required checks or reviews are not satisfied, the direct merge fails, leaving the PR open and failing the workflow. A new workflow will not deploy merely by merging this CI PR unless its resulting main push publishes a new image.
+- **Production promotion:** still manual and not yet implemented.
 
 ## Goal
 
@@ -23,7 +32,7 @@ Make bot changes safely and repeatably: validate pull requests, publish one immu
 
 1. **Feature branch / PR in application repo:** run automated tests and validate Docker build; **do not publish** images or change GitOps.
 2. **Merge to main:** after successful checks, build and push an immutable image to GHCR, identified by source commit SHA (e.g. `sha-a83f219`). Prefer deploying by registry digest (`@sha256:...`) to eliminate mutable-tag ambiguity.
-3. **Development rollout:** CI opens a PR in `homelab-gitops` updating only the dev image reference. Once validated, it may be auto-merged; Argo CD detects the manifest change and rolls out the image. Verify actual deployed image/digest and rollout health. Dev testing against its isolated Discord server remains manual.
+3. **Development rollout:** CI opens a PR in `homelab-gitops` updating only the dev image reference. The GitHub App immediately squash-merges the PR without GitHub's plan-restricted native auto-merge feature; Argo CD detects the manifest change and rolls out the image. Verify actual deployed image/digest and rollout health. Dev testing against its isolated Discord server remains manual.
 4. **Promotion:** after successful dev testing, manually invoke a workflow selecting the **already-built, tested image digest**. It opens a `homelab-gitops` PR changing only the production image reference. Review and merge to authorize release; Argo CD deploys it. Do not rebuild during promotion.
 5. **Rollback:** revert the production promotion commit/PR in GitOps; Argo CD restores the previous known image reference. Verify rollout and bot functionality.
 
@@ -54,14 +63,14 @@ Make bot changes safely and repeatably: validate pull requests, publish one immu
 
 1. Make CI safe: PRs test/build but do not push; update GitHub Actions; introduce immutable SHA images.
 2. Switch dev/prod GitOps image references away from mutable tags (preserve existing working production version until intentionally promoted).
-3. Automate successful main builds proposing dev GitOps updates; enable dev-only auto-merge once proven reliable.
+3. Automate successful main builds proposing dev GitOps updates; immediately merge dev-only PRs through the GitHub App (no paid native auto-merge needed).
 4. Add manual production promotion workflow that proposes a GitOps PR for the exact tested digest.
 5. Document verification and rollback, then consider separate runtime/SDK modernization work.
 
 ## Open questions
 
 - Which GitHub authentication approach should CI use for cross-repository PR creation (GitHub App preferred vs fine-grained token)?
-- Should dev PRs auto-merge immediately or after an initial manual proving period?
+- Resolved: dev GitOps PRs should merge automatically without a manual review step.
 - What test command and smoke checks are reliable enough to gate builds and promotion?
 - Should `Recreate` replace RollingUpdate for both bot Deployments?
 - Do we want explicit semantic version tags/releases, or only commit-SHA identities?
