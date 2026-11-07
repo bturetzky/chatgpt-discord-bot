@@ -134,7 +134,8 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 - Encourage proactive capture of durable ordinary facts, plans, preferences and ongoing project context, with standalone statements identifying the subject. Do not store credentials or repeat identical facts in a turn.
 - Retrieve against the recent multi-person conversation: up to six user turns (bounded to 2400 characters), with readable Discord names and stable IDs in history. The model sees the wider recent conversation and is instructed to attribute facts to any participant, not just the user who mentioned the bot. This is a relevance hint, not an ownership boundary; existing memories have no user-ID metadata. Shared memory remains intentional.
 - Pass the stored summary strings to the model instead of raw Pinecone metadata dictionaries. Preserve existing Pinecone index, embeddings, top-nine nearest-neighbor retrieval and stored records.
-- Add focused regression coverage for multi-person queries, bounds and clean memory summaries. **CI and live dev validation pending.** No score threshold, automatic deduplication or index migration in this change; evaluate retrieval relevance and conflicting memories separately.
+- Use deterministic Pinecone vector IDs derived from normalized memory text (excluding the tool's timestamp), so exact repeat writes overwrite the same vector rather than occupying multiple retrieval slots. Previously stored UUID records remain untouched; paraphrases and contradictions are not deduplicated.
+- Add focused regression coverage for multi-person queries, bounds, clean summaries, idempotent writes and history fallback. **CI and live dev validation pending.** No score threshold or index migration; evaluate semantic duplicates and conflicting memories separately.
 
 ## Memory implementation review (2026-11-07)
 
