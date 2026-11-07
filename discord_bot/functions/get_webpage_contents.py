@@ -38,7 +38,7 @@ def validate_public_url(url):
                 ipaddress.ip_address(item[4][0])
                 for item in socket.getaddrinfo(hostname, port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
             ]
-        if not addresses or any(not address.is_global for address in addresses):
+        if not addresses or any(not address.is_global or address.is_multicast for address in addresses):
             raise ValueError("Private, reserved or non-global addresses are not allowed")
         return url
     except (socket.gaierror, UnicodeError, OverflowError) as exc:
