@@ -1,8 +1,17 @@
 # Engineering roadmap and code review
 
-**Reviewed:** 2026-11-06 | **Status:** Proposed; findings are from static code inspection, not verified live failures.
+**Reviewed:** 2026-11-06 | **Status:** Living roadmap; initial findings came from static inspection, with later live dev validation noted below.
 
 This roadmap covers application code. The separate [deployment workflow](deployment-workflow.md) covers CI, image publishing, dev deployment and production promotion. Deployment manifests remain authoritative in [homelab-gitops](https://github.com/bturetzky/homelab-gitops).
+
+## Confirmed progress and live validation (2026-11-06)
+
+- **Implemented:** Modern OpenAI Responses API integration, configurable model, updated SDK and Poetry lockfile, async tool dispatch, focused regression tests, and serialization of response output for follow-up tool calls (PRs #10 and #11). Dev Discord basic conversation and weather tool succeeded after the fix.
+- **Observed:** Memory retrieval appears in dev logs and the bot reported a successful memory write; a separate retrieval test is not required for the current promotion decision. Memory privacy and retention quality remain open engineering concerns.
+- **Observed:** Web search failed twice because DuckDuckGo returned HTTP `202 Ratelimit`. The bot reported failure without crashing. Search-provider reliability is a separate issue, not a blocker for promoting the working API migration.
+- **Deferred:** Improve search provider reliability/fallback, make rate-limit errors explicit to the model to avoid immediate retries, and tighten memory-write criteria to avoid saving trivial interactions.
+- **Deferred:** Add Renovate for Poetry `pyproject.toml` and `poetry.lock`: weekly dependency PRs, periodic lockfile maintenance, major upgrades separate, no automerge initially. Bot main merges automatically deploy to dev, so dependency PRs should be reviewed and validated before merge. Not started.
+- **Next:** Implement manual production promotion of the exact dev-tested image digest through a reviewable GitOps PR; no rebuild or automatic production merge.
 
 ## Priority guide
 
@@ -69,4 +78,4 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 - Identify a representative set of Discord smoke tests against the isolated dev bot.
 - Check existing Pinecone data before changing embedding dimensions or namespace strategy.
 
-**Implementation status:** No application code was changed by this review. Priorities are recommendations, not commitments or verified incidents.
+**Status note:** The numbered items are original review findings, not a current list of uncompleted work. See confirmed progress above for items already addressed; remaining risks require separate validation.
