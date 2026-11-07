@@ -14,11 +14,18 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 - **Verified:** Manual production promotion workflow implemented (PR #12). User ran it against main, reviewed and merged the resulting GitOps PR, confirmed dev/prod image digests match, observed production rollout, and confirmed the production bot remains responsive. No image rebuild or automatic production merge.
 - **Remaining:** SSRF protection, sensitive logging, memory isolation/retention, test coverage, shutdown/error handling, and search reliability remain open; see original findings below.
 
-## Test suite modernization (proposed PR, 2026-11-07)
+## Tool and API regression coverage (proposed PR, 2026-11-07)
 
-- Replace the obsolete `tests/test_chat_bot.py` (removed module and Python `imp`) with tests of current Discord routing, DMs, shutdown gating, chronological history, and message splitting.
-- Change `make test` to propagate failures and run all discovered tests in the Docker build, not just the two previously selected modules.
-- **Validation pending:** PR CI must pass. This is mocked application behavior coverage, not a live Discord/OpenAI/Pinecone end-to-end test. A separate dev smoke-test procedure remains useful.
+- Add mocked tests for multi-call Responses API correlation, malformed/non-object tool arguments, tool error propagation, empty responses, and OpenAI timeouts.
+- Cover weather geocoding and forecast failures, forecast trimming, webpage HTTP failures and parser fallback/truncation, and DDG rate-limit fallback. No external requests or credentials.
+- **Pending PR CI:** New tests are discovered automatically by the Docker image build; CI success is required before merge. This is deterministic component-level testing, not live integration.
+- Next: memory write/retrieval tests, message edge cases, and documented post-deployment live smoke tests. Do not change shared Pinecone memory behavior.
+
+## Test suite modernization (merged PR #15, 2026-11-07)
+
+- Replaced the obsolete `tests/test_chat_bot.py` (removed module and Python `imp`) with tests of current Discord routing, DMs, shutdown gating, chronological history, and message splitting.
+- Changed `make test` to propagate failures and run all discovered tests in the Docker build, not just the two previously selected modules.
+- **Validated:** User reported green CI and merged PR #15. This is mocked application behavior coverage, not a live Discord/OpenAI/Pinecone end-to-end test. A separate dev smoke-test procedure remains useful.
 - **Observed after PR #14:** User confirmed successful build, merge, dev deployment, and live conversation/weather/webpage/memory smoke checks. DuckDuckGo web search remained rate-limited; fallback response was graceful. User initiated production promotion; completion not yet verified.
 
 ## Startup regression and CI correction (2026-11-07)
