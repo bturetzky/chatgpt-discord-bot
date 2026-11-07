@@ -144,7 +144,7 @@ class WebpageToolRegressions(unittest.IsolatedAsyncioTestCase):
 
     async def test_long_page_truncates(self):
         reply = MagicMock(content=("<html><body><p>" + "x" * 5000 + "</p></body></html>").encode())
-        with patch("discord_bot.functions.get_webpage_contents.requests.get", return_value=reply):
+        with patch("discord_bot.functions.get_webpage_contents.fetch_public_html", return_value=reply.content):
             result = await GetWebPageContents().execute({"url": "https://example.org"})
         self.assertLessEqual(len(result), 4003)
         self.assertTrue(result.endswith("..."))
