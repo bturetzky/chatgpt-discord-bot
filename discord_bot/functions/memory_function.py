@@ -11,7 +11,9 @@ class WeatherLookup(BaseFunction):
             "memory": {
                 "type": "string",
                 "description": "Here's where you jot down what you want to remember. Make it concise but info-packed. This is your chance to store things like user preferences, important dates, or any other tidbits that'll help you be more personalized and helpful in the future."
-            }
+            },
+            "memory_type": {"type": "string", "enum": ["fact", "relationship", "event"]},
+            "participant_ids": {"type": "array", "items": {"type": "string"}, "description": "IDs explicitly visible in conversation; never guess."}
         },
         "required": ["memory"]
     }
@@ -22,5 +24,5 @@ class WeatherLookup(BaseFunction):
     async def execute(self, args):
         current_date_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         formatted_memory = f"{current_date_time}: {args['memory']}"
-        self.vector_handler.store_additional_data(formatted_memory)
+        self.vector_handler.store_additional_data(formatted_memory, memory_type=args.get('memory_type', 'fact'), participant_ids=args.get('participant_ids', []))
         return "Memory stored."
