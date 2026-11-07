@@ -29,14 +29,13 @@ class SearchWeb(BaseFunction):
         if not query:
             return "No search query provided."
 
-        #TODO: switch to using a logger instead of this nonsense
-        print(f"Searching the web for: {query}")
+        logging.debug('Web search requested')
         try:
             async with AsyncDDGS() as ddgs:
                 results = ddgs.text(query, max_results=max_results)
-                logging.debug(f"Raw results: {results}")
+                logging.debug('Web search provider returned results')
         except Exception as e:
-            print(f"Error occurred while searching the web: {e}")
+            logging.warning('Web search failed: error_type=%s', type(e).__name__)
             return "An error occurred while searching the web."
         
         # Format the results for a more readable output (if needed)
@@ -47,5 +46,5 @@ class SearchWeb(BaseFunction):
 
         # Join them together
         reply = "\n".join(formatted_results)
-        print(f"Search results: {reply}")
+        logging.info('Web search completed: results=%d', len(formatted_results))
         return reply
