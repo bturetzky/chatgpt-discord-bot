@@ -79,6 +79,18 @@ class DiscordMemoryIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("likes sci-fi", str(history[:2]))
         self.assertEqual(history[-1], {"role": "user", "content": "hi"})
 
+    async def test_relationship_memories_are_prioritized_and_deduplicated(self):
+        handler, message = make_handler(), make_message()
+        handler.vector_handler.get_relevant_contexts.return_value = ["shared joke", "likes gardening"]
+        handler.vector_handler.get_relationship_contexts.return_value = ["shared joke"]
+        with patch("discord_bot.handlers.discord_handler.asyncio.sleep", new_callable=AsyncMock):
+            await handler.process_message(message)
+        history = handler.chatgpt_handler.get_response.await_args.args[0]
+        self.assertEqual(len(history), 3)
+        self.assertEqual(sum("shared joke" in item["content"] for item in history), 1)
+        self.assertIn("shared joke", history[0]["content"])
+        handler.vector_handler.get_relationship_contexts.assert_called_once_with(["123"], 4)
+
     async def test_empty_memory_keeps_history_intact(self):
         handler, message = make_handler(), make_message()
         handler.vector_handler.get_relevant_contexts.return_value = []
