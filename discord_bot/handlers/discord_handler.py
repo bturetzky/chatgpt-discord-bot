@@ -27,7 +27,10 @@ class DiscordHandler:
         
         @self.client.event
         async def on_message(message):
-            logging.info('Discord message received: guild=%s is_dm=%s mentioned=%s content_available=%s',\n                         getattr(message.guild, 'id', None), message.guild is None,\n                         self.client.user.mentioned_in(message) if self.client.user else False,\n                         bool(message.content))
+            logging.info('Discord message received: guild=%s is_dm=%s mentioned=%s content_available=%s',
+                         getattr(message.guild, 'id', None), message.guild is None,
+                         self.client.user.mentioned_in(message) if self.client.user else False,
+                         bool(message.content))
             await self.process_message(message)
 
         @self.client.event
