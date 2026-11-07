@@ -1,41 +1,28 @@
 # Discord bot CI/CD and promotion design
 
-**Status:** Automated digest-pinned dev deployment implemented and verified; manual production promotion workflow proposed in this PR  
-**Discussed:** 2026-11-06  
-**Repositories:** [chatgpt-discord-bot](https://github.com/bturetzky/chatgpt-discord-bot) (application and CI) and [homelab-gitops](https://github.com/bturetzky/homelab-gitops) (deployment manifests and Argo CD)
+**Status:** CI/CD, automated dev deployment, and manual production promotion implemented and exercised successfully.  
+**Verified:** 2026-11-07  
+**Repositories:** [chatgpt-discord-bot](https://github.com/bturetzky/chatgpt-discord-bot) and [homelab-gitops](https://github.com/bturetzky/homelab-gitops)
 
-## Implementation status (2026-11-06)
+## Verified implementation and first production promotion
 
-- **Verified:** PR builds do not publish images; successful main builds publish a `sha-<commit>` GHCR image. The `sha-549aad6` image was deployed to `discord-dev` through GitOps; Argo CD was Synced/Healthy and Kubernetes rollout succeeded.
-- **Known application limitation:** the dev bot connects to Discord but OpenAI rejects legacy `function` role messages with the configured model. Application compatibility remains separate technical debt; production remains unchanged.
-- **Proposed in this PR:** after publishing on main, the bot workflow opens a dev-only GitOps PR pinned to the exact published **image digest** and immediately squash-merges the resulting PR with the GitHub App token. Version-tag builds and PR builds do not deploy.
-- **Prerequisites before merge:** create a GitHub App installed on `homelab-gitops` with repository **Contents: Read and write** and **Pull requests: Read and write**; configure bot repository variable `GITOPS_APP_ID` and Actions secret `GITOPS_APP_PRIVATE_KEY`. GitOps must permit squash merging and the App must be allowed to merge PRs. GitHub Free does not offer native auto-merge for private repos, so CI calls `gh pr merge --squash` directly (no `--auto`). Standard merge restrictions are enforced; checks that are not required may still be pending. Do not use branch protection bypass.
-- **Validation:** merge a bot PR, check the `deploy-dev` job and GitOps PR, then confirm Argo CD and the dev pod use the expected digest. If required checks or reviews are not satisfied, the direct merge fails, leaving the PR open and failing the workflow. A new workflow will not deploy merely by merging this CI PR unless its resulting main push publishes a new image.
-- **Production promotion:** proposed as a manually dispatched workflow that opens a reviewable GitOps PR; no auto-merge or image rebuild.
-
-## Manual production promotion workflow (proposed)
-
-- After dev validation, run **Actions → Promote Discord bot to production → Run workflow** on the application repository's main branch.
-- The workflow uses the existing GitHub App credentials to check out `homelab-gitops/main` and reads the current digest-pinned image from `apps/discord/dev/deployment.yaml`.
-- It validates that dev uses `ghcr.io/bturetzky/chatgpt-discord-bot@sha256:...` and that production has an expected bot image reference, then changes **only** the image in `apps/discord/prod/deployment.yaml`.
-- It opens a GitOps PR and stops. **Production requires a human PR merge.** Argo CD deploys after that merge; promotion never rebuilds an image.
-- If production already references the same digest, the workflow exits without a PR. Revert the GitOps promotion commit to roll back.
-- Verify that dev is running the expected image before dispatching; the workflow selects the digest currently committed in GitOps dev, not a historical release or an unverified runtime observation.
+- PR checks run focused Responses API tests and Docker build without publishing; main builds publish a SHA-tagged GHCR image and update dev GitOps to the published immutable digest through a GitHub App-created, automatically merged PR.
+- Dev Argo CD rollout and Discord conversation/weather behavior were verified. The Responses API serialization bug was corrected in PR #11.
+- Manual promotion workflow [`promote-prod.yml`](../.github/workflows/promote-prod.yml) was implemented in PR #12. It reads the digest currently pinned in dev GitOps and opens a **review-only** production GitOps PR; it never rebuilds or auto-merges.
+- **First production promotion confirmed by user:** workflow run against main; resulting GitOps PR reviewed and merged; dev/prod digests matched; production rollout occurred; production Discord bot remained responsive.
+- **To promote again:** verify dev, run **Actions → Promote Discord bot to production → Run workflow** on main, review and merge the GitOps production PR, verify Argo CD rollout and live bot response. If prod already pins the same digest, no PR is opened.
+- **Rollback:** revert the production promotion commit in GitOps and verify the resulting rollout. Data/external side effects may not roll back with the image.
 
 ## Goal
 
 Make bot changes safely and repeatably: validate pull requests, publish one immutable image per successful main-branch build, deploy automatically to development, test against the isolated development Discord server, and explicitly promote **the same tested image** to production via a GitOps pull request. Keep the workflow simple and auditable, without introducing a separate develop branch or Argo CD Image Updater.
 
-## Confirmed environment (2026-11-06)
+## Environment and configuration
 
-- `discord-dev` and `discord-prod` use **different Discord applications/bots, tokens, and servers**. Development testing is isolated from production.
-- Both Kubernetes workloads are Argo CD Applications tracking `homelab-gitops/main`, with automated sync and self-healing.
-- Dev manifest: [apps/discord/dev/deployment.yaml](https://github.com/bturetzky/homelab-gitops/blob/main/apps/discord/dev/deployment.yaml) uses `ghcr.io/bturetzky/chatgpt-discord-bot:latest` and `imagePullPolicy: Always`.
-- Prod manifest: [apps/discord/prod/deployment.yaml](https://github.com/bturetzky/homelab-gitops/blob/main/apps/discord/prod/deployment.yaml) uses `:1.0.4` and `imagePullPolicy: IfNotPresent`.
-- Both Deployments are single-replica and currently use a RollingUpdate strategy.
-- Application workflow: [.github/workflows/docker-build.yml](../.github/workflows/docker-build.yml) triggers on PRs to main, pushes to main, and `v*` tags. It uses older checkout/login/build-push actions, publishes on every event (including PRs), and publishes `latest` for non-version-tag events.
-- A test file exists at `tests/test_chat_bot.py`, but the image workflow does not run tests.
-- The Dockerfile uses `python:3.10-slim`; `pyproject.toml` reports app version `0.2.0`, and pins the OpenAI Python library to `0.28`.
+- Dev and production use distinct Discord applications, tokens and servers; both are Argo CD-managed.
+- The GitOps deployment manifests in `apps/discord/dev/deployment.yaml` and `apps/discord/prod/deployment.yaml` are authoritative for the currently pinned digests. Do not rely on historical image tags recorded in older documentation.
+- [`docker-build.yml`](../.github/workflows/docker-build.yml) implements CI, image publishing and automatic dev GitOps updates. [`promote-prod.yml`](../.github/workflows/promote-prod.yml) implements manual production promotion.
+- Existing GitHub App credentials are used for cross-repository GitOps PR creation; production PR merging remains a human action.
 
 ## Desired flow
 
@@ -65,10 +52,10 @@ Make bot changes safely and repeatably: validate pull requests, publish one immu
 - Improve Docker layer caching and pin build tooling/dependencies appropriately.
 - Evaluate moving from Python 3.10 to a newer supported version, with compatibility testing.
 - Reconcile application version metadata (`0.2.0`) with published image versioning (`1.0.4`); decide whether semantic release tags are needed alongside SHA images.
-- Modernize the legacy OpenAI Python SDK (`0.28`) as a separate application change.
+- OpenAI SDK and Responses API modernization completed; continue expanding integration tests.
 - Assess test quality/coverage and add meaningful bot behavior tests.
 
-## Suggested incremental rollout (planned, not completed)
+## Original rollout sequence (completed for core CI/CD)
 
 1. Make CI safe: PRs test/build but do not push; update GitHub Actions; introduce immutable SHA images.
 2. Switch dev/prod GitOps image references away from mutable tags (preserve existing working production version until intentionally promoted).
@@ -78,10 +65,10 @@ Make bot changes safely and repeatably: validate pull requests, publish one immu
 
 ## Open questions
 
-- Which GitHub authentication approach should CI use for cross-repository PR creation (GitHub App preferred vs fine-grained token)?
+- Resolved: GitHub App credentials used for cross-repository GitOps PRs.
 - Resolved: dev GitOps PRs should merge automatically without a manual review step.
 - What test command and smoke checks are reliable enough to gate builds and promotion?
 - Should `Recreate` replace RollingUpdate for both bot Deployments?
 - Do we want explicit semantic version tags/releases, or only commit-SHA identities?
 
-**Important:** This page records the agreed direction and observed repository state, not completed implementation. Actual Kubernetes configuration and deployment status are authoritative in `homelab-gitops`.
+**Important:** The workflow is implemented and the first production promotion was confirmed by the user. Actual live Kubernetes configuration and deployment status remain authoritative in `homelab-gitops`.
