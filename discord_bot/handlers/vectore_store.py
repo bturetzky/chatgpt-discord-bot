@@ -39,7 +39,13 @@ class VectorStore:
             #print(f"index query results: {results}")
             # Extract the metadata from the closest matches
             if results and 'matches' in results and len(results['matches']) > 0:
-                closest_matches = [match['metadata'] for match in results['matches']]
+                closest_matches = [
+                    match["metadata"]["summary"]
+                    for match in results["matches"]
+                    if isinstance(match.get("metadata"), dict)
+                    and isinstance(match["metadata"].get("summary"), str)
+                    and match["metadata"]["summary"].strip()
+                ]
             else:
                 print("No matches found.")
                 closest_matches = []
