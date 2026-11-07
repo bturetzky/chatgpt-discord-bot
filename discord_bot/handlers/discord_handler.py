@@ -121,7 +121,13 @@ class DiscordHandler:
             except Exception:
                 logging.exception("Relationship memory lookup failed; continuing")
                 relationships = []
-            unique_memories = list(dict.fromkeys(relationships + memories))
+            # A retrieval adapter must return a concrete list of memory text.
+            # Ignore malformed responses rather than corrupting the chat context.
+            memories = memories if isinstance(memories, list) else []
+            relationships = relationships if isinstance(relationships, list) else []
+            unique_memories = list(dict.fromkeys(
+                item for item in relationships + memories if isinstance(item, str) and item.strip()
+            ))
             for memory in reversed(unique_memories):
                 messages.insert(0, {"role": "system", "content": f"Memory (possibly outdated): {memory}"})
             logging.debug(
