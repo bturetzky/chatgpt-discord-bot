@@ -16,6 +16,14 @@ class PersonalityPromptTests(unittest.TestCase):
         for expected in ("dry humor", "not a customer-service assistant", "Never fabricate", "who is speaking", "serious questions"):
             self.assertIn(expected, self.prompt)
 
+    def test_casual_conversation(self):
+        for expected in ("not a concierge", "unsolicited menus", "reflexive follow-up questions", "do not invent off-screen activities", "Avoid narrating routine tool use"):
+            self.assertIn(expected, self.prompt)
+
+    def test_relationship_memory_safety(self):
+        for expected in ("running jokes", "specific participants", "repeated clear evidence", "single roast request", "observable interaction", "naturally and sparingly", "asks you to stop"):
+            self.assertIn(expected, self.prompt)
+
     def test_memory_instructions_preserved(self):
         for expected in ("store_memory", "multi-person conversation", "clear attribution", "duplicate writes", "Never store credentials"):
             self.assertIn(expected, self.prompt)
