@@ -23,7 +23,6 @@ RUN pip install --no-cache-dir 'poetry==1.8.3'
 # Dependency installation is cached until pyproject.toml or poetry.lock changes.
 COPY pyproject.toml poetry.lock ./
 RUN poetry config virtualenvs.create false \
-    && poetry lock --no-update \
     && poetry install --only main --no-root --no-interaction
 
 # Copy application code only after dependencies are installed.
