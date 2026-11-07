@@ -1,5 +1,5 @@
 from ..functions.base import BaseFunction
-import importlib, json, pkgutil
+import importlib, inspect, json, pkgutil
 
 class FunctionHandler:
     def __init__(self):
@@ -20,7 +20,7 @@ class FunctionHandler:
 
         return loaded_functions
 
-    def execute_function(self, function_name, args):
+    async def execute_function(self, function_name, args):
         try:
             function_class = self.functions.get(function_name)
             if function_class:
@@ -28,7 +28,8 @@ class FunctionHandler:
                 if isinstance(args, str):
                     args = json.loads(args)
                 instance = function_class()
-                return instance.execute(args)
+                result = instance.execute(args)
+                return await result if inspect.isawaitable(result) else result
             raise ValueError(f"Function {function_name} not found.")
         #TODO: Catch specific exceptions and return a more specific error message
         #TODO: handle timeouts errors
