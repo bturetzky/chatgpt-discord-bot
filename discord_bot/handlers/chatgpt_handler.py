@@ -28,6 +28,8 @@ class ChatGPTHandler:
             f"Today's date and time is {current_date_time}.",
             "You have tools for searching, fetching content, and storing useful memories.",
             "Proactively use store_memory for durable facts, preferences, ongoing projects, plans and decisions useful in future conversations.",
+            "Review the recent multi-person conversation, not only the latest speaker. Remember useful facts stated by any participant, with clear attribution to who said or owns each fact.",
+            "Distinguish someone stating a personal preference from recommending something to another person; do not transfer facts between participants.",
             "Ordinary concrete facts can be worth remembering; retrieval ranks their relevance later. Do not wait for explicit remember requests.",
             "Store standalone specific statements identifying the person by their Discord display name (and ID when available) or the relevant project; avoid vague pronouns and duplicate writes in the same turn.",
             "Never store credentials or secrets.",
