@@ -1,8 +1,9 @@
-import discord, asyncio, logging
+import discord, asyncio, logging, os, re
 from .chatgpt_handler import ChatGPTHandler
 from .vector_handler import VectorHandler
 
-CONTEXT_LIMIT = 13  # Number of messages to use as context
+CONTEXT_LIMIT = int(os.getenv("DISCORD_CONTEXT_LIMIT", "30"))
+RELATIONSHIP_MEMORY_LIMIT = int(os.getenv("RELATIONSHIP_MEMORY_LIMIT", "4"))
 
 class DiscordHandler:
     def __init__(self, discord_token, openai_key, pinecone_apikey):
@@ -97,21 +98,36 @@ class DiscordHandler:
                 messages = [{"role": "user", "content": f"{message.author.display_name} (Discord ID {message.author.id}): {message.content}"}]
 
             logging.debug('Retrieving memories')
-            # Retrieve against the recent multi-person conversation, not only the
-            # message that mentioned the bot. User turns retain their speaker tags.
             memory_query = self.build_memory_query(messages)
+            participant_ids = [author_id]
+            for item in reversed(messages):
+                if item.get("role") != "user":
+                    continue
+                for match in re.findall(r"<@!?(\d+)>", item.get("content", "")):
+                    if match not in participant_ids and len(participant_ids) < 3:
+                        participant_ids.append(match)
             try:
-                # The embedding and Pinecone clients are synchronous.
-                memories = await asyncio.to_thread(self.vector_handler.get_relevant_contexts, memory_query) or []
+                memories = await asyncio.to_thread(
+                    self.vector_handler.get_relevant_contexts, memory_query
+                ) or []
             except Exception:
-                logging.exception("Memory lookup failed; continuing without memories")
+                logging.exception("Semantic memory lookup failed; continuing")
                 memories = []
-            for memory in memories:
-                messages.insert(0, {
-                    "role": "system",
-                    "content": f"Memory: {memory}"
-                })
-            logging.debug('Memory retrieval completed: count=%d', len(memories))
+            try:
+                relationships = await asyncio.to_thread(
+                    self.vector_handler.get_relationship_contexts,
+                    participant_ids, RELATIONSHIP_MEMORY_LIMIT
+                ) or []
+            except Exception:
+                logging.exception("Relationship memory lookup failed; continuing")
+                relationships = []
+            unique_memories = list(dict.fromkeys(relationships + memories))
+            for memory in reversed(unique_memories):
+                messages.insert(0, {"role": "system", "content": f"Memory (possibly outdated): {memory}"})
+            logging.debug(
+                'Memory retrieval completed: semantic=%d relationship=%d unique=%d',
+                len(memories), len(relationships), len(unique_memories)
+            )
 
             try:
                 response = await self.chatgpt_handler.get_response(messages, channel)
@@ -172,7 +188,7 @@ class DiscordHandler:
                 break
             message_obj = {
                 "role": "assistant" if message.author == self.client.user else "user",
-                "content": f"{message.author.mention}: {message.content}"
+                "content": f"{message.author.display_name} (Discord ID {message.author.id}) {message.author.mention}: {message.content}"
             }
             message_history.append(message_obj)
             i += 1
