@@ -47,8 +47,10 @@ class DiscordHandler:
         # Close any resources, db connections, etc.
         print("Shutting down...")
         self.shutdown_event.set()
-        await self.vector_store.close()
-        await self.client.close()
+        try:
+            await self.client.close()
+        finally:
+            await self.vector_handler.close()
 
     def get_discord_intents(self, messages=True, guilds=True):
         intents = discord.Intents.default()
@@ -78,13 +80,19 @@ class DiscordHandler:
             # Tweak the limit here to get more or less context
             try:
                 messages = await self.get_message_history(channel, limit=CONTEXT_LIMIT)
-            except Exception as e:
-                print(f"Error while getting message history: {e}")
+            except Exception:
+                logging.exception("Unable to retrieve Discord history; using current message")
+                messages = [{"role": "user", "content": f"{message.author.mention}: {message.content}"}]
             guild_id = str(message.guild.id) if message.guild else "DM"
 
             print(f"Getting memories...")
             memory_query = f"{author_id} says: {message.content}"
-            memories = self.vector_handler.get_relevant_contexts(memory_query)  # Get the relevant contexts from the vector store
+            try:
+                # The embedding and Pinecone clients are synchronous.
+                memories = await asyncio.to_thread(self.vector_handler.get_relevant_contexts, memory_query) or []
+            except Exception:
+                logging.exception("Memory lookup failed; continuing without memories")
+                memories = []
             for memory in memories:
                 messages.insert(0, {
                     "role": "system",
