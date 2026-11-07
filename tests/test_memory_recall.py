@@ -21,7 +21,7 @@ class MemoryRecallTests(unittest.TestCase):
             store.fetch_context([0.1, 0.2]),
             ["Alice grows tomatoes", "Bob enjoys science fiction"],
         )
-        self.assertEqual(store.index.query.call_args.kwargs["top_k"], 9)
+        self.assertEqual(store.index.query.call_args.kwargs["top_k"], 8)
 
     def test_identical_fact_upserts_same_id_despite_timestamp(self):
         store = VectorStore("test-key")

@@ -4,6 +4,20 @@
 
 This roadmap covers application code. The separate [deployment workflow](deployment-workflow.md) covers CI, image publishing, dev deployment and production promotion. Deployment manifests remain authoritative in [homelab-gitops](https://github.com/bturetzky/homelab-gitops).
 
+## Per-chat usage instrumentation (proposed, 2026-11-07)
+
+- **Implementation:** Each Discord chat turn logs model, Responses API call count (including tool round trips), total input tokens, cached input tokens, output tokens, elapsed milliseconds, and optional estimated USD cost. No message bodies or memories are logged.
+- **Optional price configuration:** `OPENAI_INPUT_USD_PER_1M`, `OPENAI_CACHED_INPUT_USD_PER_1M`, and `OPENAI_OUTPUT_USD_PER_1M` are rates per million tokens. Defaults for `gpt-6.1-terra` are the published Standard API rates as of 2026-11-07: $1 input, $0.05 cached input, and $5 output per million tokens. Environment variables override defaults. Other model IDs without configured rates log `estimated_cost_usd=unconfigured`. Cached tokens are charged at the standard input rate when a cached rate is omitted or set to zero.
+- **Scope:** USD estimate covers Responses usage only; embedding calls, Pinecone, Brave/weather services and infrastructure are not included. Actual billing can differ. Logs are emitted even when a Responses request fails (with usage collected up to that point).
+- **Validation:** Verify log line after a simple message and a tool-using message, then check configured prices and totals against API usage.
+
+## Relationship memory retrieval (proposed, 2026-11-07)
+
+- **Implementation proposed:** Store optional `memory_type` and `participant_ids` in existing Pinecone metadata. New relationship memories can be filtered by Discord ID; older unstructured records remain available via ordinary semantic search without migration.
+- **Retrieval:** Discord history defaults to 30 messages (was 13), semantic memories to eight (was nine), and relationship memories to four for the current/recent speakers. Configure with `DISCORD_CONTEXT_LIMIT`, `SEMANTIC_MEMORY_LIMIT`, and `RELATIONSHIP_MEMORY_LIMIT`.
+- **Limitations:** This is not a profile database. Relationship retrieval only covers newly tagged records; existing memories do not acquire participant metadata automatically. Model-selected memory categories and IDs require live validation.
+- **Validation:** Run CI, smoke-test dev, inspect sanitized memory counts, test writing and retrieving a confirmed relationship memory, and compare token usage and latency. Multi-person recall remains unverified.
+
 ## Personality iteration — v2 (proposed, 2026-11-07)
 
 - **Observed in dev after v1:** Disagreement, roast, technical answers and weather tone were strong. Casual greetings and weekend suggestions still sounded like an overly helpful assistant. Memory recall worked but mostly surfaced old factual snippets; multi-person relationship continuity remains untested.
