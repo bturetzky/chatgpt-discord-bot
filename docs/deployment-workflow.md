@@ -4,6 +4,15 @@
 **Discussed:** 2026-11-06  
 **Repositories:** [chatgpt-discord-bot](https://github.com/bturetzky/chatgpt-discord-bot) (application and CI) and [homelab-gitops](https://github.com/bturetzky/homelab-gitops) (deployment manifests and Argo CD)
 
+## Implementation status (2026-11-06)
+
+- **Verified:** PR builds do not publish images; successful main builds publish a `sha-<commit>` GHCR image. The `sha-549aad6` image was deployed to `discord-dev` through GitOps; Argo CD was Synced/Healthy and Kubernetes rollout succeeded.
+- **Known application limitation:** the dev bot connects to Discord but OpenAI rejects legacy `function` role messages with the configured model. Application compatibility remains separate technical debt; production remains unchanged.
+- **Proposed in this PR:** after publishing on main, the bot workflow opens a dev-only GitOps PR pinned to the exact published **image digest** and requests automatic squash merge. Version-tag builds and PR builds do not deploy.
+- **Prerequisites before merge:** create a GitHub App installed on `homelab-gitops` with repository **Contents: Read and write** and **Pull requests: Read and write**; configure bot repository variable `GITOPS_APP_ID` and Actions secret `GITOPS_APP_PRIVATE_KEY`. In GitOps repository settings enable **Allow auto-merge** and permit squash merging; branch protection/rulesets must permit the App's PRs to merge after required checks. Do not use branch protection bypass.
+- **Validation:** merge a bot PR, check the `deploy-dev` job and GitOps PR, then confirm Argo CD and the dev pod use the expected digest. GitHub auto-merge may remain pending if required checks/reviews are unsatisfied; the workflow should report that clearly. A new workflow will not deploy merely by merging this CI PR unless its resulting main push publishes a new image.
+- **Production promotion:** still manual and not yet implemented.
+
 ## Goal
 
 Make bot changes safely and repeatably: validate pull requests, publish one immutable image per successful main-branch build, deploy automatically to development, test against the isolated development Discord server, and explicitly promote **the same tested image** to production via a GitOps pull request. Keep the workflow simple and auditable, without introducing a separate develop branch or Argo CD Image Updater.
