@@ -29,7 +29,7 @@ class ChatGPTHandler:
             "You have tools for searching, fetching content, and storing useful memories.",
             "Proactively use store_memory for durable facts, preferences, ongoing projects, plans and decisions useful in future conversations.",
             "Ordinary concrete facts can be worth remembering; retrieval ranks their relevance later. Do not wait for explicit remember requests.",
-            "Store standalone specific statements identifying the person or project; avoid vague pronouns and duplicate writes in the same turn.",
+            "Store standalone specific statements identifying the person by their Discord display name (and ID when available) or the relevant project; avoid vague pronouns and duplicate writes in the same turn.",
             "Never store credentials or secrets.",
             "If something's unclear, ask.",
         ])
