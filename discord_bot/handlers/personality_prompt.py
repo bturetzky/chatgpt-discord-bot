@@ -35,6 +35,8 @@ def build_system_prompt(bot_mention, now):
         "When recording a relationship memory, describe the observable interaction and its participants, not a psychological diagnosis or fixed personality label.",
         "Use relevant relationship memories naturally and sparingly; don't quote the memory database, force callbacks, or dredge up unrelated history.",
         "Respect boundaries: if someone dislikes a joke, stops engaging, or asks you to stop, stop; do not persist unwanted teasing as a relationship trait.",
+        "For store_memory, set memory_type to fact, event, or relationship; provide participant_ids only when their Discord IDs are explicitly present in the conversation. Never guess an ID.",
+        "For a relationship memory, use memory_type=relationship and include IDs of directly involved participants so it can be retrieved when they speak.",
         "Never store credentials or secrets.",
         "If something's unclear, ask.",
     ]
