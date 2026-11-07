@@ -58,7 +58,7 @@ class DiscordReliabilityTests(unittest.IsolatedAsyncioTestCase):
         with patch("discord_bot.handlers.discord_handler.asyncio.sleep", new_callable=AsyncMock):
             await handler.process_message(message)
         sent_history = handler.chatgpt_handler.get_response.await_args.args[0]
-        self.assertEqual(sent_history, [{"role": "user", "content": "<@123>: <@bot> hi"}])
+        self.assertEqual(sent_history, [{"role": "user", "content": "friend (Discord ID 123): <@bot> hi"}])
         message.channel.send.assert_awaited()
 
     async def test_memory_failure_does_not_prevent_reply(self):
