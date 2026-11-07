@@ -4,6 +4,13 @@
 
 This roadmap covers application code. The separate [deployment workflow](deployment-workflow.md) covers CI, image publishing, dev deployment and production promotion. Deployment manifests remain authoritative in [homelab-gitops](https://github.com/bturetzky/homelab-gitops).
 
+## Per-chat usage instrumentation (proposed, 2026-11-07)
+
+- **Implementation:** Each Discord chat turn logs model, Responses API call count (including tool round trips), total input tokens, cached input tokens, output tokens, elapsed milliseconds, and optional estimated USD cost. No message bodies or memories are logged.
+- **Optional price configuration:** `OPENAI_INPUT_USD_PER_1M`, `OPENAI_CACHED_INPUT_USD_PER_1M`, and `OPENAI_OUTPUT_USD_PER_1M` are rates per million tokens. Set these to the rates for the configured `OPENAI_MODEL`; otherwise the log prints `estimated_cost_usd=unconfigured`. Cached tokens are charged at the standard input rate when a cached rate is omitted.
+- **Scope:** USD estimate covers Responses usage only; embedding calls, Pinecone, Brave/weather services and infrastructure are not included. Actual billing can differ. Logs are emitted even when a Responses request fails (with usage collected up to that point).
+- **Validation:** Verify log line after a simple message and a tool-using message, then check configured prices and totals against API usage.
+
 ## Relationship memory retrieval (proposed, 2026-11-07)
 
 - **Implementation proposed:** Store optional `memory_type` and `participant_ids` in existing Pinecone metadata. New relationship memories can be filtered by Discord ID; older unstructured records remain available via ordinary semantic search without migration.
