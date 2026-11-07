@@ -46,7 +46,7 @@ endef
 .PHONY: help
 help:
 	@echo "Usage: make [PHONY]"
-	@sed -n -e "/sed/! s/\.PHONY: //p" Makefile
+	@sed -n -e "/sed/! s/@python3 -m unittest discover -s tests -t ..PHONY: //p" Makefile
 
 
 .PHONY: clean

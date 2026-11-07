@@ -14,15 +14,22 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 - **Verified:** Manual production promotion workflow implemented (PR #12). User ran it against main, reviewed and merged the resulting GitOps PR, confirmed dev/prod image digests match, observed production rollout, and confirmed the production bot remains responsive. No image rebuild or automatic production merge.
 - **Remaining:** SSRF protection, sensitive logging, memory isolation/retention, test coverage, shutdown/error handling, and search reliability remain open; see original findings below.
 
+## Test suite modernization (proposed PR, 2026-11-07)
+
+- Replace the obsolete `tests/test_chat_bot.py` (removed module and Python `imp`) with tests of current Discord routing, DMs, shutdown gating, chronological history, and message splitting.
+- Change `make test` to propagate failures and run all discovered tests in the Docker build, not just the two previously selected modules.
+- **Validation pending:** PR CI must pass. This is mocked application behavior coverage, not a live Discord/OpenAI/Pinecone end-to-end test. A separate dev smoke-test procedure remains useful.
+- **Observed after PR #14:** User confirmed successful build, merge, dev deployment, and live conversation/weather/webpage/memory smoke checks. DuckDuckGo web search remained rate-limited; fallback response was graceful. User initiated production promotion; completion not yet verified.
+
 ## Startup regression and CI correction (2026-11-07)
 
 - **Observed after PR #13 merged:** Dev CrashLoop due to an empty `VectorStore.close()` function body; Python raised `IndentationError` before bot startup.
-- **Corrective PR pending validation:** Add executable `pass` to the no-op close hook. Make Docker image build run `compileall` and both focused Responses API and reliability regression suites **before** the image can be published. This prevents the same syntax/import failure from reaching dev again.
+- **Corrective PR #14 merged and dev-validated:** Add executable `pass` to the no-op close hook. Make Docker image build run `compileall` and both focused Responses API and reliability regression suites **before** the image can be published. This prevents the same syntax/import failure from reaching dev again.
 - **Follow-up:** Modernize the legacy `tests/test_chat_bot.py` suite separately; it still references the removed `chat_bot` module. Verify dev health and Discord smoke tests before production promotion.
 
 ## Reliability hardening PR (2026-11-07)
 
-- **Proposed, pending merge/dev validation:** Correct Discord shutdown to close the actual vector handler and always close resources when the client exits. Remove the obsolete Pinecone `deinit` call.
+- **PR #13 merged; dev smoke-tested after corrective PR #14:** Correct Discord shutdown to close the actual vector handler and always close resources when the client exits. Remove the obsolete Pinecone `deinit` call.
 - **Proposed:** Run synchronous Pinecone/embedding lookups and blocking weather, news and webpage HTTP calls off the Discord event loop; add network timeouts to weather calls and a 30-second async tool execution timeout.
 - **Proposed:** Continue responding if Discord history or memory retrieval fails; handle empty geocoding results and pages without article/div tags; add focused regression tests.
 - **Scope decision:** This bot serves five trusted friends on one Discord server. Shared memory across guild and DMs is intentional and acceptable. Defer Pinecone namespace/schema changes, retention work, logging cleanup and SSRF protections; revisit SSRF as P1 rather than a release blocker. No Pinecone data migration is planned.

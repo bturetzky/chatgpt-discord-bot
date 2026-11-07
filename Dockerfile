@@ -30,7 +30,7 @@ COPY . /app
 
 # Catch syntax/import failures and run focused tests before publishing an image.
 RUN python -m compileall -q discord_bot run.py \
-    && python -m unittest tests.test_responses_api tests.test_reliability
+    && python -m unittest discover -s tests -t .
 
 # Run the bot script when the container launches
 CMD ["python", "-m", "run"]

@@ -1,163 +1,69 @@
+"""Behavior tests for the current Discord handler (replaces obsolete chat_bot tests)."""
 import asyncio
-import imp
-import os
-import sys
-from unittest import TestCase
+import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-# NOTE: This is the most straightforward way to patch an env that is
-# required at import time. If more of the global variables moved into
-# main, that would solve this hackery.
-os.environ["DISCORD_TOKEN"] = "potato"
-os.environ["OPENAI_API_KEY"] = "banana"
-
-# NOTE: It's just so much easier to update the system modules for a
-# global async, especially when it lives in a mutated instance of
-# discord.client. Eventually, once this is scope at main or lower,
-# this hack can go away.
-aiosqlite = AsyncMock()
-sys.modules["aiosqlite"] = aiosqlite
-
-import chat_bot
+from discord_bot.handlers.discord_handler import DiscordHandler
+from tests.test_reliability import make_handler, make_message
 
 
-class MockChannel:
-    def __init__(self):
-        self.end = 1
-        self.start = 0
+class DiscordBehaviorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_ignores_unmentioned_guild_messages(self):
+        handler, message = make_handler(), make_message()
+        handler.client.user.mentioned_in.return_value = False
+        await handler.process_message(message)
+        handler.chatgpt_handler.get_response.assert_not_awaited()
+        message.channel.send.assert_not_awaited()
 
-    def __aiter__(self):
-        return self
+    async def test_dm_does_not_require_mention(self):
+        handler, message = make_handler(), make_message()
+        message.guild = None
+        handler.client.user.mentioned_in.return_value = False
+        with patch("discord_bot.handlers.discord_handler.asyncio.sleep", new_callable=AsyncMock):
+            await handler.process_message(message)
+        handler.chatgpt_handler.get_response.assert_awaited_once()
 
-    def history(self, limit):
-        return self
+    async def test_shutdown_event_prevents_new_requests(self):
+        handler, message = make_handler(), make_message()
+        handler.shutdown_event.set()
+        await handler.process_message(message)
+        handler.chatgpt_handler.get_response.assert_not_awaited()
 
-    async def __anext__(self):
-        if self.start >= self.end:
-            raise StopAsyncIteration
-        else:
-            self.start += 1
-            mock_author = MagicMock(display_name="foo")
-            mock_message = MagicMock(author=mock_author)
-            return mock_message
+    async def test_history_is_chronological_with_roles(self):
+        handler = make_handler()
+        author = SimpleNamespace(mention="<@123>")
+        bot = handler.client.user
+        older = SimpleNamespace(author=author, content="first")
+        newer = SimpleNamespace(author=bot, content="second")
+        channel = MagicMock()
+        async def history():
+            for message in (newer, older):
+                yield message
+        channel.history.return_value = history()
+        result = await DiscordHandler.get_message_history(handler, channel, limit=3)
+        self.assertEqual(result, [
+            {"role": "user", "content": "<@123>: first"},
+            {"role": "assistant", "content": f"{bot.mention}: second"},
+        ])
+        channel.history.assert_called_once_with(limit=3)
+
+    async def test_history_respects_zero_limit(self):
+        handler = make_handler()
+        channel = MagicMock()
+        async def history():
+            yield SimpleNamespace(author=handler.client.user, content="ignored")
+        channel.history.return_value = history()
+        self.assertEqual(await DiscordHandler.get_message_history(handler, channel, limit=0), [])
+
+    async def test_split_message_preserves_short_multiline_text(self):
+        handler = make_handler()
+        self.assertEqual(handler.split_message("hello\nworld"), ["hello\nworld\n"])
+
+    async def test_split_message_chunks_at_line_boundary(self):
+        handler = make_handler()
+        self.assertEqual(handler.split_message("abc\ndef", limit=5), ["abc\n", "def\n"])
 
 
-class TestChatBot(TestCase):
-    def setUp(self):
-        def kill_patches():
-            patch.stopall()
-            imp.reload(chat_bot)
-
-        self.addCleanup(kill_patches)
-        patch.object(chat_bot.discord.Client, "start", autospec=True).start()
-        patch.object(chat_bot.discord.Client, "user", autospec=True).start()
-        patch.object(chat_bot.discord.Client, "close", autospec=True).start()
-        patch("openai.ChatCompletion", MagicMock()).start()
-        imp.reload(chat_bot)
-
-    def test_stub(self):
-        pass
-
-    def test_main_interrupted(self):
-        with patch("discord.Client.start", side_effect=KeyboardInterrupt):
-            with patch("chat_bot.print"):
-                with patch("chat_bot.shutdown", AsyncMock()):
-                    asyncio.run(chat_bot.main())
-
-    def test_main(self):
-        with patch("chat_bot.shutdown", AsyncMock()):
-            asyncio.run(chat_bot.main())
-
-    def test_shutdown(self):
-        with patch("chat_bot.print"):
-            asyncio.run(chat_bot.shutdown())
-
-    def test_chatgpt_response_raises_exception(self):
-        messages = MagicMock()
-        guild_id = "123"
-        with patch("openai.ChatCompletion.create", side_effect=Exception):
-            with patch("chat_bot.get_summary"):
-                with patch("chat_bot.print"):
-                    asyncio.run(chat_bot.chatgpt_response(messages, guild_id))
-
-    def test_chatgpt_response(self):
-        messages = MagicMock()
-        guild_id = "123"
-        with patch("chat_bot.get_summary"):
-            with patch("chat_bot.print"):
-                asyncio.run(chat_bot.chatgpt_response(messages, guild_id))
-
-    def test_get_message_history_limit_three(self):
-        channel = MockChannel()
-        limit = 3
-        asyncio.run(chat_bot.get_message_history(channel, limit))
-
-    def test_get_message_history_limit_zero(self):
-        channel = MockChannel()
-        limit = 0
-        asyncio.run(chat_bot.get_message_history(channel, limit))
-
-    def test_on_ready(self):
-        with patch("chat_bot.print"):
-            asyncio.run(chat_bot.on_ready())
-
-    def test_on_message_and_everyone_is_false_timeout(self):
-        mock_channel = MagicMock()
-        mock_channel.send = AsyncMock()
-        message = MagicMock(
-            mention_everyone=False,
-            channel=mock_channel,
-            guild=None,
-        )
-        with patch("discord.Client.user.mentioned_in", return_value=True):
-            with patch("chat_bot.print"):
-                with patch("chat_bot.get_summary"):
-                    with patch("chat_bot.get_message_history"):
-                        with patch(
-                            "chat_bot.chatgpt_response",
-                            side_effect=asyncio.TimeoutError,
-                        ):
-                            asyncio.run(chat_bot.on_message(message))
-
-    def test_on_message_and_everyone_is_false(self):
-        mock_channel = MagicMock()
-        mock_channel.send = AsyncMock()
-        message = MagicMock(
-            mention_everyone=False,
-            channel=mock_channel,
-            guild=None,
-        )
-        with patch("chat_bot.discord.Client.user.mentioned_in", return_value=True):
-            with patch("chat_bot.print"):
-                with patch("chat_bot.get_summary"):
-                    with patch("chat_bot.get_message_history"):
-                        with patch("chat_bot.chatgpt_response", return_value=""):
-                            asyncio.run(chat_bot.on_message(message))
-
-    def test_on_message_shutdown_event(self):
-        message = MagicMock()
-        with patch("chat_bot.shutdown_event"):
-            asyncio.run(chat_bot.on_message(message))
-
-    def test_on_message(self):
-        message = MagicMock()
-        with patch("discord.Client.user.mentioned_in", return_value=True):
-            asyncio.run(chat_bot.on_message(message))
-
-    def test_get_summary_prompt_content(self):
-        bot_mention = "foo"
-        result = chat_bot.get_summary_prompt_content(bot_mention)
-        self.assertTrue(result)
-        self.assertTrue(type(result) is str, type(result))
-
-    def test_get_response_system_prompt_content(self):
-        bot_mention = "foo"
-        result = chat_bot.get_response_system_prompt_content(bot_mention)
-        self.assertTrue(result)
-        self.assertTrue(type(result) is str, type(result))
-
-    def test_get_response_priming_prompt_content(self):
-        bot_mention = "foo"
-        result = chat_bot.get_response_priming_prompt_content(bot_mention)
-        self.assertTrue(result)
-        self.assertTrue(type(result) is str, type(result))
+if __name__ == "__main__":
+    unittest.main()
