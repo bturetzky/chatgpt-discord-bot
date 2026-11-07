@@ -132,13 +132,13 @@ class WebpageToolRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertIn("provide a URL", await GetWebPageContents().execute({}))
 
     async def test_network_failure(self):
-        with patch("discord_bot.functions.get_webpage_contents.requests.get", side_effect=requests.Timeout):
+        with patch("discord_bot.functions.get_webpage_contents.fetch_public_html", side_effect=requests.Timeout):
             result = await GetWebPageContents().execute({"url": "https://example.org"})
         self.assertIn("Error fetching the webpage", result)
 
     async def test_page_without_article_or_div(self):
         reply = MagicMock(content=b"<html><body><p>Plain text</p></body></html>")
-        with patch("discord_bot.functions.get_webpage_contents.requests.get", return_value=reply):
+        with patch("discord_bot.functions.get_webpage_contents.fetch_public_html", return_value=reply.content):
             result = await GetWebPageContents().execute({"url": "https://example.org"})
         self.assertIn("Plain text", result)
 
