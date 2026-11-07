@@ -1,8 +1,15 @@
 # Engineering roadmap and code review
 
-**Reviewed:** 2026-11-07 | **Status:** Living roadmap; Python 3.12 runtime upgrade validated and promoted.
+**Reviewed:** 2026-11-07 | **Status:** Living roadmap; Python 3.12 promoted, Renovate enabled, dependency audit in progress.
 
 This roadmap covers application code. The separate [deployment workflow](deployment-workflow.md) covers CI, image publishing, dev deployment and production promotion. Deployment manifests remain authoritative in [homelab-gitops](https://github.com/bturetzky/homelab-gitops).
+
+## Dependency cleanup checkpoint (2026-11-07)
+
+- **Confirmed:** PR #24 added Renovate for Poetry with Monday 06:00–10:00 America/Los_Angeles scheduling, lockfile maintenance, and no automerge. Mend repository access was enabled by the operator; first scheduled update PRs have not yet been reviewed.
+- **Confirmed:** The operator merged the dependency cleanup removing obsolete `duckduckgo-search` from `pyproject.toml` and regenerating `poetry.lock` with Poetry 1.8.3 in a Python 3.12 Docker container. Its orphaned transitive packages were removed from the lockfile. No separate production promotion has been reported for this cleanup.
+- **Audit findings (source search, not runtime validation):** `discord.py` is used by the bot and must stay; the separate `discord` distribution is redundant. `aiohttp` is used by search and IGDB tools; `beautifulsoup4` and `lxml` are used by webpage parsing. No direct source usage was found for `chatgpt`, `aiosqlite`, `numpy`, or `html5lib`; these are candidates for removal, subject to dependency resolution and CI validation. Do not remove `lxml` merely because it is referenced as a BeautifulSoup parser string.
+- **Next:** Remove the five unused direct declarations (`discord`, `chatgpt`, `aiosqlite`, `numpy`, `html5lib`) with Poetry 1.8.3, commit both manifest and regenerated lockfile, require green Docker build/tests, and smoke-test dev. Then review Renovate's first PR batch before planning Poetry or Python 3.14 upgrades.
 
 ## Runtime modernization PR #23 — Python 3.12 compatibility step (2026-11-07)
 
@@ -24,7 +31,7 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 - **Observed:** Memory retrieval appears in dev logs and the bot reported a successful memory write; a separate retrieval test is not required for the current promotion decision. Memory privacy and retention quality remain open engineering concerns.
 - **Historical:** Unofficial DuckDuckGo searches returned HTTP `202 Ratelimit`, prompting the move to the official Brave Search API.
 - **Verified in dev (PR #21, 2026-11-07):** Replaced unofficial DuckDuckGo scraping with Brave Search's official API using `BRAVE_SEARCH_API_KEY` from the existing Kubernetes Secret. Structured results and explicit errors are implemented, tests passed CI, and the user confirmed live dev search results. Production promotion was initiated but is not yet confirmed complete.
-- **Deferred:** Add Renovate for Poetry `pyproject.toml` and `poetry.lock`: weekly dependency PRs, periodic lockfile maintenance, major upgrades separate, no automerge initially. Bot main merges automatically deploy to dev, so dependency PRs should be reviewed and validated before merge. Not started.
+- **Historical plan (completed by PR #24):** Add Renovate for Poetry `pyproject.toml` and `poetry.lock`: weekly dependency PRs, periodic lockfile maintenance, major upgrades separate, no automerge initially. Bot main merges automatically deploy to dev, so dependency PRs should be reviewed and validated before merge. Implemented; first scheduled PR review pending.
 - **Verified:** Manual production promotion workflow implemented (PR #12). User ran it against main, reviewed and merged the resulting GitOps PR, confirmed dev/prod image digests match, observed production rollout, and confirmed the production bot remains responsive. No image rebuild or automatic production merge.
 - **Remaining:** Memory capture/retrieval quality, dependency maintenance, remaining blocking I/O, and SSRF defense in depth are active improvement areas; historical findings below may already be addressed.
 
