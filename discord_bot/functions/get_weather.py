@@ -36,8 +36,8 @@ class WeatherLookup(BaseFunction):
         # Get latitude and longitude for the location using OpenWeather's geocoding API
         geocode_url = f"http://api.openweathermap.org/geo/1.0/direct?q={location}&limit=1&appid={self.api_key}"
         #print(geocode_url)
-        geocode_response = await asyncio.to_thread(requests.get, geocode_url, timeout=10)
         try:
+            geocode_response = await asyncio.to_thread(requests.get, geocode_url, timeout=10)
             geocode_response.raise_for_status()
             geocode_data = geocode_response.json()
             if not geocode_data:
