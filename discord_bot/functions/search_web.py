@@ -1,14 +1,16 @@
-"""Web search with explicit, model-readable provider failure outcomes."""
+"""Brave Search API integration with model-readable errors and safe logging."""
 import asyncio
 import json
 import logging
+import os
 
-from duckduckgo_search import AsyncDDGS
+import aiohttp
 
 from .base import BaseFunction
 
-DDGS_DEFAULT_MAX_RESULTS = 1
+SEARCH_URL = "https://api.search.brave.com/res/v1/web/search"
 MAX_RESULTS = 5
+TIMEOUT_SECONDS = 12
 
 
 def search_error(code, message, retryable=False):
@@ -18,11 +20,11 @@ def search_error(code, message, retryable=False):
 class SearchWeb(BaseFunction):
     name = "search_web"
     description = (
-        "Search the public web for current information. If the tool returns ok=false, "
-        "respect the error: on RATE_LIMITED do not retry this search in the same "
-        "conversation turn; explain that live search is temporarily unavailable, "
-        "and do not invent search results. You may fetch a known public URL with "
-        "get_webpage_contents, but that is not a substitute for searching."
+        "Search the public web using Brave Search for current information. "
+        "On an ok=false error, do not invent results. If RATE_LIMITED, do not "
+        "retry during this turn. If AUTH_ERROR or CONFIG_ERROR, report that "
+        "search is unavailable rather than retrying. You may fetch a known "
+        "public URL separately, but that is not a substitute for searching."
     )
     parameters = {
         "type": "object",
@@ -38,43 +40,50 @@ class SearchWeb(BaseFunction):
         query = args.get("query")
         if not isinstance(query, str) or not query.strip():
             return search_error("INVALID_ARGUMENT", "A nonempty search query is required.")
-        try:
-            max_results = int(args.get("max_results", DDGS_DEFAULT_MAX_RESULTS))
-            if not 1 <= max_results <= MAX_RESULTS:
-                raise ValueError()
-        except (ValueError, TypeError):
+        count = args.get("max_results", 1)
+        if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= MAX_RESULTS:
             return search_error("INVALID_ARGUMENT", "max_results must be an integer from 1 to 5.")
 
-        try:
-            async with AsyncDDGS() as ddgs:
-                # DDG can return an empty result set; try its lightweight backend
-                # once in that case. Do not retry rate-limited requests.
-                results = await asyncio.wait_for(
-                    asyncio.to_thread(ddgs.text, query, max_results=max_results),
-                    timeout=15,
-                )
-                if not results:
-                    results = await asyncio.wait_for(
-                        asyncio.to_thread(ddgs.text, query, max_results=max_results, backend="lite"),
-                        timeout=15,
-                    )
-        except asyncio.TimeoutError:
-            logging.warning("Web search failed: error_type=Timeout")
-            return search_error("TIMEOUT", "Web search timed out; results are unavailable.")
-        except Exception as exc:
-            error_type = type(exc).__name__
-            logging.warning("Web search failed: error_type=%s", error_type)
-            if "ratelimit" in error_type.lower() or "rate limit" in str(exc).lower() or "202 ratelimit" in str(exc).lower():
-                return search_error("RATE_LIMITED", "Search provider is rate limiting requests. Do not retry immediately.")
-            return search_error("PROVIDER_ERROR", "Web search provider failed; no search results are available.")
+        key = os.environ.get("BRAVE_SEARCH_API_KEY")
+        if not key:
+            logging.error("Brave search unavailable: missing API key")
+            return search_error("CONFIG_ERROR", "Web search is not configured.")
 
-        formatted = [
-            f"{item['title']} - {item['href']}"
-            for item in (results or [])
-            if isinstance(item, dict) and item.get("title") and item.get("href")
+        headers = {"Accept": "application/json", "X-Subscription-Token": key}
+        try:
+            timeout = aiohttp.ClientTimeout(total=TIMEOUT_SECONDS)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(SEARCH_URL, headers=headers,
+                                       params={"q": query, "count": count}) as response:
+                    status = response.status
+                    if status == 429:
+                        logging.warning("Brave search failed: status=429")
+                        return search_error("RATE_LIMITED", "Search provider rate limit reached; do not retry immediately.")
+                    if status in (401, 403):
+                        logging.error("Brave search failed: status=%d", status)
+                        return search_error("AUTH_ERROR", "Search provider rejected the API credentials.")
+                    if status != 200:
+                        logging.warning("Brave search failed: status=%d", status)
+                        return search_error("PROVIDER_ERROR", "Search provider is temporarily unavailable.")
+                    payload = await response.json()
+        except (asyncio.TimeoutError, aiohttp.ServerTimeoutError):
+            logging.warning("Brave search failed: timeout")
+            return search_error("TIMEOUT", "Search request timed out.")
+        except (aiohttp.ClientError, ValueError):
+            logging.warning("Brave search failed: transport_or_response_error")
+            return search_error("PROVIDER_ERROR", "Search provider request failed.")
+
+        items = payload.get("web", {}).get("results", []) if isinstance(payload, dict) else []
+        if not isinstance(items, list):
+            return search_error("PROVIDER_ERROR", "Search provider returned an invalid response.")
+        results = [
+            {"title": item["title"], "url": item["url"]}
+            for item in items[:count]
+            if isinstance(item, dict) and isinstance(item.get("title"), str)
+            and isinstance(item.get("url"), str)
         ]
-        if not formatted:
-            logging.info("Web search completed: results=0")
-            return search_error("NO_RESULTS", "No web search results were found.")
-        logging.info("Web search completed: results=%d", len(formatted))
-        return "\n".join(formatted)
+        if not results:
+            logging.info("Brave search completed: results=0")
+            return search_error("NO_RESULTS", "No search results found.")
+        logging.info("Brave search completed: results=%d", len(results))
+        return json.dumps({"ok": True, "results": results})
