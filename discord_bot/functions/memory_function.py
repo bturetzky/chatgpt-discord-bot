@@ -4,7 +4,7 @@ from datetime import datetime
 
 class WeatherLookup(BaseFunction):
     name = "store_memory"
-    description = "This function is your go-to for storing the good stuff. Use it to save key details or insights that you'll need for future interactions. This is especially important for understanding individual users and their preferences. Think of it as building your personal cheat sheet for each user."
+    description = "This function is your go-to for storing the good stuff. Use it to save key details or insights that you'll need for future interactions. This is especially important for understanding individual users and their preferences. Capture ordinary but durable preferences, plans, projects and decisions as specific standalone facts identifying the relevant person or project. Avoid storing credentials and duplicate facts."
     parameters = {
         "type": "object",
         "properties": {
