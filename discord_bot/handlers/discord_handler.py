@@ -97,7 +97,10 @@ class DiscordHandler:
                 messages = [{"role": "user", "content": f"{message.author.mention}: {message.content}"}]
 
             logging.debug('Retrieving memories')
-            memory_query = message.content
+            # Include a readable speaker identity for shared-memory retrieval.
+            # Historical memories have no user-id metadata, so this is a relevance
+            # hint rather than a strict ownership filter.
+            memory_query = f"{message.author.display_name} ({author_id}) says: {message.content}"
             try:
                 # The embedding and Pinecone clients are synchronous.
                 memories = await asyncio.to_thread(self.vector_handler.get_relevant_contexts, memory_query) or []
