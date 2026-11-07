@@ -96,7 +96,7 @@ jobs:
           path = Path("apps/discord/dev/deployment.yaml")
           source = path.read_text()
           updated, count = re.subn(
-              r"(?m)^(\s*image:\s*)ghcr\.io/bturetzky/chatgpt-discord-bot(?::[^\s]+|@sha256:[a-f0-9]{64})\s*$",
+              r"(?m)^([ \t]*image:[ \t]*)ghcr\.io/bturetzky/chatgpt-discord-bot(?::[^\s]+|@sha256:[a-f0-9]{64})[ \t]*$",
               lambda match: match.group(1) + "ghcr.io/bturetzky/chatgpt-discord-bot@" + digest,
               source,
           )
