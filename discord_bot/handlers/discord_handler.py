@@ -130,7 +130,7 @@ class DiscordHandler:
             ))
             for memory in reversed(unique_memories):
                 messages.insert(0, {"role": "system", "content": f"Memory (possibly outdated): {memory}"})
-            logging.debug(
+            logging.info(
                 'Memory retrieval completed: semantic=%d relationship=%d unique=%d',
                 len(memories), len(relationships), len(unique_memories)
             )
