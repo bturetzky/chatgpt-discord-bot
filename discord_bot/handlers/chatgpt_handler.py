@@ -3,12 +3,14 @@ import asyncio
 import json
 import logging
 import os
+import time
 from datetime import datetime
 
 from openai import AsyncOpenAI, OpenAIError
 
 from .function_handler import FunctionHandler
 from .personality_prompt import build_system_prompt
+from .usage_metrics import ChatUsage
 
 GPT_MODEL = os.getenv("OPENAI_MODEL", "gpt-6.1-terra")
 MAX_FUNCTION_CALLS = 11
@@ -35,6 +37,8 @@ class ChatGPTHandler:
         ]
         instructions = self.get_response_system_prompt_content(self.bot_mention)
 
+        usage_metrics = ChatUsage(model=GPT_MODEL)
+        started = time.monotonic()
         try:
             for attempt in range(MAX_FUNCTION_CALLS + 1):
                 response = await self.client.responses.create(
@@ -44,6 +48,7 @@ class ChatGPTHandler:
                     tools=tools,
                     tool_choice="none" if attempt == MAX_FUNCTION_CALLS else "auto",
                 )
+                usage_metrics.add(response.usage)
                 # Retain all model output, including reasoning items and tool calls,
                 # so subsequent tool results have the context they require.
                 conversation.extend(
@@ -79,6 +84,8 @@ class ChatGPTHandler:
         except (OpenAIError, asyncio.TimeoutError) as exc:
             logging.warning('OpenAI request failed: error_type=%s', type(exc).__name__)
             return "Sorry, there was an error processing your request with OpenAI. Please try again later."
+        finally:
+            usage_metrics.log(elapsed_seconds=time.monotonic() - started)
 
     async def get_summary(self, messages):
         # Kept for compatibility with the currently disabled summary workflow.
