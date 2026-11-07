@@ -8,15 +8,15 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 
 - **Implemented:** Modern OpenAI Responses API integration, configurable model, updated SDK and Poetry lockfile, async tool dispatch, focused regression tests, and serialization of response output for follow-up tool calls (PRs #10 and #11). Dev Discord basic conversation and weather tool succeeded after the fix.
 - **Observed:** Memory retrieval appears in dev logs and the bot reported a successful memory write; a separate retrieval test is not required for the current promotion decision. Memory privacy and retention quality remain open engineering concerns.
-- **Observed:** Web search failed twice because DuckDuckGo returned HTTP `202 Ratelimit`. The bot reported failure without crashing. Search-provider reliability is a separate issue, not a blocker for promoting the working API migration.
-- **In progress (PR #21, 2026-11-07):** Replace the unofficial DuckDuckGo scraper with Brave Search's official API, using `BRAVE_SEARCH_API_KEY` from the existing Kubernetes Secret. Search returns structured success/results and explicit provider/authentication/rate-limit errors; dispatcher distinguishes reported failures from successes. Dev Secret verified present, production Secret still needs configuration before promotion. CI and live Brave search not yet verified. Memory-write criteria still need tightening.
+- **Historical:** Unofficial DuckDuckGo searches returned HTTP `202 Ratelimit`, prompting the move to the official Brave Search API.
+- **Verified in dev (PR #21, 2026-11-07):** Replaced unofficial DuckDuckGo scraping with Brave Search's official API using `BRAVE_SEARCH_API_KEY` from the existing Kubernetes Secret. Structured results and explicit errors are implemented, tests passed CI, and the user confirmed live dev search results. Production promotion was initiated but is not yet confirmed complete.
 - **Deferred:** Add Renovate for Poetry `pyproject.toml` and `poetry.lock`: weekly dependency PRs, periodic lockfile maintenance, major upgrades separate, no automerge initially. Bot main merges automatically deploy to dev, so dependency PRs should be reviewed and validated before merge. Not started.
 - **Verified:** Manual production promotion workflow implemented (PR #12). User ran it against main, reviewed and merged the resulting GitOps PR, confirmed dev/prod image digests match, observed production rollout, and confirmed the production bot remains responsive. No image rebuild or automatic production merge.
-- **Remaining:** SSRF protection, sensitive logging, memory isolation/retention, test coverage, shutdown/error handling, and search reliability remain open; see original findings below.
+- **Remaining:** Memory capture/retrieval quality, dependency maintenance, remaining blocking I/O, and SSRF defense in depth are active improvement areas; historical findings below may already be addressed.
 
 ## Production validation (2026-11-07)
 
-- **Confirmed by operator:** Logging cleanup and gateway intent changes deployed to production, production bot responsive. Dev smoke test exercised weather, webpage fetch, IGDB, news and memory write. DDG search returned RatelimitException and was handled without crashing. New search error-handling work remains unvalidated.
+- **Confirmed by operator:** Logging cleanup and gateway intent changes deployed to production, production bot responsive. Dev smoke test exercised weather, webpage fetch, IGDB, news and memory write. DDG search returned RatelimitException and was handled without crashing. Brave Search subsequently passed CI and a live dev search; production validation is pending.
 
 ## Logging cleanup and smoke-test correction (proposed PR, 2026-11-07)
 
@@ -41,14 +41,14 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 ## Memory regression coverage and dev smoke runbook (merged PR #17, 2026-11-07)
 
 - Add mocked embedding/Pinecone retrieval, upsert, error and empty-result tests, memory tool persistence, and Discord injection of retrieved memories into model context. No live Pinecone changes, migrations or credentials.
-- Add [dev smoke-test runbook](dev-smoke-test.md) for rollout, conversation, weather, DDG search, webpage fetching, existing-memory recall, optional restart and explicit production promotion.
+- Add [dev smoke-test runbook](dev-smoke-test.md) for rollout, conversation, weather, Brave search, webpage fetching, existing-memory recall, optional restart and explicit production promotion.
 - **Validated:** User reported green CI and merged PR #17. Manual dev smoke checks remain separate from CI; memory writes are not part of routine smoke tests.
 - **Confirmed:** User reported PR #16 green and merged.
 
 ## Tool and API regression coverage (merged PR #16, 2026-11-07)
 
 - Add mocked tests for multi-call Responses API correlation, malformed/non-object tool arguments, tool error propagation, empty responses, and OpenAI timeouts.
-- Cover weather geocoding and forecast failures, forecast trimming, webpage HTTP failures and parser fallback/truncation, and DDG rate-limit fallback. No external requests or credentials.
+- Cover weather geocoding and forecast failures, forecast trimming, webpage HTTP failures and parser fallback/truncation, and search-provider failure handling. No external requests or credentials.
 - **Validated:** User reported green CI and merged PR #16. New tests are discovered automatically by the Docker image build; CI success is required before merge. This is deterministic component-level testing, not live integration.
 - Next: memory write/retrieval tests, message edge cases, and documented post-deployment live smoke tests. Do not change shared Pinecone memory behavior.
 
@@ -57,7 +57,7 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 - Replaced the obsolete `tests/test_chat_bot.py` (removed module and Python `imp`) with tests of current Discord routing, DMs, shutdown gating, chronological history, and message splitting.
 - Changed `make test` to propagate failures and run all discovered tests in the Docker build, not just the two previously selected modules.
 - **Validated:** User reported green CI and merged PR #15. This is mocked application behavior coverage, not a live Discord/OpenAI/Pinecone end-to-end test. A separate dev smoke-test procedure remains useful.
-- **Observed after PR #14:** User confirmed successful build, merge, dev deployment, and live conversation/weather/webpage/memory smoke checks. DuckDuckGo web search remained rate-limited; fallback response was graceful. User initiated production promotion; completion not yet verified.
+- **Observed after PR #14:** User confirmed successful build, merge, dev deployment, and live conversation/weather/webpage/memory smoke checks. DuckDuckGo web search remained rate-limited at that point; the provider was later replaced with Brave Search. User initiated production promotion; completion not yet verified.
 
 ## Startup regression and CI correction (2026-11-07)
 
@@ -104,8 +104,8 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 14. **Modernize dependencies/runtime** — upgrade Python 3.10 base, Poetry and dependencies in tested steps; remove redundant/unused packages after import audit. Add dependency scanning and reproducible builds.
 15. **Refactor lifecycle and dependencies** — remove global `openai.api_key` and `VectorHandler` singleton; inject client and storage dependencies into handlers for isolation and testability.
 16. **Improve tool implementations** — `get_weather.py` uses HTTP for geocoding and lacks timeouts/error validation; `get_webpage_contents.py` may raise `ValueError` if no matching tags; IGDB fetches a token per call and lacks timeouts. Standardize HTTP, retries, response bounds and errors.
-17. **Review search integration** — verify current `AsyncDDGS.text` usage and results shape; add mocked tests for empty results, provider errors and rate limiting.
-18. **Improve memory quality** — avoid flooding prompt with nine raw matches; return bounded, deduplicated text, relevance thresholds, timestamps and retention/delete controls. Decide whether memory storage is opt-in.
+17. **Completed in dev — Review search integration** — replaced unofficial DuckDuckGo integration with Brave Search API; added mocked tests for success, empty results, authentication, rate limiting, timeout, network errors and malformed results. Live dev search succeeded; production promotion pending.
+18. **Improve memory capture and retrieval (next candidate)** — keep broad, useful memory capture rather than aggressively filtering writes. Current implementation embeds an author-ID-prefixed message, retrieves nine nearest Pinecone vectors without checking similarity scores, and injects raw metadata dictionaries as system messages. Model-initiated writes are optional; each write creates a new UUID without deduplication or updates. Explore better capture guidance, readable memory text, relevance thresholds and mechanisms to update conflicting/outdated facts. Shared guild/DM memory remains intentional; no Pinecone migration planned.
 19. **Improve observability** — structured logs, model/tool latency, error counters, startup readiness checks and an explicit verification runbook. Do not emit user content as telemetry.
 20. **Clean up dead code and naming** — obsolete `get_summary` references undefined `utilities`; duplicated imports, stale comments, `vectore_store.py` typo, confusing `WeatherLookup` class name in `memory_function.py`, and unused `guild_id`.
 21. **Improve code quality tooling** — format/lint/type-check with CI gating, resolve misleading Makefile targets, add pre-commit checks as desired.
@@ -129,13 +129,20 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 
 **Phase 4: User-facing improvements.** Prioritize new capabilities based on actual usage after stability is demonstrated.
 
+## Memory implementation review (2026-11-07)
+
+- **Confirmed in code:** `DiscordHandler.process_message` embeds `author_id says: <message>` and retrieves Pinecone context on each handled message. `VectorStore.fetch_context` requests `top_k=9` with metadata but does not inspect match scores or apply a similarity threshold; it returns metadata dictionaries rather than the `summary` field alone.
+- **Confirmed in code:** The model is instructed to store important preferences/details and can call `store_memory`, but there is no automatic extraction pass. Writes prepend a timestamp, embed the text, and upsert under a fresh UUID; there is no deduplication, update or conflict resolution.
+- **Interpretation:** Large volumes of ordinary memories are not inherently harmful: vector search ranks candidates. But nearest-neighbor ranking alone does not guarantee relevance, and missing captures cannot be recovered by retrieval. Prioritize improving capture and retrieval over suppressing routine writes. Shared memory across trusted users remains a deliberate choice.
+- **Proposed next steps (not implemented):** return clean memory text and optionally scores; inspect real match score distributions before choosing thresholds; improve capture instructions and handling of outdated/duplicate facts; add focused regression tests. Avoid index migrations until there is evidence they are needed.
+
 ## Decisions and validation still needed
 
 - Live conversation and weather tool confirmed; memory retrieval observed in logs and write reported successful. Additional memory isolation/retention validation remains open.
 - Decision: guild/DM-shared memory is acceptable; no per-user isolation or schema migration planned now.
 - Decide which bot interactions need retention, deletion or opt-in.
 - Production bot responded successfully after promotion of the tested Responses API image; precise API model identity was not independently verified from response metadata.
-- Dev smoke tests completed for conversation and weather; web search exposed DuckDuckGo rate limiting. Expand automated coverage later.
+- Dev smoke tests completed for conversation and weather; historical DuckDuckGo rate limiting was resolved by moving to Brave Search, which succeeded in dev. Expand automated coverage later.
 - Check existing Pinecone data before changing embedding dimensions or namespace strategy.
 
 **Status note:** Numbered items retain their original inspection findings for context. Completion labels and confirmed progress above take precedence over their original wording; unresolved items remain future work.
