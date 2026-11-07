@@ -17,15 +17,16 @@ RUN apt-get update \
 # Set the working directory in the container
 WORKDIR /app
 
-# Copy the current directory contents into the container at /app
+# Install the same Poetry version used to generate poetry.lock.
+RUN pip install --no-cache-dir 'poetry==1.8.3'
+
+# Dependency installation is cached until pyproject.toml or poetry.lock changes.
+COPY pyproject.toml poetry.lock ./
+RUN poetry config virtualenvs.create false \
+    && poetry install --only main --no-root --no-interaction
+
+# Copy application code only after dependencies are installed.
 COPY . /app
-
-# Install Poetry
-RUN pip install poetry
-
-# Disable virtualenv creation by Poetry and install dependencies
-RUN poetry config virtualenvs.create false
-RUN poetry install --only main --no-root # Exclude development dependencies
 
 # Run the bot script when the container launches
 CMD ["python", "-m", "run"]
