@@ -9,6 +9,13 @@ from tests.test_reliability import make_handler, make_message
 
 
 class DiscordBehaviorTests(unittest.IsolatedAsyncioTestCase):
+    def test_message_content_intent_is_explicitly_enabled(self):
+        handler = DiscordHandler.__new__(DiscordHandler)
+        intents = handler.get_discord_intents()
+        self.assertTrue(intents.message_content)
+        self.assertTrue(intents.messages)
+        self.assertTrue(intents.guilds)
+
     async def test_ignores_unmentioned_guild_messages(self):
         handler, message = make_handler(), make_message()
         handler.client.user.mentioned_in.return_value = False

@@ -23,11 +23,23 @@ class DiscordHandler:
         # Register Discord event callbacks
         @self.client.event
         async def on_ready():
-            logging.debug(f'{self.client.user} has connected to Discord!')
+            logging.info('Discord gateway ready: bot_id=%s guilds=%d message_content_intent=%s', self.client.user.id, len(self.client.guilds), self.client.intents.message_content)
         
         @self.client.event
         async def on_message(message):
+            logging.info('Discord message received: guild=%s is_dm=%s mentioned=%s content_available=%s',
+                         getattr(message.guild, 'id', None), message.guild is None,
+                         self.client.user.mentioned_in(message) if self.client.user else False,
+                         bool(message.content))
             await self.process_message(message)
+
+        @self.client.event
+        async def on_disconnect():
+            logging.warning('Discord gateway disconnected')
+
+        @self.client.event
+        async def on_resumed():
+            logging.info('Discord gateway session resumed')
     
     async def start(self):
         # This will start the Discord client and run until it's disconnected
@@ -39,13 +51,13 @@ class DiscordHandler:
             # Send the ACTUAL message...            
             await channel.send(interim_message)
         except Exception as e:
-            print(f"Error occurred while processing the message: {e}")
+            logging.exception('Discord interim message send failed')
             # Don't send an error on a short message
         return
 
     async def shutdown(self):
         # Close any resources, db connections, etc.
-        print("Shutting down...")
+        logging.info('Shutting down Discord client')
         self.shutdown_event.set()
         try:
             await self.client.close()
@@ -56,6 +68,7 @@ class DiscordHandler:
         intents = discord.Intents.default()
         intents.messages = messages
         intents.guilds = guilds
+        intents.message_content = True
         return intents
 
     async def process_message(self, message):
@@ -75,7 +88,7 @@ class DiscordHandler:
         
         if self.client.user.mentioned_in(message) and message.mention_everyone is False or message.guild is None:
             # Do all the work here
-            print(f"Got a message from {message.author.display_name}: {message.content}")
+            logging.info('Processing Discord message: guild=%s author_id=%s', getattr(message.guild, 'id', None), message.author.id)
             author_id = str(message.author.id)  # Get the author's ID
             # Tweak the limit here to get more or less context
             try:
@@ -85,7 +98,7 @@ class DiscordHandler:
                 messages = [{"role": "user", "content": f"{message.author.mention}: {message.content}"}]
             guild_id = str(message.guild.id) if message.guild else "DM"
 
-            print(f"Getting memories...")
+            logging.debug('Retrieving memories')
             memory_query = f"{author_id} says: {message.content}"
             try:
                 # The embedding and Pinecone clients are synchronous.
@@ -98,13 +111,13 @@ class DiscordHandler:
                     "role": "system",
                     "content": f"Memory: {memory}"
                 })
-            print(f"Got memories: {memories}")
+            logging.info('Memory retrieval completed: count=%d', len(memories))
 
             try:
                 response = await self.chatgpt_handler.get_response(messages, channel)
             except Exception as e:
-                print(f"Error occurred while processing the message: {e}")
-                print(traceback.format_exc())
+                logging.exception('Discord message processing failed')
+
                 await message.channel.send(
                     f"{message.author.display_name} Sorry, there was an error processing your request. Please try again later."
                 )
@@ -116,7 +129,7 @@ class DiscordHandler:
                     await message.channel.send(message_part)
                     await asyncio.sleep(3)  # Add a 3-second delay between messages
             except Exception as e:
-                print(f"Error occurred while processing the message: {e}")
+                logging.exception('Discord message send failed')
                 await message.channel.send(
                     f"{message.author.display_name} Sorry, there was an error with sending the message itself. Please try again later."
                 )
@@ -134,7 +147,7 @@ class DiscordHandler:
     async def get_message_history(self, channel, limit=3):
         message_history = []
         i = 0
-        print(f"Getting message history for {channel}")
+        logging.debug('Retrieving Discord message history')
         async for message in channel.history(limit=limit):
             if i >= limit:
                 break

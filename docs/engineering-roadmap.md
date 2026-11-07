@@ -14,12 +14,19 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 - **Verified:** Manual production promotion workflow implemented (PR #12). User ran it against main, reviewed and merged the resulting GitOps PR, confirmed dev/prod image digests match, observed production rollout, and confirmed the production bot remains responsive. No image rebuild or automatic production merge.
 - **Remaining:** SSRF protection, sensitive logging, memory isolation/retention, test coverage, shutdown/error handling, and search reliability remain open; see original findings below.
 
-## Webpage SSRF hardening (proposed PR, 2026-11-07)
+## Discord gateway diagnostics and message-content intent (proposed PR, 2026-11-07)
+
+- **Observed:** After PR #18 reached dev, pod was Ready but user messages produced no handler logs. Root cause not yet confirmed; the existing `on_ready` message was DEBUG-only and message content intent was not explicitly enabled.
+- **Proposed fix:** Explicitly request `message_content` intent, configure INFO logging, log gateway ready/disconnect/resume and incoming message metadata (without bodies), and avoid printing retrieved memory contents. Add an intent regression test.
+- **Validation pending:** CI and dev smoke test. The **Message Content Intent must also be enabled in the Discord Developer Portal** for the dev application; application code alone cannot grant it. Avoid production promotion until live dev messages work.
+- SSRF DNS rebinding and egress policy remain separate security work.
+
+## Webpage SSRF hardening (PR #18 merged, dev validation pending; 2026-11-07)
 
 - Restrict model-provided webpage fetches to HTTP(S) with public IP/DNS answers and standard ports; reject local/private/reserved destinations, URL credentials and non-HTML content.
 - Validate each redirect target, disable ambient proxy settings, enforce request timeouts and cap streamed response bodies at 1 MB. Add security regression tests for private IPs, mixed DNS, redirects, content types and oversized bodies.
 - **Defense-in-depth still needed:** DNS is resolved during validation and again by the HTTP transport, leaving a DNS rebinding/time-of-check-to-time-of-use window. Add an egress network policy/firewall blocking pod access to private/cluster/metadata addresses before treating this as a complete SSRF boundary. The app-level checks reduce risk but do not replace network enforcement.
-- **Validation pending:** PR CI and dev smoke-test webpage fetching. No Pinecone/memory behavior changes.
+- **Validation:** User reported green build and dev rollout, but Discord messages stopped reaching the handler; live webpage smoke test remains pending. No Pinecone/memory behavior changes.
 
 ## Memory regression coverage and dev smoke runbook (merged PR #17, 2026-11-07)
 
