@@ -14,11 +14,18 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 - **Verified:** Manual production promotion workflow implemented (PR #12). User ran it against main, reviewed and merged the resulting GitOps PR, confirmed dev/prod image digests match, observed production rollout, and confirmed the production bot remains responsive. No image rebuild or automatic production merge.
 - **Remaining:** SSRF protection, sensitive logging, memory isolation/retention, test coverage, shutdown/error handling, and search reliability remain open; see original findings below.
 
-## Memory regression coverage and dev smoke runbook (proposed PR, 2026-11-07)
+## Webpage SSRF hardening (proposed PR, 2026-11-07)
+
+- Restrict model-provided webpage fetches to HTTP(S) with public IP/DNS answers and standard ports; reject local/private/reserved destinations, URL credentials and non-HTML content.
+- Validate each redirect target, disable ambient proxy settings, enforce request timeouts and cap streamed response bodies at 1 MB. Add security regression tests for private IPs, mixed DNS, redirects, content types and oversized bodies.
+- **Defense-in-depth still needed:** DNS is resolved during validation and again by the HTTP transport, leaving a DNS rebinding/time-of-check-to-time-of-use window. Add an egress network policy/firewall blocking pod access to private/cluster/metadata addresses before treating this as a complete SSRF boundary. The app-level checks reduce risk but do not replace network enforcement.
+- **Validation pending:** PR CI and dev smoke-test webpage fetching. No Pinecone/memory behavior changes.
+
+## Memory regression coverage and dev smoke runbook (merged PR #17, 2026-11-07)
 
 - Add mocked embedding/Pinecone retrieval, upsert, error and empty-result tests, memory tool persistence, and Discord injection of retrieved memories into model context. No live Pinecone changes, migrations or credentials.
 - Add [dev smoke-test runbook](dev-smoke-test.md) for rollout, conversation, weather, DDG search, webpage fetching, existing-memory recall, optional restart and explicit production promotion.
-- **Validation pending:** PR CI. Manual dev smoke checks remain separate from CI; memory writes are not part of routine smoke tests.
+- **Validated:** User reported green CI and merged PR #17. Manual dev smoke checks remain separate from CI; memory writes are not part of routine smoke tests.
 - **Confirmed:** User reported PR #16 green and merged.
 
 ## Tool and API regression coverage (merged PR #16, 2026-11-07)
