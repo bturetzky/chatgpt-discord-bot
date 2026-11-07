@@ -1,17 +1,18 @@
 # Engineering roadmap and code review
 
-**Reviewed:** 2026-11-06 | **Status:** Living roadmap; initial findings came from static inspection, with later live dev validation noted below.
+**Reviewed:** 2026-11-07 | **Status:** Living roadmap; initial findings came from static inspection, with later live dev validation noted below.
 
 This roadmap covers application code. The separate [deployment workflow](deployment-workflow.md) covers CI, image publishing, dev deployment and production promotion. Deployment manifests remain authoritative in [homelab-gitops](https://github.com/bturetzky/homelab-gitops).
 
-## Confirmed progress and live validation (2026-11-06)
+## Confirmed progress and live validation (2026-11-06–07)
 
 - **Implemented:** Modern OpenAI Responses API integration, configurable model, updated SDK and Poetry lockfile, async tool dispatch, focused regression tests, and serialization of response output for follow-up tool calls (PRs #10 and #11). Dev Discord basic conversation and weather tool succeeded after the fix.
 - **Observed:** Memory retrieval appears in dev logs and the bot reported a successful memory write; a separate retrieval test is not required for the current promotion decision. Memory privacy and retention quality remain open engineering concerns.
 - **Observed:** Web search failed twice because DuckDuckGo returned HTTP `202 Ratelimit`. The bot reported failure without crashing. Search-provider reliability is a separate issue, not a blocker for promoting the working API migration.
 - **Deferred:** Improve search provider reliability/fallback, make rate-limit errors explicit to the model to avoid immediate retries, and tighten memory-write criteria to avoid saving trivial interactions.
 - **Deferred:** Add Renovate for Poetry `pyproject.toml` and `poetry.lock`: weekly dependency PRs, periodic lockfile maintenance, major upgrades separate, no automerge initially. Bot main merges automatically deploy to dev, so dependency PRs should be reviewed and validated before merge. Not started.
-- **Next:** Implement manual production promotion of the exact dev-tested image digest through a reviewable GitOps PR; no rebuild or automatic production merge.
+- **Verified:** Manual production promotion workflow implemented (PR #12). User ran it against main, reviewed and merged the resulting GitOps PR, confirmed dev/prod image digests match, observed production rollout, and confirmed the production bot remains responsive. No image rebuild or automatic production merge.
+- **Remaining:** SSRF protection, sensitive logging, memory isolation/retention, test coverage, shutdown/error handling, and search reliability remain open; see original findings below.
 
 ## Priority guide
 
@@ -22,20 +23,20 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 
 ## P0 — secure and stabilize
 
-1. **Fix async function dispatch** — `handlers/function_handler.py` defines synchronous `execute_function` returning `instance.execute(args)`, where the tool's `execute` is async; `chatgpt_handler.py` awaits the wrapper once, receiving a coroutine rather than its resolved value. Make dispatch async, await the implementation, and return a consistently serialized result. Add mocked tool-call round-trip tests.
+1. **Completed — Fix async function dispatch** — `handlers/function_handler.py` defines synchronous `execute_function` returning `instance.execute(args)`, where the tool's `execute` is async; `chatgpt_handler.py` awaits the wrapper once, receiving a coroutine rather than its resolved value. Make dispatch async, await the implementation, and return a consistently serialized result. Add mocked tool-call round-trip tests.
 2. **Protect webpage fetching against SSRF** — `functions/get_webpage_contents.py` fetches model-provided URLs with `requests.get`. Restrict to http/https, reject loopback/private/link-local/metadata IPs (including DNS resolution and redirect targets), bound response size/content type, and consider an egress policy. This is particularly relevant inside a home Kubernetes network.
 3. **Remove sensitive prompt and memory logging** — `chatgpt_handler.py` prints full messages and model responses; `discord_handler.py` prints user messages and retrieved memories. Switch to structured, redacted logging with request IDs and no secrets/private conversation bodies by default.
 4. **Scope vector memory per user and environment** — `vectore_store.py` queries the shared index without namespace or metadata filter; `discord_handler.py` includes the author in query text but that is not an access boundary. Define explicit bot/environment, guild and user scope in stored metadata and query filters. Decide whether any shared memories are intentional; plan migration for existing unscoped entries.
-5. **Verify and repair memory tool end-to-end** — `functions/memory_function.py` calls `VectorHandler()` during function discovery; singleton initialization depends on ordering. Validate persistence, namespace metadata, and retrieval with integration tests. Memory is currently encouraged automatically in the system prompt; introduce deliberate retention/consent behavior.
+5. **Partially verified — Verify and repair memory tool end-to-end** — `functions/memory_function.py` calls `VectorHandler()` during function discovery; singleton initialization depends on ordering. Validate persistence, namespace metadata, and retrieval with integration tests. Memory is currently encouraged automatically in the system prompt; introduce deliberate retention/consent behavior.
 
 ## P1 — reliability and modern API
 
 6. **Replace obsolete tests with real tests** — `tests/test_chat_bot.py` imports a `chat_bot` module absent from the current tree and uses removed `imp`. Rebuild tests against `discord_bot`; cover message routing, history, chunking, tool dispatch, OpenAI errors, memory isolation and shutdown. Fix `Makefile` test target, which currently masks failures with `|| echo`.
-7. **Modernize OpenAI client/tool calls** — `handlers/chatgpt_handler.py` uses legacy `openai.ChatCompletion.create` and `functions/function_call`; `vector_handler.py` uses legacy `openai.Embedding.create`. Move to a supported client/API with an explicit model configuration, retries, timeouts, and regression tests. Avoid coupling this to unrelated features.
+7. **Completed (core migration) — Modernize OpenAI client/tool calls** — `handlers/chatgpt_handler.py` uses legacy `openai.ChatCompletion.create` and `functions/function_call`; `vector_handler.py` uses legacy `openai.Embedding.create`. Move to a supported client/API with an explicit model configuration, retries, timeouts, and regression tests. Avoid coupling this to unrelated features.
 8. **Fix graceful shutdown** — `discord_handler.py` calls `self.vector_store.close()` although it owns `self.vector_handler`; `vectore_store.py` calls `pinecone.deinit()` without importing `pinecone`, and current client lifecycle needs review. Handle SIGTERM/CancelledError cleanly in Kubernetes.
 9. **Remove blocking I/O from async handlers** — synchronous OpenAI calls, Pinecone calls, `requests` in weather/page tools, and NewsAPI may block the Discord event loop. Use async clients or bounded `asyncio.to_thread` wrappers, with timeouts and concurrency limits.
 10. **Harden error paths** — `discord_handler.py` continues if history fetch fails (potentially unbound `messages`); `vectore_store.py` can return `None` which the caller iterates; malformed tool JSON can break the response loop. Return safe fallback responses and test failures.
-11. **Make function-call behavior bounded** — enforce tool call count, execution time, output size and parameter validation; confirm forced-final-response semantics on the chosen API. Avoid long unconditional sleeps between model/tool steps.
+11. **Partially implemented — Make function-call behavior bounded** — enforce tool call count, execution time, output size and parameter validation; confirm forced-final-response semantics on the chosen API. Avoid long unconditional sleeps between model/tool steps.
 12. **Harden Discord message handling** — test mention precedence, DM handling, empty/oversized messages, role ordering, and splitting very long lines or fenced code. Prevent accidental mentions with allowed_mentions restrictions and ensure message content intent is configured.
 
 ## P2 — maintainability and performance
@@ -71,11 +72,11 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 
 ## Decisions and validation still needed
 
-- Confirm live tool behavior and whether memory writes/reads currently succeed.
+- Live conversation and weather tool confirmed; memory retrieval observed in logs and write reported successful. Additional memory isolation/retention validation remains open.
 - Establish expected memory privacy: per-user by default, and whether guild-shared memory is ever desired.
 - Decide which bot interactions need retention, deletion or opt-in.
-- Confirm current production model/API compatibility before choosing the OpenAI migration target.
-- Identify a representative set of Discord smoke tests against the isolated dev bot.
+- Production bot responded successfully after promotion of the tested Responses API image; precise API model identity was not independently verified from response metadata.
+- Dev smoke tests completed for conversation and weather; web search exposed DuckDuckGo rate limiting. Expand automated coverage later.
 - Check existing Pinecone data before changing embedding dimensions or namespace strategy.
 
-**Status note:** The numbered items are original review findings, not a current list of uncompleted work. See confirmed progress above for items already addressed; remaining risks require separate validation.
+**Status note:** Numbered items retain their original inspection findings for context. Completion labels and confirmed progress above take precedence over their original wording; unresolved items remain future work.
