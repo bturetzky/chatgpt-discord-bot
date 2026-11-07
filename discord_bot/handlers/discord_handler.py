@@ -188,7 +188,8 @@ class DiscordHandler:
                 break
             message_obj = {
                 "role": "assistant" if message.author == self.client.user else "user",
-                "content": f"{message.author.display_name} (Discord ID {message.author.id}) {message.author.mention}: {message.content}"
+                "content": (f"{message.author.display_name} (Discord ID {message.author.id}): {message.content}"
+                            if message.author != self.client.user else f"{message.author.mention}: {message.content}")
             }
             message_history.append(message_obj)
             i += 1
