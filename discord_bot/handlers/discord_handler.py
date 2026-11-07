@@ -94,13 +94,12 @@ class DiscordHandler:
                 messages = await self.get_message_history(channel, limit=CONTEXT_LIMIT)
             except Exception:
                 logging.exception("Unable to retrieve Discord history; using current message")
-                messages = [{"role": "user", "content": f"{message.author.mention}: {message.content}"}]
+                messages = [{"role": "user", "content": f"{message.author.display_name} (Discord ID {message.author.id}): {message.content}"}]
 
             logging.debug('Retrieving memories')
-            # Include a readable speaker identity for shared-memory retrieval.
-            # Historical memories have no user-id metadata, so this is a relevance
-            # hint rather than a strict ownership filter.
-            memory_query = f"{message.author.display_name} ({author_id}) says: {message.content}"
+            # Retrieve against the recent multi-person conversation, not only the
+            # message that mentioned the bot. User turns retain their speaker tags.
+            memory_query = self.build_memory_query(messages)
             try:
                 # The embedding and Pinecone clients are synchronous.
                 memories = await asyncio.to_thread(self.vector_handler.get_relevant_contexts, memory_query) or []
@@ -145,6 +144,25 @@ class DiscordHandler:
             #
             #self.vector_handler.store_additional_data(summary.content, author_id)  # Update the vector store with the summary
             
+    @staticmethod
+    def build_memory_query(messages, max_turns=6, max_chars=2400):
+        """Bounded, speaker-attributed user turns for semantic retrieval."""
+        turns = [
+            item["content"]
+            for item in messages
+            if item.get("role") == "user" and isinstance(item.get("content"), str)
+            and item["content"].strip()
+        ]
+        selected = []
+        remaining = max_chars
+        for turn in reversed(turns):
+            if len(selected) >= max_turns or remaining <= 0:
+                break
+            excerpt = turn[:remaining]
+            selected.append(excerpt)
+            remaining -= len(excerpt)
+        return "\\n".join(reversed(selected))
+
     async def get_message_history(self, channel, limit=3):
         message_history = []
         i = 0
