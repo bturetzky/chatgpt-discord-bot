@@ -161,7 +161,7 @@ class DiscordHandler:
             excerpt = turn[:remaining]
             selected.append(excerpt)
             remaining -= len(excerpt)
-        return "\\n".join(reversed(selected))
+        return "\n".join(reversed(selected))
 
     async def get_message_history(self, channel, limit=3):
         message_history = []
