@@ -20,7 +20,7 @@ class VectorMemoryTests(unittest.TestCase):
         handler.client.embeddings.create.assert_called_once_with(
             input=["question"], model="text-embedding-ada-002"
         )
-        handler.vector_store.fetch_context.assert_called_once_with([0.1, 0.2])
+        handler.vector_store.fetch_context.assert_called_once_with([0.1, 0.2], limit=None)
 
     def test_store_embeds_and_upserts_summary(self):
         handler = object.__new__(VectorHandler)
@@ -28,7 +28,7 @@ class VectorMemoryTests(unittest.TestCase):
         handler.client.embeddings.create.return_value.data = [MagicMock(embedding=[0.3])]
         handler.vector_store = MagicMock()
         handler.store_additional_data("likes gardening")
-        handler.vector_store.store_additional_data.assert_called_once_with([0.3], "likes gardening")
+        handler.vector_store.store_additional_data.assert_called_once_with([0.3], "likes gardening", memory_type="fact", participant_ids=None)
 
     def test_pinecone_empty_matches(self):
         store = VectorStore("fake-key")
@@ -48,7 +48,7 @@ class VectorMemoryTests(unittest.TestCase):
         store.store_additional_data([0.1], "likes gardening")
         vectors = store.index.upsert.call_args.kwargs["vectors"]
         self.assertEqual(vectors[0]["values"], [0.1])
-        self.assertEqual(vectors[0]["metadata"], {"summary": "likes gardening"})
+        self.assertEqual(vectors[0]["metadata"], {"summary": "likes gardening", "memory_type": "fact"})
         self.assertTrue(vectors[0]["id"])
 
 
@@ -61,14 +61,14 @@ class MemoryToolTests(unittest.IsolatedAsyncioTestCase):
             clock.now.return_value.strftime.return_value = "2026-11-07 08:00:00"
             result = await tool.execute({"memory": "likes gardening"})
         self.assertEqual(result, "Memory stored.")
-        vector.store_additional_data.assert_called_once_with("2026-11-07 08:00:00: likes gardening")
+        vector.store_additional_data.assert_called_once_with("2026-11-07 08:00:00: likes gardening", memory_type="fact", participant_ids=[])
 
 
 class DiscordMemoryIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_retrieved_memory_precedes_history_in_model_input(self):
         handler, message = make_handler(), make_message()
         handler.vector_handler.get_relevant_contexts.return_value = [
-            {"summary": "likes gardening"}, {"summary": "likes sci-fi"}
+            "likes gardening", "likes sci-fi"
         ]
         with patch("discord_bot.handlers.discord_handler.asyncio.sleep", new_callable=AsyncMock):
             await handler.process_message(message)
