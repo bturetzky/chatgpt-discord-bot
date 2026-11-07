@@ -1,29 +1,29 @@
 # Engineering roadmap and code review
 
-**Reviewed:** 2026-11-07 | **Status:** Living roadmap; Python 3.12 promoted, Renovate enabled, dependency audit in progress.
+**Reviewed:** 2026-11-07 | **Status:** Living roadmap; Python 3.12 promoted, Renovate enabled, dependency cleanup merged and promoted; awaiting first Renovate review.
 
 This roadmap covers application code. The separate [deployment workflow](deployment-workflow.md) covers CI, image publishing, dev deployment and production promotion. Deployment manifests remain authoritative in [homelab-gitops](https://github.com/bturetzky/homelab-gitops).
 
-## Dependency cleanup checkpoint (2026-11-07)
+## Current checkpoint — dependency cleanup and promotion (2026-11-07)
 
-- **Confirmed:** PR #24 added Renovate for Poetry with Monday 06:00–10:00 America/Los_Angeles scheduling, lockfile maintenance, and no automerge. Mend repository access was enabled by the operator; first scheduled update PRs have not yet been reviewed.
-- **Confirmed:** The operator merged the dependency cleanup removing obsolete `duckduckgo-search` from `pyproject.toml` and regenerating `poetry.lock` with Poetry 1.8.3 in a Python 3.12 Docker container. Its orphaned transitive packages were removed from the lockfile. No separate production promotion has been reported for this cleanup.
-- **Audit findings (source search, not runtime validation):** `discord.py` is used by the bot and must stay; the separate `discord` distribution is redundant. `aiohttp` is used by search and IGDB tools; `beautifulsoup4` and `lxml` are used by webpage parsing. No direct source usage was found for `chatgpt`, `aiosqlite`, `numpy`, or `html5lib`; these are candidates for removal, subject to dependency resolution and CI validation. Do not remove `lxml` merely because it is referenced as a BeautifulSoup parser string.
-- **Next:** Remove the five unused direct declarations (`discord`, `chatgpt`, `aiosqlite`, `numpy`, `html5lib`) with Poetry 1.8.3, commit both manifest and regenerated lockfile, require green Docker build/tests, and smoke-test dev. Then review Renovate's first PR batch before planning Poetry or Python 3.14 upgrades.
+- **Completed:** PR #24 configured Renovate for Poetry, Monday 06:00–10:00 Pacific, with lockfile maintenance and no automerge. Mend repository access was enabled. First Renovate PR review remains pending.
+- **Completed:** Obsolete `duckduckgo-search` was removed with a regenerated Poetry lockfile; PR #27 subsequently removed five unused direct dependencies (`discord`, `chatgpt`, `aiosqlite`, `numpy`, `html5lib`) and their orphaned transitive packages. The bot retains `discord.py`, `aiohttp`, `beautifulsoup4`, and `lxml` where used.
+- **Verified by operator:** PR #27 Docker build passed; PR merged and resulting image promoted to production. No separate post-promotion smoke-test details were supplied.
+- **Stopping point:** No further cleanup planned now. Review Renovate's first update PRs when available, test changes in dev, and promote deliberately. Poetry/tooling and Python 3.14 compatibility remain future work, not completed changes.
 
 ## Runtime modernization PR #23 — Python 3.12 compatibility step (2026-11-07)
 
-- **Completed and verified:** PR #23 switched the container from `python:3.10-slim` to `python:3.12-slim` while retaining Poetry 1.8.3 and the dependency lockfile. Operator confirmed green CI, successful dev smoke tests, and production promotion. The current locked NumPy 1.26.4 and lxml 4.9.4 make a direct jump to Python 3.14 inappropriate without a dependency refresh.
+- **Completed and verified:** PR #23 switched the container from `python:3.10-slim` to `python:3.12-slim` while retaining Poetry 1.8.3 and the dependency lockfile. Operator confirmed green CI, successful dev smoke tests, and production promotion. The remaining lxml and other dependency compatibility constraints should be checked before a future Python 3.14 upgrade.
 - **Validation:** Docker build and regression suite passed; dev smoke tests passed; operator confirmed production promotion. Individual dev smoke test coverage was not enumerated.
-- **Next:** Audit and remove unused dependencies, refresh Poetry and the lockfile, then target Python 3.14. Do not claim this interim runtime upgrade completes dependency modernization.
+- **Next:** Review Renovate updates, then assess Poetry modernization and Python 3.14 compatibility. Do not claim this interim runtime upgrade completes dependency modernization.
 
-## Latest checkpoint — memory PR #22 and next modernization work (2026-11-07)
+## Historical checkpoint — memory PR #22 and modernization planning (2026-11-07)
 
 - **Confirmed:** PR #22 passed the Docker build and test suite, was merged to main, and deployed to dev. Operator reports satisfactory limited dev testing. A two-person conversation test with Alan remains outstanding because he was unavailable; do not claim full multi-person recall was validated.
 - **Historical checkpoint:** Operator initiated production promotion of the memory changes; later confirmed Python 3.12 deployment was promoted after dev smoke tests. Separate memory-specific production recall validation was not reported.
 - **Implemented in PR #22:** Recent multi-person Discord history now carries readable speaker names and stable IDs; Pinecone retrieval queries use up to six recent user turns (2400-character bound); memory guidance encourages capturing useful attributed facts from any participant; retrieved metadata is presented as clean summary text; deterministic IDs make exact normalized repeated writes idempotent. Existing UUID memories remain; paraphrases and conflicting facts are not deduplicated.
-- **Next recommended work:** Upgrade the Python 3.10 container runtime (upstream EOL October 2026), clean unused direct dependencies such as `duckduckgo-search` after import verification, and update the Poetry lockfile in small validated PRs. Current Dockerfile uses `python:3.10-slim` and Poetry 1.8.3; `pyproject.toml` allows Python ^3.10 and retains several legacy packages. Prefer a supported Python 3.13/3.14 target after compatibility checks; do not combine wholesale library majors with the runtime change.
-- **Dependency maintenance:** Audit direct imports and transitive constraints before removing packages; configure Renovate for weekly Poetry dependency PRs with no automerge once the runtime/lockfile baseline is healthy. Keep major upgrades separate and smoke-test dev before production promotion.
+- **Historical plan, now completed in part:** Python 3.10 container replacement and unused direct dependency cleanup were subsequently completed; Poetry 1.8.3 remains and Python 3.14 compatibility has not been validated.
+- **Dependency maintenance:** Renovate is configured for weekly Poetry dependency PRs without automerge. Keep major upgrades separate and smoke-test dev before production promotion.
 
 ## Confirmed progress and live validation (2026-11-06–07)
 
@@ -122,7 +122,7 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 ## P2 — maintainability and performance
 
 13. **Centralize configuration** — replace hardcoded `GPT_MODEL`, `EMBEDDING_MODEL`, `INDEX_NAME`, `CONTEXT_LIMIT`, `RETRIEVAL_LIMIT`, timeouts and sleeps with validated environment-based configuration; document defaults.
-14. **Modernize dependencies/runtime (next priority)** — Python 3.10 is EOL; upgrade the base image to a supported Python release with compatible Poetry/lockfile and tests. Audit and remove unused direct dependencies (notably the legacy DuckDuckGo package) in a separate, locked/tested change. Introduce weekly Renovate PRs without automerge and keep major library upgrades separate. Add dependency scanning and reproducible builds.
+14. **Partially completed — Modernize dependencies/runtime** — Python 3.12 is promoted; unused direct dependencies removed; Renovate enabled with no automerge. Next review dependency PRs, then modernize Poetry and evaluate Python 3.14 compatibility separately. Consider dependency scanning and reproducible builds.
 15. **Refactor lifecycle and dependencies** — remove global `openai.api_key` and `VectorHandler` singleton; inject client and storage dependencies into handlers for isolation and testability.
 16. **Improve tool implementations** — `get_weather.py` uses HTTP for geocoding and lacks timeouts/error validation; `get_webpage_contents.py` may raise `ValueError` if no matching tags; IGDB fetches a token per call and lacks timeouts. Standardize HTTP, retries, response bounds and errors.
 17. **Completed in dev — Review search integration** — replaced unofficial DuckDuckGo integration with Brave Search API; added mocked tests for success, empty results, authentication, rate limiting, timeout, network errors and malformed results. Live dev search succeeded; production promotion pending.
@@ -174,4 +174,4 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 - Dev smoke tests completed for conversation and weather; historical DuckDuckGo rate limiting was resolved by moving to Brave Search, which succeeded in dev. Expand automated coverage later.
 - Check existing Pinecone data before changing embedding dimensions or namespace strategy.
 
-**Status note:** Numbered items retain their original inspection findings for context. Completion labels and confirmed progress above take precedence over their original wording; unresolved items remain future work.
+**Status note:** Historical sections preserve original inspection findings for context. Completion labels and confirmed progress above take precedence over their original wording; unresolved items remain future work.
