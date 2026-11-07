@@ -1,8 +1,16 @@
 # Engineering roadmap and code review
 
-**Reviewed:** 2026-11-07 | **Status:** Living roadmap; initial findings came from static inspection, with later live dev validation noted below.
+**Reviewed:** 2026-11-07 | **Status:** Living roadmap; recent memory improvements merged and dev-tested, production promotion underway.
 
 This roadmap covers application code. The separate [deployment workflow](deployment-workflow.md) covers CI, image publishing, dev deployment and production promotion. Deployment manifests remain authoritative in [homelab-gitops](https://github.com/bturetzky/homelab-gitops).
+
+## Latest checkpoint — memory PR #22 and next modernization work (2026-11-07)
+
+- **Confirmed:** PR #22 passed the Docker build and test suite, was merged to main, and deployed to dev. Operator reports satisfactory limited dev testing. A two-person conversation test with Alan remains outstanding because he was unavailable; do not claim full multi-person recall was validated.
+- **In progress:** Operator initiated production promotion of the memory changes. Production rollout and post-promotion smoke checks are **not yet confirmed**.
+- **Implemented in PR #22:** Recent multi-person Discord history now carries readable speaker names and stable IDs; Pinecone retrieval queries use up to six recent user turns (2400-character bound); memory guidance encourages capturing useful attributed facts from any participant; retrieved metadata is presented as clean summary text; deterministic IDs make exact normalized repeated writes idempotent. Existing UUID memories remain; paraphrases and conflicting facts are not deduplicated.
+- **Next recommended work:** Upgrade the Python 3.10 container runtime (upstream EOL October 2026), clean unused direct dependencies such as `duckduckgo-search` after import verification, and update the Poetry lockfile in small validated PRs. Current Dockerfile uses `python:3.10-slim` and Poetry 1.8.3; `pyproject.toml` allows Python ^3.10 and retains several legacy packages. Prefer a supported Python 3.13/3.14 target after compatibility checks; do not combine wholesale library majors with the runtime change.
+- **Dependency maintenance:** Audit direct imports and transitive constraints before removing packages; configure Renovate for weekly Poetry dependency PRs with no automerge once the runtime/lockfile baseline is healthy. Keep major upgrades separate and smoke-test dev before production promotion.
 
 ## Confirmed progress and live validation (2026-11-06–07)
 
@@ -101,11 +109,11 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 ## P2 — maintainability and performance
 
 13. **Centralize configuration** — replace hardcoded `GPT_MODEL`, `EMBEDDING_MODEL`, `INDEX_NAME`, `CONTEXT_LIMIT`, `RETRIEVAL_LIMIT`, timeouts and sleeps with validated environment-based configuration; document defaults.
-14. **Modernize dependencies/runtime** — upgrade Python 3.10 base, Poetry and dependencies in tested steps; remove redundant/unused packages after import audit. Add dependency scanning and reproducible builds.
+14. **Modernize dependencies/runtime (next priority)** — Python 3.10 is EOL; upgrade the base image to a supported Python release with compatible Poetry/lockfile and tests. Audit and remove unused direct dependencies (notably the legacy DuckDuckGo package) in a separate, locked/tested change. Introduce weekly Renovate PRs without automerge and keep major library upgrades separate. Add dependency scanning and reproducible builds.
 15. **Refactor lifecycle and dependencies** — remove global `openai.api_key` and `VectorHandler` singleton; inject client and storage dependencies into handlers for isolation and testability.
 16. **Improve tool implementations** — `get_weather.py` uses HTTP for geocoding and lacks timeouts/error validation; `get_webpage_contents.py` may raise `ValueError` if no matching tags; IGDB fetches a token per call and lacks timeouts. Standardize HTTP, retries, response bounds and errors.
 17. **Completed in dev — Review search integration** — replaced unofficial DuckDuckGo integration with Brave Search API; added mocked tests for success, empty results, authentication, rate limiting, timeout, network errors and malformed results. Live dev search succeeded; production promotion pending.
-18. **Improve memory capture and retrieval (next candidate)** — keep broad, useful memory capture rather than aggressively filtering writes. Current implementation embeds an author-ID-prefixed message, retrieves nine nearest Pinecone vectors without checking similarity scores, and injects raw metadata dictionaries as system messages. Model-initiated writes are optional; each write creates a new UUID without deduplication or updates. Explore better capture guidance, readable memory text, relevance thresholds and mechanisms to update conflicting/outdated facts. Shared guild/DM memory remains intentional; no Pinecone migration planned.
+18. **Partially completed (PR #22) — Improve memory capture and retrieval** — keep broad, useful memory capture rather than aggressively filtering writes. Current implementation embeds an author-ID-prefixed message, retrieves nine nearest Pinecone vectors without checking similarity scores, and injects raw metadata dictionaries as system messages. Model-initiated writes are optional; each write creates a new UUID without deduplication or updates. Explore better capture guidance, readable memory text, relevance thresholds and mechanisms to update conflicting/outdated facts. Shared guild/DM memory remains intentional; no Pinecone migration planned.
 19. **Improve observability** — structured logs, model/tool latency, error counters, startup readiness checks and an explicit verification runbook. Do not emit user content as telemetry.
 20. **Clean up dead code and naming** — obsolete `get_summary` references undefined `utilities`; duplicated imports, stale comments, `vectore_store.py` typo, confusing `WeatherLookup` class name in `memory_function.py`, and unused `guild_id`.
 21. **Improve code quality tooling** — format/lint/type-check with CI gating, resolve misleading Makefile targets, add pre-commit checks as desired.
