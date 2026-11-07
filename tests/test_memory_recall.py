@@ -23,6 +23,25 @@ class MemoryRecallTests(unittest.TestCase):
         )
         self.assertEqual(store.index.query.call_args.kwargs["top_k"], 9)
 
+    def test_identical_fact_upserts_same_id_despite_timestamp(self):
+        store = VectorStore("test-key")
+        store.index = MagicMock()
+        store.store_additional_data([0.1], "2026-11-07 10:00:00: Alan owns two cats")
+        store.store_additional_data([0.1], "2026-11-07 11:00:00: alan   owns TWO cats")
+        first = store.index.upsert.call_args_list[0].kwargs["vectors"][0]
+        second = store.index.upsert.call_args_list[1].kwargs["vectors"][0]
+        self.assertEqual(first["id"], second["id"])
+        self.assertTrue(first["id"].startswith("memory-v1-"))
+
+    def test_distinct_facts_get_distinct_ids(self):
+        store = VectorStore("test-key")
+        store.index = MagicMock()
+        store.store_additional_data([0.1], "2026-11-07 10:00:00: Alan owns two cats")
+        store.store_additional_data([0.1], "2026-11-07 10:00:01: Bowen owns two cats")
+        first = store.index.upsert.call_args_list[0].kwargs["vectors"][0]["id"]
+        second = store.index.upsert.call_args_list[1].kwargs["vectors"][0]["id"]
+        self.assertNotEqual(first, second)
+
     def test_empty_matches(self):
         store = VectorStore("test-key")
         store.index = MagicMock()
