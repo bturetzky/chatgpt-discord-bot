@@ -8,11 +8,11 @@ A self-hosted Python Discord bot that responds to mentions and direct messages u
 
 - Responds to bot mentions in Discord servers and to direct messages.
 - Includes recent channel history as conversational context.
-- Can call tools for DuckDuckGo search, webpage extraction, OpenWeather forecasts, NewsAPI headlines and IGDB game/platform information.
+- Can call tools for Brave Search, webpage extraction, OpenWeather forecasts, NewsAPI headlines and IGDB game/platform information.
 - Uses OpenAI embeddings and a Pinecone index to retrieve and store long-term memories.
 - Splits long replies into Discord messages and can send interim tool-progress messages.
 
-**Privacy note:** The current memory implementation does not enforce per-user namespace isolation. It also logs message content. Do not treat the existing implementation as appropriate for sensitive conversations until the roadmap's privacy work is completed.
+**Privacy note:** The current memory implementation does not enforce per-user namespace isolation. Logging has been hardened to avoid recording message bodies and memory contents by default. Shared memory still has privacy and retention limitations; do not use it for sensitive conversations.
 
 ## Architecture
 
@@ -28,16 +28,16 @@ Discord message / DM
 - `run.py` and `discord_bot/app.py`: application entry point and environment configuration
 - `discord_bot/handlers/`: Discord, OpenAI, function dispatch and vector storage
 - `discord_bot/functions/`: dynamically registered tools, each subclassing `BaseFunction`
-- `tests/`: legacy tests requiring modernization (see roadmap)
+- `tests/`: regression tests for Discord routing, Responses API, tools, memory, and security
 
 ## Requirements
 
-- Python 3.10-compatible environment and Poetry, or Docker
+- Python 3.12 runtime (Docker uses `python:3.12-slim`) and Poetry 1.8.3, or Docker
 - Discord bot application with appropriate permissions and message content intent
 - OpenAI API key and Pinecone API key/index
 - Optional credentials for OpenWeather, NewsAPI and IGDB
 
-The project currently uses the legacy OpenAI Python SDK (`0.28`). Do not upgrade it independently of the application API migration.
+The bot uses the OpenAI Responses API and the modern OpenAI Python SDK. Renovate proposes weekly Poetry updates; review dependency changes and test dev before production promotion.
 
 ## Configuration
 
@@ -55,6 +55,7 @@ Tool-specific optional variables:
 | --- | --- |
 | `OPENWEATHER_API_KEY` | Weather lookups |
 | `NEWS_API_KEY` | News search |
+| `BRAVE_SEARCH_API_KEY` | Brave web search |
 | `IGDB_CLIENT_ID` | IGDB/Twitch API client ID |
 | `IGDB_CLIENT_SECRET` | IGDB/Twitch API client secret |
 
@@ -86,7 +87,7 @@ These commands describe the existing application entry point; successful startup
 make test
 ```
 
-**Known limitation:** The current test suite references a removed `chat_bot` module and is not a reliable regression suite. The current Makefile also suppresses test failure status. Replacing and gating these tests is a top roadmap item. Do not interpret a successful `make test` exit code as proof that tests passed.
+The current test suite is run as part of the Docker build and CI; failures block image publication. Live Discord and external-service smoke tests are still required before production promotion.
 
 ## Deployment and release process
 
@@ -94,15 +95,15 @@ Container images are published to GitHub Container Registry at `ghcr.io/bturetzk
 
 The Kubernetes deployments are managed separately through [homelab-gitops](https://github.com/bturetzky/homelab-gitops):
 
-- `discord-dev`: separate development Discord application, token and server; currently uses `latest`.
-- `discord-prod`: separate production Discord application, token and server; currently uses image tag `1.0.4`.
+- `discord-dev`: separate development Discord application, token and server; successful main builds automatically update its GitOps image digest.
+- `discord-prod`: separate production Discord application, token and server; image digest is updated only through reviewed manual promotion.
 
-Both environments are reconciled by Argo CD. The planned immutable-image CI/CD and manual production promotion process is documented in [Deployment workflow](docs/deployment-workflow.md); **it has not been implemented yet**.
+Both environments are reconciled by Argo CD. Immutable-image CI/CD and manual production promotion are implemented and verified; see [Deployment workflow](docs/deployment-workflow.md). The operator confirmed the latest dependency-cleanup image was merged and promoted on 2026-11-07.
 
 ## Documentation
 
 - [Engineering roadmap and code review](docs/engineering-roadmap.md) — prioritized debt, improvements and sequencing
-- [Deployment workflow design](docs/deployment-workflow.md) — proposed testing, image publishing, dev rollout and production promotion
+- [Deployment workflow](docs/deployment-workflow.md) — implemented testing, image publishing, dev rollout and production promotion
 - [homelab-gitops](https://github.com/bturetzky/homelab-gitops) — authoritative Kubernetes and Argo CD configuration
 
 ## License
