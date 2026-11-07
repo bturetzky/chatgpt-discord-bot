@@ -219,6 +219,30 @@ class SearchToolRegressions(unittest.IsolatedAsyncioTestCase):
             result = json.loads(await SearchWeb().execute({"query": "Python"}))
         self.assertEqual(result["error"]["code"], "NO_RESULTS")
 
+    async def test_timeout_returns_structured_error(self):
+        session = self.mock_response()
+        session.get.side_effect = asyncio.TimeoutError()
+        with patch.dict("os.environ", {"BRAVE_SEARCH_API_KEY": "test-secret"}), \
+             patch("discord_bot.functions.search_web.aiohttp.ClientSession", return_value=session):
+            result = json.loads(await SearchWeb().execute({"query": "Python"}))
+        self.assertEqual(result["error"]["code"], "TIMEOUT")
+
+    async def test_network_failure_returns_structured_error(self):
+        from aiohttp import ClientConnectionError
+        session = self.mock_response()
+        session.get.side_effect = ClientConnectionError("connection refused")
+        with patch.dict("os.environ", {"BRAVE_SEARCH_API_KEY": "test-secret"}), \
+             patch("discord_bot.functions.search_web.aiohttp.ClientSession", return_value=session):
+            result = json.loads(await SearchWeb().execute({"query": "Python"}))
+        self.assertEqual(result["error"]["code"], "PROVIDER_ERROR")
+
+    async def test_malformed_provider_response_returns_error(self):
+        session = self.mock_response(payload={"web": {"results": "not a list"}})
+        with patch.dict("os.environ", {"BRAVE_SEARCH_API_KEY": "test-secret"}), \
+             patch("discord_bot.functions.search_web.aiohttp.ClientSession", return_value=session):
+            result = json.loads(await SearchWeb().execute({"query": "Python"}))
+        self.assertEqual(result["error"]["code"], "PROVIDER_ERROR")
+
     async def test_invalid_result_count(self):
         result = json.loads(await SearchWeb().execute({"query": "Python", "max_results": 99}))
         self.assertEqual(result["error"]["code"], "INVALID_ARGUMENT")
