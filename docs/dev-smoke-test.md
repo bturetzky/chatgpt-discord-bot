@@ -14,7 +14,7 @@ If the label selector differs, inspect the Deployment's selector with `kubectl -
 
 ## 2. Dev Discord smoke checks
 
-Use the **development** Discord application/server, not production. Send separate messages so tool failures can be isolated:
+Use the **development** Discord application/server, not production. **Create a real mention:** type `@` in Discord and select **chatgpt-dev** from the autocomplete menu before entering the rest of the prompt. Copy/pasting the literal text `@chatgpt-dev` from this document does **not** create a Discord mention, even if it appears highlighted. Send separate messages so tool failures can be isolated:
 
 | Check | Prompt | Expected |
 | --- | --- | --- |
@@ -25,6 +25,8 @@ Use the **development** Discord application/server, not production. Send separat
 | Memory retrieval | `@chatgpt-dev Tell me one thing you remember about me. Don't invent anything if nothing is found.` | A previously known fact, or an honest no-memory answer; confirm retrieval in logs if needed |
 
 Do not use the memory **write** tool for routine smoke testing: it persists records in the shared Pinecone index. Existing memory is intentionally shared between the trusted server and DMs; these checks do not validate isolation.
+
+For normal diagnostics, look for `Discord gateway ready`, `Processing Discord message`, `Tool completed`, or `Tool failed`. Incoming event metadata is DEBUG-only; use `LOG_LEVEL=DEBUG` temporarily if needed. Never log message bodies or memory contents.
 
 ## 3. Restart / lifecycle check (optional after lifecycle changes)
 
