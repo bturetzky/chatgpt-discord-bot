@@ -4,6 +4,13 @@
 
 This roadmap covers application code. The separate [deployment workflow](deployment-workflow.md) covers CI, image publishing, dev deployment and production promotion. Deployment manifests remain authoritative in [homelab-gitops](https://github.com/bturetzky/homelab-gitops).
 
+## Personality iteration — v2 (proposed, 2026-11-07)
+
+- **Observed in dev after v1:** Disagreement, roast, technical answers and weather tone were strong. Casual greetings and weekend suggestions still sounded like an overly helpful assistant. Memory recall worked but mostly surfaced old factual snippets; multi-person relationship continuity remains untested.
+- **Proposed in v2:** Favor conversational replies over unsolicited lists, generic greetings, needless follow-up questions, and routine tool narration. Improve memory guidance for established running jokes, shared experiences, friendly rivalries, and explicit communication preferences, with speaker attribution and repeated evidence for inferred patterns.
+- **Scope:** Prompt-only changes and deterministic regression tests. Reuses existing Pinecone index, retrieval, and store_memory tool; does not add profiles, schema changes, background capture, or automatic relationship extraction. No claim of improved memory retrieval until tested.
+- **Validation after dev deploy:** Repeat casual greeting, weekend idea, roast, serious Kubernetes question, and tool call. Test a two-person disagreement, then later recall; confirm no invented relationship history and no assumption that a single roast request implies permanent consent.
+
 ## Current checkpoint — dependency cleanup and promotion (2026-11-07)
 
 - **Completed:** PR #24 configured Renovate for Poetry, Monday 06:00–10:00 Pacific, with lockfile maintenance and no automerge. Mend repository access was enabled. First Renovate PR review remains pending.
