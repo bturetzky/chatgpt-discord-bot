@@ -14,6 +14,12 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 - **Verified:** Manual production promotion workflow implemented (PR #12). User ran it against main, reviewed and merged the resulting GitOps PR, confirmed dev/prod image digests match, observed production rollout, and confirmed the production bot remains responsive. No image rebuild or automatic production merge.
 - **Remaining:** SSRF protection, sensitive logging, memory isolation/retention, test coverage, shutdown/error handling, and search reliability remain open; see original findings below.
 
+## Logging cleanup and smoke-test correction (proposed PR, 2026-11-07)
+
+- **Confirmed:** Dev bot was responsive; the apparent outage was caused by copying plain-text `@chatgpt-dev` from the smoke-test runbook instead of selecting a real Discord mention. No gateway regression was established.
+- Replace full tool-schema startup dump with tool-name summary; standardize tool success/failure logging with duration, avoid logging web queries/results, OpenAI exception text, or full memory contents; keep per-message event diagnostics at DEBUG.
+- Correct smoke-test mention instructions. **Validation pending:** CI and dev smoke checks.
+
 ## Discord gateway diagnostics and message-content intent (proposed PR, 2026-11-07)
 
 - **Observed:** After PR #18 reached dev, pod was Ready but user messages produced no handler logs. Root cause not yet confirmed; the existing `on_ready` message was DEBUG-only and message content intent was not explicitly enabled.
