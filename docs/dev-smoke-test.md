@@ -20,7 +20,7 @@ Use the **development** Discord application/server, not production. **Create a r
 | --- | --- | --- |
 | Basic response | `@chatgpt-dev What's 17 × 23? Answer briefly.` | `391` |
 | Weather | `@chatgpt-dev What's today's forecast for Gig Harbor, WA? Please use your weather tool.` | Current forecast, or an explicit provider error; no crash |
-| Search | `@chatgpt-dev Search the web for the official Python documentation URL.` | URL with a successful search, or an explicit DDG error (HTTP 202 rate limiting has been observed) |
+| Search | `@chatgpt-dev Search the web for the official Python documentation URL.` | URL from Brave Search, or an explicit provider/authentication/rate-limit error; no crash |
 | Webpage fetch | `@chatgpt-dev Fetch https://docs.python.org/3/ and summarize what the page contains.` | Specific documentation topics, or explicit fetch error |
 | Memory retrieval | `@chatgpt-dev Tell me one thing you remember about me. Don't invent anything if nothing is found.` | A previously known fact, or an honest no-memory answer; confirm retrieval in logs if needed |
 
