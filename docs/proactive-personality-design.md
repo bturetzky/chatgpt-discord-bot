@@ -62,6 +62,10 @@ For the Server Awareness SQLite archive, proposed tables:
 
 Do not embed raw reaction events in Pinecone. Reaction totals and patterns are weak social signals; do not infer durable opinions, relationships, consent or group decisions solely from emoji.
 
+## Two complementary proactive triggers (confirmed)
+
+Both **independent first reactions** and **joining existing human reaction pile-ons** are desired behaviors. A fresh-message candidate gate and a debounced reaction-activity gate feed the same bounded decision engine. Neither requires the other: the bot can be first to react, or join an interesting reaction thread after multiple humans have reacted. Do **not** enforce a fixed quota or ratio between these modes; let actual server activity drive selection. Deduplicate by target message ID across both paths, including in-flight evaluations and action reservations, and apply the same rolling budget, cooldowns, safety checks and single-reaction-per-message policy to both. A pile-on is a strong candidate signal, not a mandate to copy the crowd or react at all.
+
 ## Candidate selection: cheap first, rare model calls
 
 **Delayed reaction triggers:** a message may become interesting *after* others react to it. Coalesce raw reaction events for the same message into a short debounce window (proposed 30–120 seconds), then score it once; avoid a model call per added emoji. Favor reaction diversity and distinct humans over raw counts. Only consider recent messages and cancel pending evaluations on deletion. A pile-on should increase the probability of evaluation, not guarantee a bot reaction.
