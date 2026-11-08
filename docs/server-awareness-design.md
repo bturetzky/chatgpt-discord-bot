@@ -123,4 +123,23 @@ All five users currently share access to relevant channels, but enforce home-gui
 - `discord_bot/handlers/chatgpt_handler.py`: Responses API and usage accounting; extraction should use a separate bounded prompt/path, not the normal chat personality prompt.
 - `discord_bot/handlers/vector_handler.py` and `discord_bot/functions/memory_function.py`: existing embeddings and Pinecone memory writes; provenance/idempotency integration needed.
 
+
+## Rich-content integration (design decision)
+
+Server Awareness and [Rich Content Understanding](rich-content-understanding-design.md) share a reusable content reader/enrichment service but have **different invocation policies**. The passive indexer must never automatically perform expensive image inference, full YouTube transcript processing or arbitrary webpage reading for every posted message.
+
+**Archive first:** record URL, attachment type/name/size, Discord embed metadata when present, surrounding message context, message IDs and timestamps. These are discovery hints, not proof of fetched content. Do not persist attachment binary content by default.
+
+**Enrich selectively:** optional low-cost metadata fetching for supported public URLs can be introduced behind a queue with per-day budgets, deduplication, timeouts and failure caching. Default v1 is no automatic remote enrichment. If multiple messages share the same canonical URL, cache safe derived metadata keyed by canonical URL plus fetch version and expiry; do not conflate Discord message provenance with the fetched resource.
+
+**On-demand deep reading:** when a user searches for a shared image/video/article, retrieve the original Discord message (if accessible) and invoke the rich-content reader as needed. Images may no longer be available if Discord attachment links expire or messages are deleted; say so rather than claiming the image was examined. YouTube transcript availability can also change.
+
+**Memory extraction:** memory batches may use posted link titles, author commentary and discussion context; they must distinguish *what participants said about a link* from *what the linked content actually says*. No automatic memory claim about the contents of an unread video/article/image. Deep content-derived memory requires explicit enrichment and source provenance, and should not automatically store inferred facts about people.
+
+**Provenance schema:** retain message-to-resource associations (message ID, URL/attachment ID, canonical URL, metadata source, retrieval timestamp, status, optional content digest and expiry). Derived descriptions/transcripts are optional and bounded, with clear deletion/invalidation behavior. Avoid storing full third-party article text, full transcripts or image binaries by default.
+
+**Security and operations:** enforce the same SSRF defenses, fetch limits and prompt-injection isolation as interactive reading. The background indexer must not block Discord gateway handling or regular replies. On message edits/deletes, update associations and invalidate dependent enrichment/memories. Keep resource cache retention separate from raw-message and memory retention.
+
+**Delivery dependency:** implement a stable rich-content reader interface now; Server Awareness can consume it later. Neither feature needs to wait for the other. The initial Server Awareness milestone remains text/URL/attachment-metadata indexing and search.
+
 **Implementation status:** Nothing described here is deployed or implemented merely by creating this design. Keep this document updated as scope, decisions, validation and observed behavior change.
