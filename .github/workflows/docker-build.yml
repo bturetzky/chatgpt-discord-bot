@@ -143,3 +143,21 @@ jobs:
             --body "Automated dev-only deployment from [bot commit](https://github.com/bturetzky/chatgpt-discord-bot/commit/$SOURCE_SHA). Image: \`ghcr.io/bturetzky/chatgpt-discord-bot@$IMAGE_DIGEST\`. Production unchanged.")"
           echo "Created $pr_url"
           gh pr merge "$pr_url" --squash --delete-branch --match-head-commit "$(git rev-parse HEAD)"
+
+  verify-dev:
+    name: Verify development rollout
+    needs: [build, deploy-dev]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: discord-dev-verify
+    timeout-minutes: 12
+    concurrency:
+      group: discord-dev-verification
+      cancel-in-progress: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify expected digest and rollout
+        env:
+          EXPECTED_DIGEST: ${{ needs.build.outputs.digest }}
+        run: python3 scripts/verify_discord_dev.py
