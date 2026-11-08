@@ -1,8 +1,16 @@
 # Discord bot CI/CD and promotion design
 
 **Status:** CI/CD, automated dev deployment, and manual production promotion implemented and exercised successfully.  
-**Verified:** 2026-11-07  
+**Verified:** 2026-11-08 (including automated ARC dev rollout verification)  
 **Repositories:** [chatgpt-discord-bot](https://github.com/bturetzky/chatgpt-discord-bot) and [homelab-gitops](https://github.com/bturetzky/homelab-gitops)
+
+## Automated post-deployment verification (2026-11-08)
+
+- After the main-branch build and automatically merged dev GitOps update, the `verify-dev` job in `docker-build.yml` runs on the ephemeral in-cluster `discord-dev-verify` ARC runner.
+- `scripts/verify_discord_dev.py` uses a dedicated read-only Kubernetes ServiceAccount to inspect only the named dev Deployment and Argo CD Application. It waits up to 10 minutes for the expected published image digest, Argo CD Synced/Healthy, and ready/updated replicas; GitHub job timeout is 12 minutes.
+- The operator confirmed the first end-to-end job **passed** on 2026-11-08. Argo CD uses ordinary Git polling; no inbound webhook is configured. Refresh latency can consume part of the timeout.
+- This proves image rollout health, **not** live Discord behavior. Manual dev chat/tool smoke testing is still required for behavior changes and before production promotion. Mismatched/superseded digests currently time out rather than receiving a distinct superseded result.
+- ARC Helm, ServiceAccount, and narrowly scoped RBAC are owned by the existing `arc-discord-dev-runners` Application in `homelab-gitops` (manual sync). No separate verification service or Application.
 
 ## Verified implementation and production promotions
 
@@ -23,14 +31,14 @@ Make bot changes safely and repeatably: validate pull requests, publish one immu
 
 - Dev and production use distinct Discord applications, tokens and servers; both are Argo CD-managed.
 - The GitOps deployment manifests in `apps/discord/dev/deployment.yaml` and `apps/discord/prod/deployment.yaml` are authoritative for the currently pinned digests. Do not rely on historical image tags recorded in older documentation.
-- [`docker-build.yml`](../.github/workflows/docker-build.yml) implements CI, image publishing and automatic dev GitOps updates. [`promote-prod.yml`](../.github/workflows/promote-prod.yml) implements manual production promotion.
+- [`docker-build.yml`](../.github/workflows/docker-build.yml) implements CI, image publishing, automatic dev GitOps updates, and post-deployment ARC verification. [`promote-prod.yml`](../.github/workflows/promote-prod.yml) implements manual production promotion.
 - Existing GitHub App credentials are used for cross-repository GitOps PR creation; production PR merging remains a human action.
 
 ## Desired flow
 
 1. **Feature branch / PR in application repo:** run automated tests and validate Docker build; **do not publish** images or change GitOps.
 2. **Merge to main:** after successful checks, build and push an immutable image to GHCR, identified by source commit SHA (e.g. `sha-a83f219`). Prefer deploying by registry digest (`@sha256:...`) to eliminate mutable-tag ambiguity.
-3. **Development rollout:** CI opens a PR in `homelab-gitops` updating only the dev image reference. The GitHub App immediately squash-merges the PR without GitHub's plan-restricted native auto-merge feature; Argo CD detects the manifest change and rolls out the image. Verify actual deployed image/digest and rollout health. Dev testing against its isolated Discord server remains manual.
+3. **Development rollout:** CI opens a PR in `homelab-gitops` updating only the dev image reference. The GitHub App immediately squash-merges the PR without GitHub's plan-restricted native auto-merge feature; Argo CD detects the manifest change and rolls out the image. Verify actual deployed image/digest and rollout health. The ARC job automatically verifies the image digest and Kubernetes rollout; live Discord behavior testing remains manual.
 4. **Promotion:** after successful dev testing, manually invoke a workflow selecting the **already-built, tested image digest**. It opens a `homelab-gitops` PR changing only the production image reference. Review and merge to authorize release; Argo CD deploys it. Do not rebuild during promotion.
 5. **Rollback:** revert the production promotion commit/PR in GitOps; Argo CD restores the previous known image reference. Verify rollout and bot functionality.
 
