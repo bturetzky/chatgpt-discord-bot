@@ -1,32 +1,25 @@
 # Agent instructions
 
-This repository contains a Discord bot deployed to isolated development and production environments. Read [docs/agent-development-design.md](docs/agent-development-design.md) for agreed autonomy boundaries and proposed future orchestration. The design is **not** evidence that automated deployment verification or agent resumption is implemented.
+This is a Python 3.12 / Poetry 1.8.3 Discord bot with separate dev and production deployments. Read [docs/agent-development-design.md](docs/agent-development-design.md) and the relevant feature design before changing behavior.
 
-## Development workflow
+## Approved first Codex feature experiment
 
-- Use a feature branch and pull request for changes. Keep changes focused and add regression tests for behavior changes.
-- Inspect the actual code, test layout, and GitHub Actions configuration before selecting commands. This repository uses Poetry for dependency management; the container runs Python 3.12. Do not assume every CI job uses Python 3.12 (check the workflow).
-- Run the relevant existing tests and, where practical, the full test suite. Report commands, results, and any tests that could not run. Do not claim live Discord, Kubernetes, or production validation without evidence.
-- Treat failures as actionable: inspect logs, fix root causes, and rerun tests. Stop and report if repeated attempts fail rather than looping indefinitely.
-- Do not commit secrets, credentials, tokens, private message content, or raw sensitive logs. Mock external APIs in unit tests.
+- For an **operator-approved, contained feature**, Codex may implement changes on a feature branch, add/update regression tests and docs, open a PR, inspect CI failures, repair them with bounded retries, and merge its **own application PR** to `main` once required checks pass, subject to the agent's actual GitHub permissions. Do not bypass branch protections or checks.
+- Run `make test` (or `poetry run python -m unittest discover -s tests -t .`) and relevant targeted tests; inspect the real workflow and dependencies before selecting commands. Report evidence, not assumptions.
+- A merge to application `main` **automatically publishes an image and deploys to dev**. The post-deploy GitHub Actions `verify-dev` job runs on ARC and checks the expected digest, Argo CD sync/health, and Deployment readiness. Inspect that job's actual outcome before claiming dev rollout success. A passing rollout check is **not** a live Discord behavior test.
+- If checks or deployment verification fail, inspect available logs, fix the root cause, and retry a reasonable bounded number of times; stop and report persistent failures. Never claim Codex can automatically resume on a CI event without an explicitly configured mechanism.
+- Keep one feature agent at a time while using the shared dev environment. Do not conflate a successful CI build, verified Kubernetes rollout, and verified Discord interaction.
 
-## Deployment and authorization boundaries
+## Approval and security boundaries
 
-- Merging application changes into `main` triggers image publication and automatic **development** deployment via the existing GitOps pipeline. The operator has approved agent-driven merges into `main` **after required checks pass**; respect any more restrictive permissions or approval requirements in the current execution environment.
-- Production promotion is **always manual**: do not trigger, approve, or merge production GitOps changes.
-- `bturetzky/homelab-gitops` is authoritative for Kubernetes manifests. Do not change live Kubernetes deployments imperatively or assume the agent has cluster access.
-- Ask for approval before significant architecture changes, new infrastructure or credentials, destructive operations, historical backfills, or enabling persistent memory writes.
-- Do not access production secrets or use production Discord credentials for testing.
-- Only one feature agent should own dev integration validation at a time. A successful CI build is not proof of a successful dev rollout.
+- **Production promotion always requires operator action and review.** Do not trigger or merge production GitOps changes.
+- `bturetzky/homelab-gitops` is authoritative for Kubernetes and Argo CD manifests. No imperative deployment mutations.
+- Ask approval for significant architecture changes, new infrastructure/credentials, destructive operations, historical data backfills, or enabling persistent memory writes.
+- Never commit or expose credentials, Discord message bodies, private memories, or sensitive logs. Mock external APIs in unit tests. Do not use production credentials for dev tests.
+- The ARC runner has read-only, named-resource Kubernetes access to the dev bot Deployment and its Argo CD Application. Do not expand RBAC or use the runner to execute arbitrary cluster operations.
 
-## Design and documentation
+## Documentation
 
-- Follow the relevant feature design in `docs/` before implementation. Preserve approved decisions; surface unresolved choices instead of inventing policy.
-- Update the corresponding feature document with significant decisions, implementation status, and observed validation. Distinguish implemented, proposed, and verified behavior.
-- Keep `docs/agent-development-design.md` for cross-feature agent workflow decisions. Avoid creating a separate checklist or verbose session diary.
-- Keep the PR summary useful: what changed, why, what was tested, and any remaining risks or manual verification.
-
-## Safety for the initial Codex experiment
-
-- Start with small, contained, testable changes. Do not modify GitOps, deploy infrastructure, create credentials, or enable background automation unless explicitly requested.
-- No automated homelab verification runner or durable event-driven agent orchestration is assumed to exist yet.
+- Preserve approved feature design decisions and update feature docs with what was actually implemented/tested.
+- Use [docs/deployment-workflow.md](docs/deployment-workflow.md) for CI/CD mechanics and [docs/engineering-roadmap.md](docs/engineering-roadmap.md) for broader engineering context. Avoid session diaries and duplicate GitOps infrastructure docs.
+- PR summary: scope, tests, CI result, deployment verification result if available, and any remaining manual Discord smoke tests.
