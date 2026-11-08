@@ -87,7 +87,7 @@ These commands describe the existing application entry point; successful startup
 make test
 ```
 
-The current test suite is run as part of the Docker build and CI; failures block image publication. Live Discord and external-service smoke tests are still required before production promotion.
+The current test suite is run as part of the Docker build and CI; failures block image publication. After a main-branch merge, an ephemeral ARC runner verifies the expected dev image digest, Argo CD health and Deployment readiness. The first full run passed on 2026-11-08. Live Discord and external-service smoke tests are still required before production promotion.
 
 ## Deployment and release process
 
@@ -98,10 +98,12 @@ The Kubernetes deployments are managed separately through [homelab-gitops](https
 - `discord-dev`: separate development Discord application, token and server; successful main builds automatically update its GitOps image digest.
 - `discord-prod`: separate production Discord application, token and server; image digest is updated only through reviewed manual promotion.
 
-Both environments are reconciled by Argo CD. Immutable-image CI/CD and manual production promotion are implemented and verified; see [Deployment workflow](docs/deployment-workflow.md). The operator confirmed the latest dependency-cleanup image was merged and promoted on 2026-11-07.
+Both environments are reconciled by Argo CD. Immutable-image CI/CD, automatic read-only ARC dev rollout verification (first run passed 2026-11-08), and manual production promotion are implemented and verified; see [Deployment workflow](docs/deployment-workflow.md). The operator confirmed the latest dependency-cleanup image was merged and promoted on 2026-11-07.
 
 ## Documentation
 
+- [Autonomous development design](docs/agent-development-design.md) — Codex permissions, verified pipeline, and remaining limitations
+- [Agent instructions](AGENTS.md) — rules for the first supervised Codex experiment
 - [Engineering roadmap and code review](docs/engineering-roadmap.md) — prioritized debt, improvements and sequencing
 - [Deployment workflow](docs/deployment-workflow.md) — implemented testing, image publishing, dev rollout and production promotion
 - [homelab-gitops](https://github.com/bturetzky/homelab-gitops) — authoritative Kubernetes and Argo CD configuration
