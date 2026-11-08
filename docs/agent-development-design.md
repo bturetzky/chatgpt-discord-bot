@@ -1,66 +1,33 @@
 # Autonomous feature development — design and decisions
 
-**Status:** Proposed architecture; decisions below agreed 2026-11-07. **Not implemented.**
+**Status (2026-11-08):** Initial Codex Cloud experiment approved; GitHub CI, automated dev deployment, and ARC rollout verification implemented and operator-verified. Autonomous Codex implementation/CI-repair/merge lifecycle **not yet exercised end-to-end**.
 
-## Goal
+## Goal and autonomy
 
-Enable a cloud-hosted coding agent to implement substantial Discord bot features, test and repair them, automatically merge/deploy to the isolated dev environment, and pause at meaningful human checkpoints. Preserve the existing deliberate production promotion workflow.
+Use cloud-hosted Codex to implement a contained, approved feature in `bturetzky/chatgpt-discord-bot`, add tests/docs, open a PR, repair CI failures, and merge its own application PR after required checks pass (where permissions allow). Application `main` automatically deploys to the isolated dev bot. Keep one feature agent at a time.
 
-## Confirmed decisions
+**Human gates:** Significant architecture changes, new infrastructure or credentials, destructive operations, historical backfills, and enabling persistent memory writes need approval. Production promotion always remains manual and reviewed. Codex must not modify live Kubernetes resources or deploy to production.
 
-- **Execution:** Cloud-hosted development agent; homelab hardware is not intended to host the LLM/agent itself.
-- **Development autonomy:** Agent may implement features, update tests/docs, open PRs, inspect CI, repair failures, and automatically merge its own application PRs into `main` after required checks pass. Dev is a disposable/testing environment for the operator and bot. Automatic merge is **permission to deploy to dev**, not to production.
-- **Existing deployment path stays:** Application `main` builds an immutable image, automatically updates the dev image in `bturetzky/homelab-gitops`, and Argo CD deploys `discord-dev`. Production promotion remains a separate, **manual, reviewed GitOps PR**, using the tested digest; never auto-promote.
-- **GitOps authority:** `bturetzky/homelab-gitops` is authoritative for cluster manifests and desired state. Avoid direct imperative image changes.
-- **Human approval gates:** Significant architecture decisions, new infrastructure or credentials, destructive changes, historical backfills, and enabling persistent memory writes require approval. Production promotion always requires approval.
-- **Agent limits:** Bound retries, time and spend; escalate repeated failures rather than looping indefinitely. Keep credentials narrowly scoped; do not expose production bot secrets to agent jobs.
-- **Documentation:** Keep feature design decisions and validation evidence near their respective feature docs; use this file for cross-feature agent architecture. Distinguish confirmed decisions, proposals, and observed implementation. Avoid a parallel task-manager checklist.
+## Implemented pipeline (verified 2026-11-08)
 
-## Further decisions (2026-11-07)
+1. PR checks run Python unit tests and Docker build; PR builds do not publish.
+2. Merge to application `main` builds/pushes immutable GHCR image; GitHub Actions updates the dev GitOps image digest via an automatically merged dev-only GitOps PR.
+3. Argo CD auto-reconciles `discord-dev` by normal polling; **no inbound GitHub webhook** is used.
+4. GitHub Actions `verify-dev` runs on the ephemeral `discord-dev-verify` ARC scale set inside Kubernetes. `scripts/verify_discord_dev.py` polls for the expected image digest, Argo CD Synced/Healthy, and ready/updated Deployment replicas; timeout 10 minutes (job limit 12 minutes). Operator confirmed the first end-to-end verification run passed.
+5. Production is promoted separately through `promote-prod.yml`, which opens a review-only GitOps PR for the dev-pinned digest. No automatic production promotion.
 
-- **Concurrency:** Start with exactly one feature-development agent at a time, with exclusive use of the shared dev environment for integration validation. Revisit parallel development only after the single-agent lifecycle is reliable.
-- **Orchestration preference:** Prefer an existing managed cloud platform over building and maintaining a bespoke orchestrator, provided it supports durable sessions, external CI/deployment callbacks, approval gates, and bounded retries. Evaluate Codex Cloud and the OpenAI Agents API; **no platform selected yet**.
+The ARC runner has a dedicated ServiceAccount with `get` on only the named `discord-dev` Deployment and named `argocd/discord-dev` Application. No Kubernetes Secrets or write permissions. GitOps configuration and RBAC are authoritative in `bturetzky/homelab-gitops`; ARC runner configuration remains manual-sync. A runner label is not a security boundary; repository workflows that target it can use its limited read access.
 
-## Platform investigation (2026-11-07; research, not implementation)
+## What is not implemented or proven
 
-- **Codex Cloud:** Included in eligible ChatGPT Plus usage limits, with optional paid credits; no separate standard cloud VM fee at this time. Best low-cost initial experiment. Ordinary Codex Cloud tasks should **not** be assumed to automatically resume on arbitrary GitHub or homelab deployment events.
-- **Agents API (public beta):** OpenAI-managed Codex harness, durable sessions, hosted sandboxes, asynchronous turns, session webhooks, recovery, and one-time/periodic scheduled automations. Supports resuming the same session; managed agent execution does not automatically connect GitHub workflow completion to the correct feature session. A thin event adapter or scheduled polling is still needed.
-- **Agents API billing:** Separate from ChatGPT subscription: model tokens, tools and hosted sandbox compute. As checked 2026-11-07, GPT-6.1 Sol standard API rates are $2/1M input, $0.10/1M cached input, $10/1M output; GPT-6.1 Terra $1/$0.05/$5. Cache-write charges can also apply. Standard hosted container price examples: 1 GiB $0.03, 4 GiB $0.12 per 20-minute session; verify billing at implementation time. Budget and usage tracing required.
-- **Platform recommendation:** Try Codex Cloud on a contained feature first to measure capability and subscription consumption; evaluate Agents API for event-driven end-to-end automation, likely with a minimal GitHub-event bridge and a least-privilege homelab verification runner. **No platform committed yet.**
-- **Sources:** [Codex pricing](https://learn.chatgpt.com/docs/pricing), [Agents API overview](https://developers.openai.com/api/docs/guides/agents-api/overview), [Agents API session webhooks](https://developers.openai.com/api/docs/guides/agents-api/sessions/webhooks), [Agents API scheduled automations](https://developers.openai.com/api/docs/guides/agents-api/sessions/automations), [API pricing](https://developers.openai.com/api/docs/pricing).
+- The **first autonomous Codex feature lifecycle** (implement → test → PR → fix CI → merge → inspect rollout) has not yet been observed.
+- The verifier checks Kubernetes rollout state, **not** Discord connectivity, tool behavior, or live chat responses. A human dev Discord smoke test remains useful before production.
+- The current verifier times out on a digest mismatch; it does not reliably classify superseded runs. Workflow concurrency cancels older verification jobs, but that is not a general-purpose supersession protocol.
+- No durable event-driven agent resumption, external orchestrator, automatic CI-to-Codex callback, or autonomous production release has been configured. If Codex stops after creating a PR, resume it manually.
+- No inbound GitHub webhook to the private homelab is desired.
 
-## Proposed integration architecture (not yet selected or implemented)
+## First experiment procedure
 
-- **GitHub Actions feedback:** Agent reads workflow runs, check results, and failed job logs via GitHub API.
-- **Homelab verification:** Prefer a tightly scoped, outbound-only, ephemeral self-hosted GitHub Actions runner to verify Argo CD sync, expected image digest, Kubernetes rollout/health, bot startup, and approved dev integration tests. Publish logs/results as GitHub Actions artifacts. No public Kubernetes API or broad cluster-admin access.
-- **Security:** Trusted verification workflows, isolated runner, least-privilege read-only access to dev resources, narrowly approved test execution. Do not execute arbitrary unreviewed PR code with cluster credentials.
-- **Deployment identity:** Correlate reports to exact application commit, image digest, GitOps commit, environment and timestamps; stale healthy reports must never satisfy a new deployment.
-- **Alternative/complement:** Extend the existing `homelab-observed-state` outbound publishing pattern if continuous deployment telemetry is needed independently of GitHub Actions.
-- **Integration limitations:** Kubernetes readiness does not prove Discord behavior. Use deterministic fixtures and approved dev-only interaction tests; social appropriateness of proactive reactions may still require human evaluation.
+Provide Codex one already-agreed, contained feature design. Let it inspect code, implement tests/docs, and open a PR. Permit merge to application `main` only after checks pass and within the agreed scope. Inspect the `verify-dev` GitHub Actions job for the matching digest; then manually exercise the changed behavior in the dev Discord server. Review agent output, fixes, cost/time, and missing capabilities before considering broader autonomy.
 
-## Proposed durable execution lifecycle (to refine)
-
-1. Agent works on a feature branch, runs local tests, opens PR.
-2. GitHub Actions runs CI; agent consumes results and repairs failures with bounded retries.
-3. After required checks pass, agent merges to application `main`; existing workflow publishes image and updates dev GitOps.
-4. Verification workflow waits for the *matching digest* to become healthy in dev, with timeout and diagnostics; then executes dev integration tests.
-5. Agent consumes the verification result and either fixes/repeats or marks a feature ready for human review.
-6. Human explicitly initiates and reviews production promotion.
-
-**Unresolved orchestration design:** Choose how agent sessions are launched and resumed on GitHub events (e.g. external cloud agent service, webhook-driven orchestrator, or GitHub workflow dispatch), how durable run state is represented, and how budget/checkpoint policies are enforced. A CI workflow waiting on a rollout is not itself a continuously running agent.
-
-## Open design questions
-
-- Can a managed platform (particularly the Agents API) provide durable execution and event-driven resumption without a custom orchestration service? Validate the concrete API and GitHub/homelab integration first.
-- Should verification use a self-hosted GitHub Actions runner, an outbound-reporting observer, or both?
-- What exact dev smoke-test mechanism can exercise Discord interactions safely?
-- What retry, runtime, and cost budgets are appropriate?
-- Which architecture changes can be pre-approved in a feature design before autonomous implementation?
-
-## Related documents
-
-- [Deployment workflow](deployment-workflow.md)
-- [Engineering roadmap](engineering-roadmap.md)
-- [Server awareness design](server-awareness-design.md)
-- [Rich content understanding design](rich-content-understanding-design.md)
-- [Proactive personality design](proactive-personality-design.md)
+Keep feature-specific implementation details in their design docs. See [deployment workflow](deployment-workflow.md), [engineering roadmap](engineering-roadmap.md), and the existing server-awareness, rich-content, and proactive-personality designs.
