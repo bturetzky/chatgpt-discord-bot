@@ -1,8 +1,14 @@
 # Engineering roadmap and code review
 
-**Reviewed:** 2026-11-07 | **Status:** Living roadmap; Python 3.12 promoted, Renovate enabled, dependency cleanup merged and promoted; awaiting first Renovate review.
+**Reviewed:** 2026-11-08 | **Status:** Living roadmap; Python 3.12 promoted, Renovate enabled, dependency cleanup promoted; ARC dev verification passed, first autonomous Codex feature experiment pending.
 
 This roadmap covers application code. The separate [deployment workflow](deployment-workflow.md) covers CI, image publishing, dev deployment and production promotion. Deployment manifests remain authoritative in [homelab-gitops](https://github.com/bturetzky/homelab-gitops).
+
+## Autonomous feature development checkpoint (2026-11-08)
+
+- **Implemented and operator-verified:** ARC runner installed and smoke-tested; dedicated get-only dev Deployment/Argo CD Application RBAC; main-branch build → dev GitOps update → Argo CD rollout → digest/readiness verification job passed. No inbound homelab webhook or extra HTTP verification service.
+- **Next experiment:** Give Codex Cloud one approved contained feature and evaluate its implementation, tests, PR/CI repair, and ability to merge within approved bounds. A green rollout check does not establish live Discord behavior.
+- **Not implemented:** Event-driven agent resumption, autonomous end-to-end feature lifecycle, automatic production promotion, and live Discord integration verification. See [agent development design](agent-development-design.md).
 
 ## Per-chat usage instrumentation (proposed, 2026-11-07)
 
