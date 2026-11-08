@@ -189,4 +189,19 @@ The current `FunctionHandler` applies a 30-second timeout to awaitable tools. Re
 - **Link previews:** Discord embeds can be useful metadata but should not be treated as proof that the linked content was read.
 - **Privacy:** don't store raw images or transcripts in Pinecone or logs; determine later whether derived summaries belong in Server Awareness.
 
+
+## Server Awareness integration (design decision)
+
+The [Server Awareness](server-awareness-design.md) archive can later reuse the same reader interface, but passive indexing is **not** permission to analyze every posted link, video or image. The interactive mention/DM path remains on-demand and prioritized over background work.
+
+Expose reusable extraction services independently of the OpenAI tool wrapper, with normalized source provenance, timestamps, retrieval status, truncation and error metadata. Background jobs may first index only URL/attachment metadata and Discord embed hints; these hints must never be represented as verified page/video/image contents.
+
+A future enrichment worker may fetch inexpensive metadata for selected resources using a bounded, deduplicated, expiring cache and a strict daily network/token budget. Deep transcript retrieval, vision inference and full article analysis should default to explicit user requests. Cache by canonical resource identity, but retain separate per-message Discord attribution and handle edits/deletions.
+
+Search results can trigger on-demand rich reading of a historical link or attachment, subject to current access, availability and fetch limits. Discord attachment URLs may expire; a message or source might be deleted. Return a clear limitation rather than guessing. Derived descriptions should be marked as derived and source-backed, not silently promoted to memories.
+
+The Server Awareness extractor may summarize what participants **said about** shared content from surrounding conversation; it must not claim to know what an unread resource **contains**. No automatic Pinecone writes based solely on unverified URL metadata, preview embeds or model speculation.
+
+No shared persistent cache or archive database is required to ship Rich Content Understanding v1; persistence, retention and indexing are owned by the Server Awareness design.
+
 **Implementation status:** This document specifies intended behavior and starting limits, not completed work. Update it as providers are validated and implementation decisions are confirmed.
