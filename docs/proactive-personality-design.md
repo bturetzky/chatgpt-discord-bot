@@ -12,7 +12,7 @@ This is a feature, not an always-on chatbot: no unsolicited text replies in v1.
 
 ## Confirmed product decisions
 
-- **At most four proactive reactions per day**, across the entire production guild; this is a ceiling, never a quota. Zero is fine.
+- **Activity-aware pacing instead of a fixed four-per-day budget (revised proposal).** Four per day was an initial preference, but discussion identified that it is probably too restrictive for a small, reaction-heavy server. The final numerical budget is not yet agreed; use a rolling token bucket with a hard failsafe cap. Zero reactions is always acceptable.
 - **Reactions only initially**. No unsolicited text replies, DMs, threads or scheduled commentary.
 - **Both standard Unicode and available server custom emoji** are eligible. Validate every selected emoji against an explicit permitted set and Discord's current availability.
 - Small trusted server (~5 people, 10–15 channels). Use one configured home guild, with no manual channel allowlist, but only channels the bot can access. Exclude DMs and threads initially.
@@ -52,7 +52,7 @@ Implement separate modules/services for reaction event ingestion, candidate filt
 
 Use `discord.py` raw reaction events (`on_raw_reaction_add`, `on_raw_reaction_remove`, and clear variants where supported) so observing reactions does not depend on Discord's message cache. Ensure required guild/message/reaction intents and channel permissions; verify exact Discord API behavior in dev.
 
-Track per-message emoji identity (Unicode emoji or custom emoji ID), reaction count and optionally reacting member IDs if needed for attribution. Prefer minimal data retention. Reactions may be removed, cleared, or missed while the bot is offline: reconcile counts for selected messages when practical and mark historical counts as potentially incomplete. Avoid mistaking bot-added reactions for independent human feedback.
+Track per-message emoji identity (Unicode emoji or custom emoji ID), reaction count and **distinct human reactor counts** for candidate scoring; use member IDs only as needed for deduplication and optionally retain bounded aggregate state rather than indefinite individual reaction histories. Prefer minimal data retention. Reactions may be removed, cleared, or missed while the bot is offline: reconcile counts for selected messages when practical and mark historical counts as potentially incomplete. Avoid mistaking bot-added reactions for independent human feedback.
 
 For the Server Awareness SQLite archive, proposed tables:
 - `message_reactions`: guild/channel/message ID, normalized emoji key, observed count, last observed timestamp, optional reconciliation status.
@@ -64,22 +64,24 @@ Do not embed raw reaction events in Pinecone. Reaction totals and patterns are w
 
 ## Candidate selection: cheap first, rare model calls
 
+**Delayed reaction triggers:** a message may become interesting *after* others react to it. Coalesce raw reaction events for the same message into a short debounce window (proposed 30–120 seconds), then score it once; avoid a model call per added emoji. Favor reaction diversity and distinct humans over raw counts. Only consider recent messages and cancel pending evaluations on deletion. A pile-on should increase the probability of evaluation, not guarantee a bot reaction.
+
 **Do not run an LLM on every Discord message.** Use a low-cost local gate with bounded queues and probabilistic sampling. Candidate signals may include:
 - A short exchange among multiple humans in a channel with recent activity.
-- A message that attracts a few distinct reactions or a burst of replies.
+- A message that attracts reactions from **multiple distinct humans** or a burst of replies; reaction pile-ons are especially promising candidates. Count distinct reacting users rather than raw emoji events, and exclude the bot's own reactions.
 - A topical callback to known server lore (only when Server Awareness memory is available).
 - An interesting, playful message that passes local filters, including occasional random sampling to avoid predictable selection.
 
 Avoid brittle keyword-only rules that always react to the same phrase. Candidate selection is a heuristic, not a requirement that the message be funny.
 
 Suggested initial knobs (tune in dev, not confirmed):
-- Maximum **4 posted proactive reactions per guild-local calendar day**, default timezone `America/Los_Angeles` (configurable; use timezone-aware timestamps and handle DST).
-- Minimum **2 hours between successful proactive reactions** across the guild; maximum **1 reaction per channel per 6 hours**.
-- Maximum **1 reaction per original message** and **1 per author per day** to avoid targeting a single person.
+- **Rolling reaction allowance**, proposed token bucket: capacity 6, refill 1 token every 2 hours, with a separate hard failsafe ceiling of 12 posted reactions in any rolling 24-hour window. These are discussion defaults, **not approved product limits**. A busy evening can spend multiple accumulated tokens; a quiet morning does not consume any allowance. Persist bucket state across restarts.
+- **Short burst protection**, proposed 10–20 minute guild-wide cooldown and no more than 2 proactive reactions in any rolling hour; tune after observing actual server behavior. Avoid rigid multi-hour channel cooldowns.
+- Maximum **1 bot reaction per original message**. Remove the one-per-author-per-day restriction; use a rolling fairness check to avoid repeatedly singling out one member, without blocking natural exchanges.
 - Bounded evaluation budget, e.g. **8 model evaluations per day**, not a target. Local sampling/queue size prevents busy channels from consuming all evaluations.
 - Optional short randomized delay (e.g. 30 seconds to 5 minutes) before evaluation/posting, but **revalidate freshness** and skip stale/deleted messages; do not schedule reactions hours later to fill a quota.
 - Ignore bot/webhook messages, messages authored by the bot, DMs, unsupported channel types, commands, obvious sensitive or distressing content, and messages that mention the bot (those already follow normal interaction). Avoid reacting to moderation or conflict situations.
-- Do not use human reaction popularity alone as the selection criterion. Existing reactions can inform context, but the bot should have independent judgment.
+- Human reaction pile-ons are a **strong positive candidate signal**, not merely incidental context. They can trigger evaluation after a short debounce window, even if the original message was not a candidate at creation. The bot still chooses its own emoji or ignores the message; copying the most popular reaction is not mandatory.
 
 The daily limit and cooldowns are **hard execution policy**, not merely model prompt instructions. Random sampling and delays must be bounded and cancellation-safe.
 
@@ -140,7 +142,7 @@ A small inexpensive model can be evaluated in dev; exact model, token cost and s
 - Exclude DMs, foreign guilds, bot/webhook authors, deleted messages and mention-triggered conversations from unsolicited reaction logic.
 - No proactive LLM call for ordinary messages that fail the cheap gate; queue and evaluation budgets are enforced.
 - Invalid model output, fabricated custom emoji IDs, prompt injection and unavailable emoji result in no reaction.
-- Exactly one reaction per target, per-author and per-channel cooldowns, and at most four successful actions per guild-local day; verify concurrent tasks, DST boundaries and pod restart persistence.
+- Exactly one reaction per target, per-author and per-channel cooldowns, and rolling token refill, burst ceiling and hard 24-hour failsafe; verify concurrent tasks, clock boundaries and pod restart persistence.
 - Verify ambiguous API timeouts/retries do not cause duplicate reactions.
 - Bot-added reactions are not counted as independent human endorsements.
 - Existing text chat, tools, memory and Discord reply behavior remain unchanged.
@@ -148,7 +150,7 @@ A small inexpensive model can be evaluated in dev; exact model, token cost and s
 **Dev validation**
 1. Enable reaction observation only; verify counts, custom emoji IDs and event handling.
 2. Enable shadow mode; log candidate/evaluation counts and aggregate costs, without posting. Inspect a bounded sample of proposed decisions, not all message bodies.
-3. Enable live reactions in the dev guild with the four-per-day ceiling; validate comedic timing, author distribution, permissions and opt-out switch.
+3. Enable live reactions in the dev guild with the selected rolling allowance and hard failsafe; validate comedic timing, author distribution, permissions and opt-out switch.
 4. Promote to production manually with the feature disabled initially; enable explicitly after validation.
 5. Monitor posted reactions, skip reasons, failures, average evaluation cost and human feedback. Reduce frequency if the bot feels intrusive.
 
@@ -156,7 +158,7 @@ A small inexpensive model can be evaluated in dev; exact model, token cost and s
 
 ## Open questions (not blocking design)
 
-- Confirm preferred calendar timezone for daily reset; `America/Los_Angeles` is proposed.
+- Confirm numerical rolling-bucket capacity/refill, burst cooldown and hard 24-hour failsafe after discussing actual server activity; timezone is no longer needed for a daily reset.
 - Whether to permit emoji on very old messages; proposed no, react only to recent conversation.
 - Whether a future moderator/user command should allow opt-out per person or channel if the server's norms change.
 - Whether custom emoji selection should include animated emoji (proposed yes if permissions and API support are confirmed).
