@@ -31,6 +31,44 @@ class DiscordBehaviorTests(unittest.IsolatedAsyncioTestCase):
             await handler.process_message(message)
         handler.chatgpt_handler.get_response.assert_awaited_once()
 
+    async def test_everyone_mention_does_not_trigger_guild_reply(self):
+        handler, message = make_handler(), make_message()
+        message.mention_everyone = True
+        await handler.process_message(message)
+        handler.get_message_history.assert_not_awaited()
+        handler.chatgpt_handler.get_response.assert_not_awaited()
+        message.channel.send.assert_not_awaited()
+
+    async def test_own_message_suppresses_embeds_without_replying(self):
+        handler, message = make_handler(), make_message()
+        message.author = handler.client.user
+        message.edit = AsyncMock()
+        with patch("discord_bot.handlers.discord_handler.asyncio.sleep", new_callable=AsyncMock):
+            await handler.process_message(message)
+        message.edit.assert_awaited_once_with(suppress=True)
+        handler.chatgpt_handler.get_response.assert_not_awaited()
+        message.channel.send.assert_not_awaited()
+
+    async def test_response_failure_sends_fallback_message(self):
+        handler, message = make_handler(), make_message()
+        handler.chatgpt_handler.get_response.side_effect = RuntimeError("unavailable")
+        await handler.process_message(message)
+        message.channel.send.assert_awaited_once_with(
+            "friend Sorry, there was an error processing your request. Please try again later."
+        )
+
+    async def test_long_response_is_sent_in_order(self):
+        handler, message = make_handler(), make_message()
+        first_line = "a" * 1000
+        second_line = "b" * 1000
+        handler.chatgpt_handler.get_response.return_value = f"chatgpt: {first_line}\n{second_line}"
+        with patch("discord_bot.handlers.discord_handler.asyncio.sleep", new_callable=AsyncMock):
+            await handler.process_message(message)
+        self.assertEqual(
+            [call.args[0] for call in message.channel.send.await_args_list],
+            [first_line + "\n", second_line + "\n"],
+        )
+
     async def test_shutdown_event_prevents_new_requests(self):
         handler, message = make_handler(), make_message()
         handler.shutdown_event.set()
