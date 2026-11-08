@@ -6,7 +6,8 @@
 
 ## Verified implementation and production promotions
 
-- PR checks run focused Responses API tests and Docker build without publishing; main builds publish a SHA-tagged GHCR image and update dev GitOps to the published immutable digest through a GitHub App-created, automatically merged PR.
+- PR checks run the complete unittest suite and Docker build without publishing; main builds publish a SHA-tagged GHCR image and update dev GitOps to the published immutable digest through a GitHub App-created, automatically merged PR.
+- The standalone suite uses Python 3.12 and Poetry 1.8.3 to install the locked main dependencies (`poetry install --only main --no-root --no-interaction`), then runs `poetry run python -m unittest discover -s tests -t .`. It needs the full application dependencies, not just the OpenAI SDK; external services are mocked. The Docker build separately runs the suite on Python 3.12.
 - Dev Argo CD rollout and Discord conversation/weather behavior were verified. The Responses API serialization bug was corrected in PR #11.
 - Manual promotion workflow [`promote-prod.yml`](../.github/workflows/promote-prod.yml) was implemented in PR #12. It reads the digest currently pinned in dev GitOps and opens a **review-only** production GitOps PR; it never rebuilds or auto-merges.
 - **First production promotion confirmed by user:** workflow run against main; resulting GitOps PR reviewed and merged; dev/prod digests matched; production rollout occurred; production Discord bot remained responsive.
