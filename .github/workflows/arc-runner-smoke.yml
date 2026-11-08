@@ -1,0 +1,21 @@
+name: ARC runner smoke test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: discord-dev-verify
+    timeout-minutes: 10
+    steps:
+      - name: Verify ephemeral runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "ARC runner is executing"
+          uname -a
+          id
+          echo "Smoke test passed"
