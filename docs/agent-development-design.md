@@ -21,6 +21,14 @@ Enable a cloud-hosted coding agent to implement substantial Discord bot features
 - **Concurrency:** Start with exactly one feature-development agent at a time, with exclusive use of the shared dev environment for integration validation. Revisit parallel development only after the single-agent lifecycle is reliable.
 - **Orchestration preference:** Prefer an existing managed cloud platform over building and maintaining a bespoke orchestrator, provided it supports durable sessions, external CI/deployment callbacks, approval gates, and bounded retries. Evaluate Codex Cloud and the OpenAI Agents API; **no platform selected yet**.
 
+## Platform investigation (2026-11-07; research, not implementation)
+
+- **Codex Cloud:** Included in eligible ChatGPT Plus usage limits, with optional paid credits; no separate standard cloud VM fee at this time. Best low-cost initial experiment. Ordinary Codex Cloud tasks should **not** be assumed to automatically resume on arbitrary GitHub or homelab deployment events.
+- **Agents API (public beta):** OpenAI-managed Codex harness, durable sessions, hosted sandboxes, asynchronous turns, session webhooks, recovery, and one-time/periodic scheduled automations. Supports resuming the same session; managed agent execution does not automatically connect GitHub workflow completion to the correct feature session. A thin event adapter or scheduled polling is still needed.
+- **Agents API billing:** Separate from ChatGPT subscription: model tokens, tools and hosted sandbox compute. As checked 2026-11-07, GPT-6.1 Sol standard API rates are $2/1M input, $0.10/1M cached input, $10/1M output; GPT-6.1 Terra $1/$0.05/$5. Cache-write charges can also apply. Standard hosted container price examples: 1 GiB $0.03, 4 GiB $0.12 per 20-minute session; verify billing at implementation time. Budget and usage tracing required.
+- **Platform recommendation:** Try Codex Cloud on a contained feature first to measure capability and subscription consumption; evaluate Agents API for event-driven end-to-end automation, likely with a minimal GitHub-event bridge and a least-privilege homelab verification runner. **No platform committed yet.**
+- **Sources:** [Codex pricing](https://learn.chatgpt.com/docs/pricing), [Agents API overview](https://developers.openai.com/api/docs/guides/agents-api/overview), [Agents API session webhooks](https://developers.openai.com/api/docs/guides/agents-api/sessions/webhooks), [Agents API scheduled automations](https://developers.openai.com/api/docs/guides/agents-api/sessions/automations), [API pricing](https://developers.openai.com/api/docs/pricing).
+
 ## Proposed integration architecture (not yet selected or implemented)
 
 - **GitHub Actions feedback:** Agent reads workflow runs, check results, and failed job logs via GitHub API.
