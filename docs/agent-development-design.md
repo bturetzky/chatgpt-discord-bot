@@ -16,6 +16,11 @@ Enable a cloud-hosted coding agent to implement substantial Discord bot features
 - **Agent limits:** Bound retries, time and spend; escalate repeated failures rather than looping indefinitely. Keep credentials narrowly scoped; do not expose production bot secrets to agent jobs.
 - **Documentation:** Keep feature design decisions and validation evidence near their respective feature docs; use this file for cross-feature agent architecture. Distinguish confirmed decisions, proposals, and observed implementation. Avoid a parallel task-manager checklist.
 
+## Further decisions (2026-11-07)
+
+- **Concurrency:** Start with exactly one feature-development agent at a time, with exclusive use of the shared dev environment for integration validation. Revisit parallel development only after the single-agent lifecycle is reliable.
+- **Orchestration preference:** Prefer an existing managed cloud platform over building and maintaining a bespoke orchestrator, provided it supports durable sessions, external CI/deployment callbacks, approval gates, and bounded retries. Evaluate Codex Cloud and the OpenAI Agents API; **no platform selected yet**.
+
 ## Proposed integration architecture (not yet selected or implemented)
 
 - **GitHub Actions feedback:** Agent reads workflow runs, check results, and failed job logs via GitHub API.
@@ -38,7 +43,7 @@ Enable a cloud-hosted coding agent to implement substantial Discord bot features
 
 ## Open design questions
 
-- Which cloud agent/runtime and event-triggered orchestrator will own long-running feature runs?
+- Can a managed platform (particularly the Agents API) provide durable execution and event-driven resumption without a custom orchestration service? Validate the concrete API and GitHub/homelab integration first.
 - Should verification use a self-hosted GitHub Actions runner, an outbound-reporting observer, or both?
 - What exact dev smoke-test mechanism can exercise Discord interactions safely?
 - What retry, runtime, and cost budgets are appropriate?
