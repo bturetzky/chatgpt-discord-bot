@@ -2,6 +2,8 @@
 import asyncio
 import json
 import logging
+import re
+import unicodedata
 from datetime import datetime, timezone
 
 from openai import AsyncOpenAI
@@ -13,7 +15,7 @@ VALID_TYPES = {"lore", "fact", "relationship", "event"}
 VALID_CONFIDENCE = {"high", "medium", "low"}
 
 
-def parse_candidates(output, window):
+def parse_candidates(output, window, human_author_ids):
     """Reject unsupported model claims and IDs instead of storing them."""
     data = json.loads(output)
     if not isinstance(data, dict) or not isinstance(data.get("candidates"), list):
@@ -22,6 +24,8 @@ def parse_candidates(output, window):
         raise ValueError("too many candidates")
     message_ids = {row[2] for row in window.messages}
     author_ids = {row[3] for row in window.messages}
+    human_messages = {row[2] for row in window.messages if row[3] in human_author_ids}
+    human_authors = author_ids & human_author_ids
     result = []
     for item in data["candidates"]:
         if not isinstance(item, dict):
@@ -37,29 +41,34 @@ def parse_candidates(output, window):
             raise ValueError("invalid candidate text")
         if (not isinstance(sources, list) or not sources
                 or any(not isinstance(x, str) for x in sources)
-                or not set(sources) <= message_ids
+                or not set(sources) <= human_messages
                 or not isinstance(participants, list)
                 or any(not isinstance(x, str) for x in participants)
-                or not set(participants) <= author_ids):
+                or not set(participants) <= human_authors):
             raise ValueError("candidate has unsupported source or participant")
         result.append((kind, summary.strip(), json.dumps(participants),
                        json.dumps(sources), confidence, rationale.strip()))
     return result
 
 
-def _input(window):
+def _input(window, human_author_ids):
     # Never pass arbitrary unbounded text to the model.
     return json.dumps({"guild_id": window.guild_id, "channel_id": window.channel_id,
                        "messages": [
                            {"message_id": row[2], "author_id": row[3],
-                            "content": row[4][:1000], "created_at": row[5]}
+                            "content": row[4][:1000], "created_at": row[5],
+                            "human_evidence": row[3] in human_author_ids}
                            for row in window.messages
                        ]}, ensure_ascii=False)
 
 
+def _canonical(summary):
+    return re.sub(r"[^\w]+", " ", unicodedata.normalize("NFKC", summary).casefold()).strip()
+
+
 async def dry_run(
     connection, *, guild_id, since, until, max_windows=5, max_rows=1000,
-    max_messages=40, model, api_key=None, client=None,
+    max_messages=40, model, human_author_ids=None, api_key=None, client=None,
 ):
     """Explicit bounded slice; stores proposed candidates locally only.
 
@@ -68,6 +77,9 @@ async def dry_run(
     """
     if not guild_id or not model or max_windows < 1 or max_windows > 50:
         raise ValueError("guild, model and max_windows (1..50) are required")
+    if not human_author_ids or not all(str(x).isdecimal() for x in human_author_ids):
+        raise ValueError("explicit trusted human author IDs are required")
+    human_author_ids = {str(x) for x in human_author_ids}
     if since >= until or until > datetime.now(timezone.utc):
         raise ValueError("invalid historical time range")
     windows = discover_windows(
@@ -82,9 +94,12 @@ async def dry_run(
     if client is None:
         client = AsyncOpenAI(api_key=api_key)
     counts = {"windows": len(windows), "processed": 0, "skipped": 0,
-              "failed": 0, "candidates": 0, "input_tokens": 0, "output_tokens": 0}
+              "failed": 0, "candidates": 0, "duplicates": 0, "input_tokens": 0, "output_tokens": 0}
     try:
         for window in windows:
+            if not any(row[3] in human_author_ids for row in window.messages):
+                counts["skipped"] += 1
+                continue
             row = connection.execute(
                 "SELECT status FROM extraction_batches WHERE batch_id=?",
                 (window.batch_id,),
@@ -99,12 +114,29 @@ async def dry_run(
             try:
                 response = await asyncio.wait_for(client.responses.create(
                     model=model, instructions=EXTRACTION_INSTRUCTIONS,
-                    input=_input(window), max_output_tokens=1200,
+                    input=_input(window, human_author_ids), max_output_tokens=1200,
                 ), timeout=45)
-                candidates = parse_candidates(response.output_text, window)
+                candidates = parse_candidates(response.output_text, window, human_author_ids)
                 usage = getattr(response, "usage", None)
                 input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
                 output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+                # Exact normalized local dedup, not semantic or Pinecone dedup.
+                existing = {_canonical(row[0]) for row in connection.execute(
+                    """SELECT c.summary FROM extraction_candidates c
+                       JOIN extraction_batches b ON b.batch_id=c.batch_id
+                       WHERE b.guild_id=? AND c.batch_id<>?
+                         AND c.status IN ('proposed', 'accepted')""",
+                    (str(guild_id), window.batch_id),
+                )}
+                unique = []
+                for candidate in candidates:
+                    key = _canonical(candidate[1])
+                    if key in existing:
+                        counts["duplicates"] += 1
+                        continue
+                    existing.add(key)
+                    unique.append(candidate)
+                candidates = unique
                 connection.execute("BEGIN IMMEDIATE")
                 try:
                     connection.execute(
