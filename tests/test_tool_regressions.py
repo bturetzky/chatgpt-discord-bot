@@ -71,6 +71,37 @@ class OpenAIToolRegressions(unittest.IsolatedAsyncioTestCase):
         for call in self.handler.function_handler.execute_function.await_args_list:
             self.assertIs(call.kwargs["context"], context)
 
+    async def test_history_tool_updates_are_silent_but_other_tools_can_report_progress(self):
+        progress = AsyncMock()
+        self.handler.send_interim_message = progress
+        calls = [
+            tool_call("search", "search_discord_history",
+                      '{"query":"roast","quick_update":"Searching archive"}'),
+            tool_call("context", "get_discord_conversation_context",
+                      '{"channel_id":"10","message_id":"100","quick_update":"Reading context"}'),
+            tool_call("web", "search_web",
+                      '{"query":"Python","quick_update":"Checking the web"}'),
+        ]
+        self.handler.client.responses.create.side_effect = [
+            response(calls), response([], "Done"),
+        ]
+        self.assertEqual(await self.handler.get_response([], "channel"), "Done")
+        progress.assert_awaited_once_with("channel", "Checking the web")
+        self.assertEqual(self.handler.function_handler.execute_function.await_count, 3)
+
+    async def test_only_history_tools_do_not_send_progress(self):
+        progress = AsyncMock()
+        self.handler.send_interim_message = progress
+        self.handler.client.responses.create.side_effect = [
+            response([tool_call("search", "search_discord_history",
+                                '{"query":"roast","quick_update":"Searching"}')]),
+            response([tool_call("context", "get_discord_conversation_context",
+                                '{"channel_id":"10","message_id":"100","quick_update":"Reading"}')]),
+            response([], "Found it"),
+        ]
+        self.assertEqual(await self.handler.get_response([], "channel"), "Found it")
+        progress.assert_not_awaited()
+
     async def test_malformed_arguments_are_reported_to_model(self):
         self.handler.client.responses.create.side_effect = [
             response([tool_call("bad", "search_web", "{bad json")]),

@@ -99,6 +99,7 @@ class ChatGPTHandler:
                         if not isinstance(arguments, dict):
                             raise ValueError("Tool arguments must be an object")
                         if (arguments.get("quick_update") and self.send_interim_message
+                                and call.name not in ("search_discord_history", "get_discord_conversation_context")
                                 and (call.name != "read_youtube" or not youtube_progress_sent)):
                             await self.send_interim_message(channel, arguments["quick_update"])
                             if call.name == "read_youtube":
