@@ -1,5 +1,7 @@
 # Discord history backfill and restart reconciliation
 
+**Status (2026-11-09):** Live archive, FTS5 search, restart reconciliation and bounded backfill are implemented. The operator completed a 30-day production backfill; no full historical crawl or deletion audit is claimed.
+
 The bot archives live guild text messages in SQLite. This feature adds two complementary ways to catch older messages without changing normal reply behavior.
 
 ## Automatic restart reconciliation
@@ -37,4 +39,4 @@ The bot needs View Channel, Read Message History and Message Content access. Dis
 4. Repeat the import; confirm each channel continues from its saved checkpoint without duplicating messages.
 5. Restart the bot; verify live replies still work and recently missed messages are reconciled.
 
-**Not included:** search tool, reaction ingestion, automatic memory extraction, full historical deletion auditing, or automatic unbounded backfill.
+**Outside this backfill command:** Reaction ingestion and shadow evaluation run as separate live features; automatic memory extraction, full historical deletion auditing and unbounded backfill are not implemented. The FTS5 history search tool is implemented separately.
