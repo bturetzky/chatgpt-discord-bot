@@ -24,13 +24,36 @@ def get(path, raw=False):
     with urllib.request.urlopen(req, context=ssl.create_default_context(cafile=CA), timeout=10) as resp:
         return resp.read().decode('utf-8', errors='replace') if raw else json.load(resp)
 
+def pod_summary(pods):
+    """Only Kubernetes status metadata; never log bodies or secrets."""
+    result = []
+    for pod in pods[:5]:
+        meta = pod.get("metadata", {})
+        status = pod.get("status", {})
+        entries = [s for s in status.get("containerStatuses", []) if s.get("name") == "chatgpt-discord-bot"]
+        if not entries:
+            result.append(f"{meta.get('name', 'unknown')}: phase={status.get('phase', 'unknown')} status=missing")
+            continue
+        s = entries[0]
+        state = s.get("state", {})
+        waiting = state.get("waiting", {})
+        terminated = state.get("terminated", {})
+        last = s.get("lastState", {}).get("terminated", {})
+        reason = waiting.get("reason") or terminated.get("reason") or last.get("reason") or "Running"
+        exit_code = terminated.get("exitCode", last.get("exitCode", "n/a"))
+        result.append(f"{meta.get('name', 'unknown')}: phase={status.get('phase', 'unknown')} ready={s.get('ready')} restarts={s.get('restartCount', 0)} reason={reason} exit_code={exit_code}")
+    return "; ".join(result) or "no matching pods"
+
+
+last_failure = "no observations"
 deadline = time.monotonic() + 600
 while time.monotonic() < deadline:
     try:
         app = get("/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/discord-dev")
         deployment = get("/apis/apps/v1/namespaces/discord-dev/deployments/chatgpt-discord-bot")
     except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
-        print(f"Unable to inspect rollout: {exc}", flush=True)
+        last_failure = f"api_error: {type(exc).__name__}"
+        print(last_failure, flush=True)
         time.sleep(10)
         continue
     status = app.get("status", {})
@@ -48,6 +71,7 @@ while time.monotonic() < deadline:
     ready = state.get("readyReplicas", 0)
     updated = state.get("updatedReplicas", 0)
     print(f"image={image} sync={sync} health={health} generation={observed}/{generation} ready={ready}/{replicas} updated={updated}/{replicas}", flush=True)
+    last_failure = f"rollout_pending: sync={sync} health={health} image_match={image == IMAGE + EXPECTED} generation={observed}/{generation} ready={ready}/{replicas} updated={updated}/{replicas}"
     if image == IMAGE + EXPECTED and sync == "Synced" and health == "Healthy" and observed >= generation and ready >= replicas and updated >= replicas:
 
         # Inspect only the newly deployed, ready dev pod. Never print pod logs.
@@ -65,12 +89,14 @@ while time.monotonic() < deadline:
                 if container.get("image") == IMAGE + EXPECTED and container.get("ready"):
                     candidates.append((name, container.get("restartCount", 0)))
             if len(candidates) != 1:
-                print(f"Runtime: waiting for one ready matching dev pod; found {len(candidates)}", flush=True)
+                last_failure = "pod_not_ready: " + pod_summary(pods)
+                print("Runtime: " + last_failure, flush=True)
                 time.sleep(10)
                 continue
             pod_name, restarts = candidates[0]
             if restarts:
-                print(f"Runtime: pod restarted {restarts} times", flush=True)
+                last_failure = f"pod_restarted: {pod_name} restarts={restarts}; " + pod_summary(pods)
+                print("Runtime: " + last_failure, flush=True)
                 time.sleep(10)
                 continue
             log_path = ("/api/v1/namespaces/discord-dev/pods/" +
@@ -79,7 +105,8 @@ while time.monotonic() < deadline:
             logs = get(log_path, raw=True)
             if ("Discord gateway ready: bot_id=" not in logs and
                     "Discord gateway session resumed" not in logs):
-                print("Runtime: waiting for Discord gateway startup log", flush=True)
+                last_failure = "gateway_not_confirmed: no ready/resumed marker; " + pod_summary(pods)
+                print("Runtime: " + last_failure, flush=True)
                 time.sleep(10)
                 continue
             time.sleep(20)
@@ -94,11 +121,14 @@ while time.monotonic() < deadline:
             if stable:
                 print(f"PASS: digest deployed, Argo healthy, Discord gateway established, pod {pod_name} stable with zero restarts", flush=True)
                 sys.exit(0)
-            print("Runtime: pod became unready or restarted during stability check", flush=True)
+            last_failure = "pod_unstable: " + pod_summary(current)
+            print("Runtime: " + last_failure, flush=True)
         except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
-            print(f"Runtime inspection failed: {exc}", flush=True)
+            last_failure = f"runtime_api_error: {type(exc).__name__}"
+            print("Runtime: " + last_failure, flush=True)
         time.sleep(10)
     # Do not declare superseded solely from an old healthy Deployment:
     # Argo may not have observed the new GitOps commit yet.
     time.sleep(10)
-sys.exit("TIMEOUT: expected digest did not become healthy within 10 minutes")
+print(f"FAIL: verification timed out after 600s; expected_digest={EXPECTED}; last_failure={last_failure}", flush=True)
+sys.exit(1)
