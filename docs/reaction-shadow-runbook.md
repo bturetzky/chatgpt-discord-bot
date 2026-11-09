@@ -8,7 +8,8 @@ Shadow mode **never posts emoji or unsolicited messages**. It uses the existing 
 
 - `REACTION_SHADOW_ENABLED=true` — explicitly opt in (default false).
 - `REACTION_SHADOW_GUILD_ID=<numeric guild ID>` — required when enabled. Only this guild is evaluated, even if the bot belongs to multiple servers.
-- `REACTION_SHADOW_TEST_PREFIX` — optional, **dev-only** acceptance hook. When set, a new eligible message starting with this literal prefix bypasses 1-in-12 sampling, but still obeys the 60-second delay, guild gate, content eligibility and persistent 8/24h budget. Never set in production.\n- `REACTION_SHADOW_MODEL` — optional model override; defaults to `OPENAI_MODEL`.
+- `REACTION_SHADOW_TEST_PREFIX` — optional, **dev-only** acceptance hook. When set, a new eligible message starting with this literal prefix bypasses 1-in-12 sampling, but still obeys the 60-second delay, guild gate, content eligibility and persistent 8/24h budget. Never set in production.
+- `REACTION_SHADOW_MODEL` — optional model override; defaults to `OPENAI_MODEL`.
 
 The environment variables belong in the deployment manifest in `homelab-gitops`. Set the guild ID independently in dev and production. Deploy and validate dev first, then use the existing manual digest-promotion workflow and a separate production GitOps configuration PR. Production was explicitly enabled in merged GitOps PR #225; verify the running pod and logs. Never put tokens in Git.
 
@@ -27,7 +28,11 @@ With `REACTION_SHADOW_TEST_PREFIX=[shadow-test]` temporarily configured in dev, 
 
 These gates are conservative starting points to tune with actual production activity. No separate live-reaction posting budget has been approved.
 
-## Deterministic dev acceptance\n\nWith the new image deployed, set `REACTION_SHADOW_TEST_PREFIX=[shadow-test]` in the **dev** GitOps deployment only. Send a fresh, ordinary non-reply text message in the dev guild, for example `[shadow-test] This should evaluate exactly once`. After 60–90 seconds, check the log for `Reaction shadow candidate`, `Reaction shadow evaluating` and `Reaction shadow: trigger=independent`. Inspect the SQLite row. This is a **real model call** and consumes one of the eight rolling daily evaluations; it cannot bypass the budget. Do not post the test message to the bot or as a reply. Remove the test prefix from GitOps after validation, before promoting to production.\n\n## Observe results
+## Deterministic dev acceptance
+
+With the new image deployed, set `REACTION_SHADOW_TEST_PREFIX=[shadow-test]` in the **dev** GitOps deployment only. Send a fresh, ordinary non-reply text message in the dev guild, for example `[shadow-test] This should evaluate exactly once`. After 60–90 seconds, check the log for `Reaction shadow candidate`, `Reaction shadow evaluating` and `Reaction shadow: trigger=independent`. Inspect the SQLite row. This is a **real model call** and consumes one of the eight rolling daily evaluations; it cannot bypass the budget. Do not post the test message to the bot or as a reply. Remove the test prefix from GitOps after validation, before promoting to production.
+
+## Observe results
 
 ```bash
 kubectl -n discord-dev logs deploy/chatgpt-discord-bot --since=24h | grep 'Reaction shadow'
