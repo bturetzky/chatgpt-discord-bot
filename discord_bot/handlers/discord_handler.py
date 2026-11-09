@@ -1,6 +1,7 @@
 import discord, asyncio, logging, os, re
 from .chatgpt_handler import ChatGPTHandler
 from .vector_handler import VectorHandler
+from .image_context import ImageContextBuilder
 
 CONTEXT_LIMIT = int(os.getenv("DISCORD_CONTEXT_LIMIT", "30"))
 RELATIONSHIP_MEMORY_LIMIT = int(os.getenv("RELATIONSHIP_MEMORY_LIMIT", "4"))
@@ -19,6 +20,7 @@ class DiscordHandler:
         self.chatgpt_handler = ChatGPTHandler(openai_key, self.send_interim_message)
         logging.debug('ChatGPT client initialized')
         self.shutdown_event = asyncio.Event()
+        self.image_context_builder = ImageContextBuilder()
         
         # Register Discord event callbacks
         @self.client.event
@@ -134,6 +136,15 @@ class DiscordHandler:
                 'Memory retrieval completed: semantic=%d relationship=%d unique=%d',
                 len(memories), len(relationships), len(unique_memories)
             )
+
+            if getattr(message, "attachments", None) or getattr(message, "reference", None):
+                try:
+                    image_context = await self.image_context_builder.build(message)
+                    if image_context:
+                        messages.append(image_context)
+                except Exception as exc:
+                    logging.warning("Image ingestion failed: category=internal_error error_type=%s", type(exc).__name__)
+                    messages.append({"role": "user", "content": [{"type": "input_text", "text": "Attached image processing failed. Do not claim to have seen the images."}]})
 
             try:
                 response = await self.chatgpt_handler.get_response(messages, channel)

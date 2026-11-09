@@ -17,6 +17,7 @@ pinecone-client = "^4.1.0"
 aiohttp = "^3.9.5"
 newsapi-python = "^0.2.7"
 lxml = "^4.9.1"
+pillow = ">=12.3,<13"
 
 
 
