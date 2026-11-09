@@ -42,10 +42,16 @@ class ArchiveTests(unittest.TestCase):
                 self.assertEqual(db.connection.execute(
                     "SELECT content FROM messages WHERE message_id='3'"
                 ).fetchone()[0], "")
+                archive.delete(999)
+                unknown = SimpleNamespace(**{**vars(message), "id": 999, "content": "deleted before backfill"})
+                archive.upsert(unknown)
+                self.assertIsNone(db.connection.execute(
+                    "SELECT 1 FROM messages WHERE message_id='999'"
+                ).fetchone())
             with Database(path) as reopened:
                 self.assertEqual(reopened.connection.execute(
                     "SELECT count(*) FROM schema_migrations"
-                ).fetchone()[0], 2)
+                ).fetchone()[0], 3)
                 self.assertEqual(reopened.connection.execute(
                     "SELECT count(*) FROM messages"
                 ).fetchone()[0], 1)
