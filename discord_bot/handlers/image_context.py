@@ -10,6 +10,7 @@ import aiohttp
 from PIL import Image, UnidentifiedImageError
 
 MAX_IMAGES = 2
+MAX_ATTACHMENTS_INSPECTED = 20
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
 MAX_TOTAL_BYTES = 8 * 1024 * 1024
 MAX_PIXELS = 20_000_000
@@ -69,6 +70,7 @@ class ImageContextBuilder:
             raise ImageFailure("invalid_url")
         try:
             await asyncio.wait_for(self.semaphore.acquire(), timeout=DOWNLOAD_TIMEOUT)
+            release_deferred = False
             try:
                 timeout = aiohttp.ClientTimeout(total=DOWNLOAD_TIMEOUT)
                 async with aiohttp.ClientSession(timeout=timeout, trust_env=False, auto_decompress=False) as session:
@@ -87,10 +89,25 @@ class ImageContextBuilder:
                                 raise ImageFailure("size_limit")
                 if not data:
                     raise ImageFailure("invalid_image")
-                await asyncio.to_thread(validate_image, bytes(data), declared, response_type)
+                worker = asyncio.create_task(asyncio.to_thread(validate_image, bytes(data), declared, response_type))
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    # A cancelled await cannot stop a decoder thread. Keep the permit
+                    # until it exits, even if the request no longer has a waiter.
+                    release_deferred = True
+                    def release_after_decode(task):
+                        try:
+                            if not task.cancelled():
+                                task.exception()
+                        finally:
+                            self.semaphore.release()
+                    worker.add_done_callback(release_after_decode)
+                    raise
                 return bytes(data), declared
             finally:
-                self.semaphore.release()
+                if not release_deferred:
+                    self.semaphore.release()
         except ImageFailure:
             raise
         except asyncio.TimeoutError:
@@ -122,12 +139,21 @@ class ImageContextBuilder:
                     failures.append("reply_unavailable")
         if not candidates and not failures:
             return None
-        if len(candidates) > MAX_IMAGES:
-            failures.append("image_limit")
+        if len(candidates) > MAX_ATTACHMENTS_INSPECTED:
+            failures.append("attachment_limit")
+        images = []
+        for attachment, source in candidates[:MAX_ATTACHMENTS_INSPECTED]:
+            mime = (getattr(attachment, "content_type", None) or "").split(";", 1)[0].lower().strip()
+            if mime not in MIME_FORMATS:
+                failures.append("unsupported_type")
+            elif len(images) < MAX_IMAGES:
+                images.append((attachment, source))
+            elif "image_limit" not in failures:
+                failures.append("image_limit")
         parts = []
         total = 0
         count = 0
-        for attachment, source in candidates[:MAX_IMAGES]:
+        for attachment, source in images:
             try:
                 data, mime = await self.download(attachment, MAX_TOTAL_BYTES - total)
                 total += len(data)
