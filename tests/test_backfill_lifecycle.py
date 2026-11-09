@@ -1,4 +1,5 @@
-"""Standalone backfill must release the Discord HTTP session on all exit paths."""
+"""Backfill runs after gateway readiness and always closes the Discord session."""
+import asyncio
 import os
 import unittest
 from types import SimpleNamespace
@@ -8,24 +9,30 @@ from discord_bot.storage.backfill import main
 
 
 class BackfillLifecycleTests(unittest.IsolatedAsyncioTestCase):
-    async def test_client_context_closes_after_success_and_failure(self):
+    async def test_cleanup_after_success_and_failure(self):
         for failure in (None, RuntimeError("backfill failed")):
             with self.subTest(failure=failure):
                 client = MagicMock()
                 client.__aenter__ = AsyncMock(return_value=client)
                 client.__aexit__ = AsyncMock(return_value=None)
+                client.login = AsyncMock()
                 client.close = AsyncMock()
+                ready = asyncio.Event()
+                stopped = asyncio.Event()
 
-                def register(callback):
-                    client.on_ready = callback
-                    return callback
+                async def connect(*, reconnect):
+                    ready.set()
+                    await stopped.wait()
 
-                client.event.side_effect = register
+                async def wait_until_ready():
+                    await ready.wait()
 
-                async def start(_token):
-                    await client.on_ready()
+                async def close():
+                    stopped.set()
 
-                client.start = AsyncMock(side_effect=start)
+                client.connect = AsyncMock(side_effect=connect)
+                client.wait_until_ready = AsyncMock(side_effect=wait_until_ready)
+                client.close.side_effect = close
                 database = MagicMock()
                 database.__enter__.return_value = SimpleNamespace(connection=MagicMock())
                 database.__exit__.return_value = None
@@ -41,5 +48,7 @@ class BackfillLifecycleTests(unittest.IsolatedAsyncioTestCase):
                             await main(SimpleNamespace(days=30, limit_per_channel=100, dry_run=True))
                     else:
                         await main(SimpleNamespace(days=30, limit_per_channel=100, dry_run=True))
+                client.login.assert_awaited_once()
                 client.close.assert_awaited_once()
                 client.__aexit__.assert_awaited_once()
+                run.assert_awaited_once()

@@ -19,23 +19,32 @@ async def main(args):
     async with discord.Client(intents=intents) as client:
         with Database(path) as database:
             archive = MessageArchive(database)
-            completed = False
-
-            @client.event
-            async def on_ready():
-                nonlocal completed
-                if completed:
-                    return
-                completed = True
-                try:
-                    await run_backfill(
-                        client, archive, days=args.days,
-                        limit_per_channel=args.limit_per_channel, dry_run=args.dry_run,
-                    )
-                finally:
-                    await client.close()
-
-            await client.start(token)
+            await client.login(token)
+            gateway = asyncio.create_task(client.connect(reconnect=True))
+            ready = asyncio.create_task(client.wait_until_ready())
+            try:
+                done, _ = await asyncio.wait(
+                    (gateway, ready), timeout=45, return_when=asyncio.FIRST_COMPLETED
+                )
+                if gateway in done:
+                    # Propagate a connection error rather than silently completing.
+                    await gateway
+                    raise RuntimeError("Discord gateway stopped before becoming ready")
+                if ready not in done:
+                    raise TimeoutError("Discord gateway did not become ready within 45 seconds")
+                await ready
+                await run_backfill(
+                    client, archive, days=args.days,
+                    limit_per_channel=args.limit_per_channel, dry_run=args.dry_run,
+                )
+            finally:
+                ready.cancel()
+                await asyncio.gather(ready, return_exceptions=True)
+                await client.close()
+                gateway.cancel()
+                await asyncio.gather(gateway, return_exceptions=True)
+                # Let aiohttp's SSL transports finish closing before asyncio.run stops the loop.
+                await asyncio.sleep(0.25)
 
 
 
