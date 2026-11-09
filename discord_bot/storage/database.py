@@ -4,9 +4,7 @@ A single bot process owns each database file. Keep feature-specific queries in
 separate modules; this layer owns only connections and schema upgrades.
 """
 
-import os
 import sqlite3
-from contextlib import contextmanager
 from pathlib import Path
 
 MIGRATIONS = (
