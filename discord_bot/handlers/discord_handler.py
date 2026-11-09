@@ -3,6 +3,7 @@ from .chatgpt_handler import ChatGPTHandler
 from .vector_handler import VectorHandler
 from .image_context import ImageContextBuilder
 from ..storage.history import reconcile_recent
+from ..storage.reaction_observer import ReactionObserver
 
 CONTEXT_LIMIT = int(os.getenv("DISCORD_CONTEXT_LIMIT", "30"))
 RELATIONSHIP_MEMORY_LIMIT = int(os.getenv("RELATIONSHIP_MEMORY_LIMIT", "4"))
@@ -48,6 +49,45 @@ class DiscordHandler:
             await self.process_message(message)
 
         @self.client.event
+        async def on_raw_reaction_add(payload):
+            if self.archive is None or self.client.user is None:
+                return
+            try:
+                # Member may be absent on uncached events; never classify bot reactions as human.
+                if payload.member is None or payload.member.bot:
+                    return
+                ReactionObserver(self.archive.db).add(payload, bot_user_id=self.client.user.id)
+            except Exception:
+                logging.exception("Reaction observation add failed")
+
+        @self.client.event
+        async def on_raw_reaction_remove(payload):
+            if self.archive is None:
+                return
+            try:
+                ReactionObserver(self.archive.db).remove(payload)
+            except Exception:
+                logging.exception("Reaction observation remove failed")
+
+        @self.client.event
+        async def on_raw_reaction_clear(payload):
+            if self.archive is None:
+                return
+            try:
+                ReactionObserver(self.archive.db).clear(payload)
+            except Exception:
+                logging.exception("Reaction observation clear failed")
+
+        @self.client.event
+        async def on_raw_reaction_clear_emoji(payload):
+            if self.archive is None:
+                return
+            try:
+                ReactionObserver(self.archive.db).clear_emoji(payload)
+            except Exception:
+                logging.exception("Reaction observation emoji clear failed")
+
+        @self.client.event
         async def on_raw_message_edit(payload):
             if self.archive is None or payload.guild_id is None:
                 return
@@ -74,6 +114,7 @@ class DiscordHandler:
             if self.archive is not None and payload.guild_id is not None:
                 try:
                     self.archive.delete(payload.message_id)
+                    ReactionObserver(self.archive.db).clear(payload)
                 except Exception:
                     logging.exception('Discord message archive deletion failed')
 
@@ -83,6 +124,8 @@ class DiscordHandler:
                 try:
                     for message_id in payload.message_ids:
                         self.archive.delete(message_id)
+                        self.archive.db.execute(
+                            'DELETE FROM reaction_members WHERE message_id=?', (str(message_id),))
                 except Exception:
                     logging.exception('Discord bulk archive deletion failed')
 
@@ -126,6 +169,7 @@ class DiscordHandler:
         intents.messages = messages
         intents.guilds = guilds
         intents.message_content = True
+        intents.reactions = True
         return intents
 
     async def process_message(self, message):
