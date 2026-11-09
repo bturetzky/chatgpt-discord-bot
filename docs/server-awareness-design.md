@@ -1,6 +1,6 @@
 # Server Awareness — design
 
-**Status:** Approved next feature; implementation not yet started.  
+**Status:** SQLite foundation deployed in dev; message ingestion is next.  
 **Last reviewed:** 2026-11-08  
 **Scope:** chatgpt-discord-bot application. Kubernetes manifests and storage deployment belong in `bturetzky/homelab-gitops`.
 
@@ -12,7 +12,7 @@ Let the bot learn from conversations in its home Discord server even when it is 
 
 - Small trusted server: approximately five active people, 10–15 channels, years of history; actual message count is unknown.
 - Everyone in this server can access the channels the bot can access. No per-channel allowlist is planned.
-- **Scope boundary:** configure one explicit home guild ID; only index ordinary guild text channels visible to the bot. Never crawl every guild the application happens to join, DMs, or threads initially. New accessible text channels in the home guild may be indexed automatically for new messages; historical backfill remains explicitly triggered.
+- **Scope boundary:** this is a personal bot deployed to one Discord server per environment (dev has its own test server). Index ordinary guild messages received by the bot; ignore DMs and threads initially. No configured guild ID, per-guild opt-in, multi-tenant settings, or dynamic per-guild tables. Keep `guild_id` as message metadata. Historical backfill remains explicitly triggered.
 - **Persistent SQLite** on a dedicated, initially **2 GiB Rook-Ceph RBD PVC** (proposed sizing; adjust based on measured usage). Do not rebuild the index on pod restart.
 - **Keep current Discord recent-history fetch** for ordinary chat turns; SQLite is a historical archive/search index, not a replacement for current message context. Pinecone remains the semantic memory store.
 - **No automatic unbounded historical crawl.** Backfill must be explicitly initiated with bounds, progress and resumability. Normal indexing and missed-message reconciliation can run automatically.
@@ -32,7 +32,7 @@ The shared database is infrastructure, **not** a single shared feature schema. M
 ## Architecture
 
 ```text
-Discord gateway (home guild only)
+Discord gateway (bot's server; dev/prod isolated)
     |-- existing mention/DM reply path -> live Discord recent history + Pinecone
     |
     +-- new message/update/delete ingestion -> SQLite messages + FTS5
@@ -65,7 +65,7 @@ Store Discord snowflake IDs as strings or 64-bit integers consistently. Build so
 - On new messages in eligible channels, store/update the archive without invoking OpenAI. Keep existing mention routing unchanged.
 - Handle edits and deletes, including bulk deletes where available; tombstone or remove content and update FTS. If a deleted/edited source supported a memory, mark it for review/invalidation, rather than silently treating it as current evidence.
 - Gateway events can be missed during downtime. On startup and periodically, reconcile recent messages per channel using persisted checkpoints, paginated and rate-limit-aware. Discord may not expose every deletion during downtime; document this limitation and consider a bounded periodic consistency pass.
-- On first startup, **do not** automatically import all history. Provide an operator-triggered backfill (CLI/admin command or Kubernetes Job to be chosen) with explicit guild, channels discovered in scope, lookback window and/or per-channel message cap, dry-run inventory, progress and resume support.
+- On first startup, **do not** automatically import all history. Provide an operator-triggered backfill (CLI/admin command or Kubernetes Job to be chosen) with channels discovered in the bot's server, lookback window and/or per-channel message cap, dry-run inventory, progress and resume support.
 - Respect Discord permissions, pagination and rate limits; apply backpressure, bounded queues and retry policies. Never let indexing stall ordinary bot replies.
 - Estimate volume using a cheap channel inventory (channel IDs, oldest/newest accessible messages, last indexed, sampled rate). Exact message counts require paginating history; report estimates honestly.
 - Historical backfill may ingest messages in chunks; avoid triggering memory extraction until the selected chunks are fully indexed and validated.
@@ -76,7 +76,7 @@ Implement a read-only `search_discord_history` tool, initially backed by SQLite 
 
 The current `discord_handler.py` path fetches recent Discord channel history (default 30 messages) and retrieves Pinecone context. **Do not replace this path initially.** Historical search is invoked when the user asks about older conversations or other channels. Semantic search over raw messages is a later enhancement if FTS proves insufficient; do not embed every message by default.
 
-All five users currently share access to relevant channels, but enforce home-guild scoping and check requesting-user channel visibility before returning indexed results. If permissions diverge later, this prevents accidental disclosure. Do not expose search results across dev/prod guilds.
+The five users share relevant channels. For history search, use the request's guild and check the requesting user's channel visibility before returning results; the dev and prod databases remain physically separate. No guild configuration or opt-in subsystem is needed.
 
 ### Selective memory extraction
 
