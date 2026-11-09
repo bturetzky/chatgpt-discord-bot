@@ -7,13 +7,13 @@ import math
 import re
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import requests
 
 from .base import BaseFunction
 from .get_webpage_contents import PublicAdapter, validate_public_url
-from ..youtube_url import canonical_youtube_url, youtube_video_id
+from ..youtube_url import canonical_youtube_url, normalize_youtube_url, youtube_video_id
 
 try:
     from youtube_transcript_api import NoTranscriptFound, YouTubeTranscriptApi
@@ -36,6 +36,12 @@ _read_slots = threading.BoundedSemaphore(2)
 
 class CaptionCursorError(ValueError):
     pass
+
+
+class ReadOptionsError(ValueError):
+    def __init__(self, reason):
+        self.reason = reason
+        super().__init__("Invalid time range or continuation cursor")
 
 
 class _NoYouTubeRequestLogs(logging.Filter):
@@ -227,7 +233,7 @@ def _read_youtube(video_id, start_seconds=None, end_seconds=None, cursor=None):
             except CaptionCursorError:
                 return {"ok": False, "url": canonical, "kind": "youtube", "source": "metadata",
                         "transcript_available": False, "content_truncated": False,
-                        "error": {"code": "INVALID_CURSOR", "message": "Caption continuation is invalid or the track changed; restart the read."}}
+                        "error": {"code": "INVALID_CURSOR", "message": "Caption continuation is invalid or the track changed. Retry with the last timestamp in start_seconds and no cursor."}}
             except Exception as exc:
                 logging.info("YouTube captions unavailable: error_type=%s", type(exc).__name__)
                 result["transcript"] = []
@@ -271,35 +277,70 @@ def read_youtube(video_id, start_seconds=None, end_seconds=None, cursor=None):
         _read_slots.release()
 
 
+def parse_timestamp(value):
+    """Accept seconds or a conventional YouTube/clock timestamp, within bounds."""
+    if isinstance(value, str):
+        value = value.strip().lower()
+        if not value or len(value) > 40:
+            raise ValueError("Invalid timestamp")
+        if ":" in value:
+            parts = value.split(":")
+            if len(parts) not in (2, 3) or any(not re.fullmatch(r"\d+", p) for p in parts):
+                raise ValueError("Invalid timestamp")
+            numbers = [int(p) for p in parts]
+            if any(n >= 60 for n in numbers[1:]):
+                raise ValueError("Invalid timestamp")
+            value = sum(n * 60 ** i for i, n in enumerate(reversed(numbers)))
+        elif re.fullmatch(r"\d+(?:\.\d+)?", value):
+            value = float(value)
+        else:
+            match = re.fullmatch(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?", value)
+            if not match or not any(match.groups()):
+                raise ValueError("Invalid timestamp")
+            hours, minutes, sec = match.groups()
+            value = int(hours or 0) * 3600 + int(minutes or 0) * 60 + float(sec or 0)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("Invalid timestamp")
+    if not math.isfinite(value) or not 0 <= value <= 1_000_000_000:
+        raise ValueError("Invalid timestamp")
+    return float(value)
+
+
 def validate_read_options(args):
-    def seconds(value):
+    def seconds(value, reason):
         if value is None:
             return None
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError("Invalid seconds")
-        if not math.isfinite(value) or not 0 <= value <= 1_000_000_000:
-            raise ValueError("Invalid seconds")
-        return float(value)
+        try:
+            return parse_timestamp(value)
+        except (TypeError, ValueError, OverflowError):
+            raise ReadOptionsError(reason) from None
 
-    start = seconds(args.get("start_seconds"))
-    end = seconds(args.get("end_seconds"))
+    start = seconds(args.get("start_seconds"), "START_TIME")
+    end = seconds(args.get("end_seconds"), "END_TIME")
     cursor = args.get("cursor")
+    if start is None and cursor is None and isinstance(args.get("url"), str):
+        query = parse_qs(urlsplit(normalize_youtube_url(args["url"])).query, keep_blank_values=True)
+        times = query.get("t", []) + query.get("start", [])
+        if len(times) > 1:
+            raise ReadOptionsError("URL_TIMESTAMP")
+        if times:
+            start = seconds(times[0], "URL_TIMESTAMP")
     if cursor is not None:
         required = {"segment_index", "char_offset", "track_hash", "range_start", "range_end"}
         if not isinstance(cursor, dict) or set(cursor) != required:
-            raise ValueError("Invalid cursor")
+            raise ReadOptionsError("CURSOR_SHAPE")
         for key in ("segment_index", "char_offset"):
             value = cursor[key]
             if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_RESPONSE_BYTES:
-                raise ValueError("Invalid cursor position")
+                raise ReadOptionsError("CURSOR_POSITION")
         if not isinstance(cursor["track_hash"], str) or not re.fullmatch(r"[0-9a-f]{64}", cursor["track_hash"]):
-            raise ValueError("Invalid cursor fingerprint")
-        saved_start, saved_end = seconds(cursor["range_start"]), seconds(cursor["range_end"])
+            raise ReadOptionsError("CURSOR_FINGERPRINT")
+        saved_start, saved_end = seconds(cursor["range_start"], "CURSOR_RANGE"), seconds(cursor["range_end"], "CURSOR_RANGE")
         if ("start_seconds" in args and start != saved_start) or ("end_seconds" in args and end != saved_end):
-            raise ValueError("Cursor range mismatch")
+            raise ReadOptionsError("CURSOR_RANGE")
         start, end = saved_start, saved_end
     if end is not None and end <= (start if start is not None else 0):
-        raise ValueError("Invalid time range")
+        raise ReadOptionsError("TIME_RANGE")
     return start, end, cursor
 
 
@@ -321,17 +362,38 @@ class ReadYouTube(BaseFunction):
     }, "required": ["url"]}
 
     async def execute(self, args):
+        started = time.monotonic()
         video_id = youtube_video_id(args.get("url"))
         if not video_id:
-            return json.dumps({"ok": False, "error": {"code": "INVALID_URL", "message": "Provide a supported public YouTube video URL."}})
+            logging.warning("YouTube input rejected: code=INVALID_URL reason=URL_FORMAT elapsed_ms=%d", int((time.monotonic() - started) * 1000))
+            return json.dumps({"ok": False, "error": {"code": "INVALID_URL", "reason": "URL_FORMAT", "message": "Provide the complete public YouTube video URL."}})
+        ignored_cursor = False
         try:
             start, end, cursor = validate_read_options(args)
+        except ReadOptionsError as exc:
+            reason = exc.reason
+            if args.get("cursor") is not None and reason.startswith("CURSOR_"):
+                try:
+                    start, end, cursor = validate_read_options({key: value for key, value in args.items() if key != "cursor"})
+                    ignored_cursor = start is not None
+                except (ReadOptionsError, TypeError, ValueError, OverflowError):
+                    ignored_cursor = False
+            if not ignored_cursor:
+                logging.warning("YouTube input rejected: code=INVALID_ARGUMENT reason=%s elapsed_ms=%d", reason, int((time.monotonic() - started) * 1000))
+                return json.dumps({"ok": False, "error": {"code": "INVALID_ARGUMENT", "reason": reason,
+                                   "message": "Use the video URL and a numeric start_seconds (for 8:20, use 500). Only reuse an exact cursor from a tool result in this response."}})
         except (TypeError, ValueError, OverflowError):
-            return json.dumps({"ok": False, "error": {"code": "INVALID_ARGUMENT", "message": "Invalid time range or continuation cursor."}})
-        started = time.monotonic()
+            logging.warning("YouTube input rejected: code=INVALID_ARGUMENT reason=OPTIONS elapsed_ms=%d", int((time.monotonic() - started) * 1000))
+            return json.dumps({"ok": False, "error": {"code": "INVALID_ARGUMENT", "reason": "OPTIONS", "message": "Invalid time range or continuation cursor."}})
         result = await asyncio.to_thread(read_youtube, video_id, start, end, cursor)
+        if ignored_cursor:
+            result.setdefault("limitations", []).append("An invalid cursor was ignored; this is a fresh read from the provided timestamp.")
         logging.info("YouTube read: source=%s captions=%s truncated=%s sections=%d elapsed_ms=%d",
                      result["source"], result["transcript_available"], result["content_truncated"],
                      len(result.get("sections", [])),
                      int((time.monotonic() - started) * 1000))
+        if not result.get("ok"):
+            code = result.get("error", {}).get("code")
+            if code in {"INVALID_CURSOR", "CONTENT_UNAVAILABLE", "BUSY"}:
+                logging.warning("YouTube read failed: code=%s", code)
         return json.dumps(result)

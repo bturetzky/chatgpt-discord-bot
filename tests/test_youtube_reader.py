@@ -250,6 +250,58 @@ class YouTubeSecurityTests(unittest.TestCase):
 
 
 class YouTubeToolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_timestamp_link_continues_at_820(self):
+        payload = {"ok": True, "source": "transcript", "transcript_available": True,
+                   "content_truncated": False, "sections": []}
+        urls = ["https://www.youtube.com/watch?v=E_3W5t1B0bM&t=500s",
+                r"https://www.youtube.com/watch?v=E_3W5t1B0bM\&t=500s"]
+        for url in urls:
+            with self.subTest(url=url), patch("discord_bot.functions.read_youtube.read_youtube", return_value=payload) as fetch:
+                result = json.loads(await ReadYouTube().execute({"url": url}))
+                self.assertTrue(result["ok"])
+                fetch.assert_called_once_with("E_3W5t1B0bM", 500.0, None, None)
+
+    async def test_timestamp_strings_and_invalid_times(self):
+        payload = {"ok": True, "source": "transcript", "transcript_available": True,
+                   "content_truncated": False, "sections": []}
+        for raw in ("8:20", "8m20s", "500s", "500"):
+            with self.subTest(raw=raw), patch("discord_bot.functions.read_youtube.read_youtube", return_value=payload) as fetch:
+                result = json.loads(await ReadYouTube().execute({"url": "https://youtu.be/" + VIDEO_ID, "start_seconds": raw}))
+                self.assertTrue(result["ok"])
+                fetch.assert_called_once_with(VIDEO_ID, 500.0, None, None)
+        for options in ({"start_seconds": "8:99"}, {"start_seconds": "secret"},
+                        {"url": "https://youtu.be/" + VIDEO_ID + "?t=1s&start=2s"}):
+            with self.subTest(options=options), patch("discord_bot.functions.read_youtube.read_youtube") as fetch, self.assertLogs(level="WARNING") as logs:
+                result = json.loads(await ReadYouTube().execute({"url": "https://youtu.be/" + VIDEO_ID, **options}))
+                self.assertEqual(result["error"]["code"], "INVALID_ARGUMENT")
+                self.assertNotIn("secret", str(logs.output))
+                self.assertNotIn(VIDEO_ID, str(logs.output))
+                fetch.assert_not_called()
+
+    async def test_malformed_cursor_with_explicit_timestamp_uses_fresh_read(self):
+        payload = {"ok": True, "source": "transcript", "transcript_available": True,
+                   "content_truncated": False, "sections": [], "limitations": []}
+        with patch("discord_bot.functions.read_youtube.read_youtube", return_value=payload) as fetch:
+            result = json.loads(await ReadYouTube().execute({"url": "https://youtu.be/" + VIDEO_ID,
+                                                             "start_seconds": 500, "cursor": {"segment_index": 200}}))
+        fetch.assert_called_once_with(VIDEO_ID, 500.0, None, None)
+        self.assertIn("fresh read", result["limitations"][-1])
+
+    async def test_malformed_cursor_and_timestamp_url_uses_fresh_read(self):
+        payload = {"ok": True, "source": "transcript", "transcript_available": True,
+                   "content_truncated": False, "sections": [], "limitations": []}
+        with patch("discord_bot.functions.read_youtube.read_youtube", return_value=payload) as fetch:
+            await ReadYouTube().execute({"url": "https://youtu.be/" + VIDEO_ID + "?t=500s", "cursor": "invalid"})
+        fetch.assert_called_once_with(VIDEO_ID, 500.0, None, None)
+
+    async def test_malformed_cursor_without_time_is_rejected_safely(self):
+        with patch("discord_bot.functions.read_youtube.read_youtube") as fetch, self.assertLogs(level="WARNING") as logs:
+            result = json.loads(await ReadYouTube().execute({"url": "https://youtu.be/" + VIDEO_ID, "cursor": {"secret": "private"}}))
+        self.assertEqual(result["error"]["reason"], "CURSOR_SHAPE")
+        self.assertIn("start_seconds", result["error"]["message"])
+        self.assertNotIn("private", str(logs.output))
+        self.assertNotIn(VIDEO_ID, str(logs.output))
+        fetch.assert_not_called()
     async def test_invalid_ranges_are_rejected_before_fetch(self):
         cases = [
             {"start_seconds": -1}, {"start_seconds": True}, {"start_seconds": float("nan")},
@@ -315,6 +367,82 @@ class YouTubeToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(handler.function_handler.execute_function.await_count, 2)
         sent = handler.client.responses.create.await_args.kwargs["input"]
         outputs = [item for item in sent if isinstance(item, dict) and item.get("type") == "function_call_output"]
+        self.assertEqual(json.loads(outputs[-1]["output"])["error"]["code"], "READ_LIMIT")
+
+    async def test_invalid_inputs_do_not_spend_youtube_read_budget(self):
+        with patch("discord_bot.handlers.chatgpt_handler.FunctionHandler"):
+            handler = ChatGPTHandler("test-key")
+        handler.client = MagicMock()
+        handler.function_handler.api_functions = []
+        invalid_url = {"ok": False, "error": {"code": "INVALID_URL"}}
+        invalid_argument = {"ok": False, "error": {"code": "INVALID_ARGUMENT"}}
+        success = {"ok": True, "source": "transcript", "transcript_available": True,
+                   "content_truncated": False, "next_cursor": None, "transcript": [{"start_seconds": 500, "text": "Later."}]}
+        handler.function_handler.execute_function = AsyncMock(side_effect=[json.dumps(invalid_url), json.dumps(invalid_argument), json.dumps(success)])
+        handler.client.responses.create = AsyncMock(side_effect=[
+            response([tool_call("1", "read_youtube", '{"url":"bad"}')]),
+            response([tool_call("2", "read_youtube", '{"url":"https://youtu.be/jNQXAC9IVRw", "cursor":{}}')]),
+            response([tool_call("3", "read_youtube", '{"url":"https://youtu.be/jNQXAC9IVRw", "start_seconds":500}')]),
+            text_response("Later in the video...")])
+        result = await handler.get_response([{"role": "user", "content": "Try again after 8:20"}], None)
+        self.assertEqual(result, "Later in the video...")
+        self.assertEqual(handler.function_handler.execute_function.await_count, 3)
+        outputs = [item for item in handler.client.responses.create.await_args.kwargs["input"]
+                   if isinstance(item, dict) and item.get("type") == "function_call_output"]
+        self.assertTrue(json.loads(outputs[-1]["output"])["ok"])
+
+    async def test_retry_after_partial_answer_reaches_later_captions(self):
+        with patch("discord_bot.handlers.function_handler.FunctionHandler.load_functions", return_value={"read_youtube": ReadYouTube}):
+            handler = ChatGPTHandler("test-key")
+        handler.client = MagicMock()
+        video_url = "https://www.youtube.com/watch?v=E_3W5t1B0bM&t=500s"
+        bad = json.dumps({"url": "https://www.youtube.com/watch?v=E_3W5t1B0bM", "cursor": {"segment_index": 200}})
+        corrected = json.dumps({"url": video_url})
+        handler.client.responses.create = AsyncMock(side_effect=[
+            response([tool_call("bad", "read_youtube", bad)]),
+            response([tool_call("corrected", "read_youtube", corrected)]),
+            text_response("After 8:20, the captions say...")])
+        later = {"ok": True, "source": "transcript", "transcript_available": True, "content_truncated": False,
+                 "next_cursor": None, "sections": [], "transcript": [{"start_seconds": 501, "text": "later captions"}]}
+        history = [{"role": "assistant", "content": "I could only read up to 8:20: " + video_url},
+                   {"role": "user", "content": "Can you try again?"}]
+        with patch("discord_bot.functions.read_youtube.read_youtube", return_value=later) as fetch, self.assertLogs(level="WARNING") as logs:
+            reply = await handler.get_response(history, None)
+        self.assertIn("After 8:20", reply)
+        fetch.assert_called_once_with("E_3W5t1B0bM", 500.0, None, None)
+        self.assertIn("reason=CURSOR_SHAPE", str(logs.output))
+        self.assertNotIn("E_3W5t1B0bM", str(logs.output))
+        outputs = [item for item in handler.client.responses.create.await_args.kwargs["input"]
+                   if isinstance(item, dict) and item.get("type") == "function_call_output"]
+        self.assertEqual(json.loads(outputs[0]["output"])["error"]["code"], "INVALID_ARGUMENT")
+        self.assertTrue(json.loads(outputs[1]["output"])["ok"])
+
+    async def test_preflight_retries_are_bounded(self):
+        with patch("discord_bot.handlers.chatgpt_handler.FunctionHandler"):
+            handler = ChatGPTHandler("test-key")
+        handler.client = MagicMock()
+        handler.function_handler.api_functions = []
+        handler.function_handler.execute_function = AsyncMock(return_value=json.dumps({"ok": False, "error": {"code": "INVALID_ARGUMENT"}}))
+        calls = [response([tool_call(str(n), "read_youtube", '{"url":"bad"}')]) for n in range(4)]
+        handler.client.responses.create = AsyncMock(side_effect=[*calls, text_response("Could not read")])
+        await handler.get_response([{"role": "user", "content": "Try again"}], None)
+        self.assertEqual(handler.function_handler.execute_function.await_count, 3)
+        outputs = [item for item in handler.client.responses.create.await_args.kwargs["input"]
+                   if isinstance(item, dict) and item.get("type") == "function_call_output"]
+        self.assertEqual(json.loads(outputs[-1]["output"])["error"]["code"], "VALIDATION_LIMIT")
+
+    async def test_post_fetch_cursor_failures_still_spend_read_budget(self):
+        with patch("discord_bot.handlers.chatgpt_handler.FunctionHandler"):
+            handler = ChatGPTHandler("test-key")
+        handler.client = MagicMock()
+        handler.function_handler.api_functions = []
+        handler.function_handler.execute_function = AsyncMock(return_value=json.dumps({"ok": False, "error": {"code": "INVALID_CURSOR"}}))
+        calls = [response([tool_call(str(n), "read_youtube", '{"url":"https://youtu.be/jNQXAC9IVRw"}')]) for n in range(3)]
+        handler.client.responses.create = AsyncMock(side_effect=[*calls, text_response("Could not read")])
+        await handler.get_response([{"role": "user", "content": "Try again"}], None)
+        self.assertEqual(handler.function_handler.execute_function.await_count, 2)
+        outputs = [item for item in handler.client.responses.create.await_args.kwargs["input"]
+                   if isinstance(item, dict) and item.get("type") == "function_call_output"]
         self.assertEqual(json.loads(outputs[-1]["output"])["error"]["code"], "READ_LIMIT")
 
     async def test_whole_video_automatically_continues_and_merges_sections(self):

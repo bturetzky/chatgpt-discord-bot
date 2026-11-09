@@ -15,6 +15,7 @@ from .usage_metrics import ChatUsage
 GPT_MODEL = os.getenv("OPENAI_MODEL", "gpt-6.1-terra")
 MAX_FUNCTION_CALLS = 11
 MAX_PAGE_READS = 2
+MAX_INVALID_YOUTUBE_CALLS = 3
 YOUTUBE_CONTINUATION_TIMEOUT = 12
 
 
@@ -64,6 +65,7 @@ class ChatGPTHandler:
         usage_metrics = ChatUsage(model=GPT_MODEL)
         started = time.monotonic()
         page_reads = 0
+        invalid_youtube_calls = 0
         youtube_progress_sent = False
         try:
             for attempt in range(MAX_FUNCTION_CALLS + 1):
@@ -101,12 +103,26 @@ class ChatGPTHandler:
                             await self.send_interim_message(channel, arguments["quick_update"])
                             if call.name == "read_youtube":
                                 youtube_progress_sent = True
-                        if call.name in ("get_webpage_contents", "read_youtube") and page_reads >= MAX_PAGE_READS:
+                        if call.name == "read_youtube" and invalid_youtube_calls >= MAX_INVALID_YOUTUBE_CALLS:
+                            result = json.dumps({"ok": False, "error": {"code": "VALIDATION_LIMIT", "message": "Too many invalid YouTube requests in this response."}})
+                        elif call.name in ("get_webpage_contents", "read_youtube") and page_reads >= MAX_PAGE_READS:
                             result = json.dumps({"ok": False, "error": {"code": "READ_LIMIT", "message": "Page read limit reached for this response."}})
                         else:
                             if call.name in ("get_webpage_contents", "read_youtube"):
                                 page_reads += 1
                             result = await self.function_handler.execute_function(call.name, arguments)
+                            if call.name == "read_youtube":
+                                try:
+                                    parsed_result = json.loads(result)
+                                except (TypeError, ValueError):
+                                    parsed_result = None
+                                error = parsed_result.get("error") if isinstance(parsed_result, dict) else None
+                                if (isinstance(parsed_result, dict) and not parsed_result.get("ok")
+                                        and isinstance(error, dict) and error.get("code") in ("INVALID_URL", "INVALID_ARGUMENT")):
+                                    # These two errors are rejected before any fetch;
+                                    # allow a bounded correction without spending a read.
+                                    invalid_youtube_calls += 1
+                                    page_reads -= 1
                             # An unscoped single-video request reads a second bounded
                             # page automatically. Targeted ranges and multi-tool calls
                             # retain their budget for the model's explicit choices.

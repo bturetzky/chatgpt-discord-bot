@@ -6,10 +6,17 @@ VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}\Z")
 YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"}
 
 
+def normalize_youtube_url(url):
+    """Undo common Markdown/HTML ampersand escaping before strict URL validation."""
+    if not isinstance(url, str):
+        return None
+    return url.strip().replace(r"\&", "&").replace("&amp;", "&")
+
+
 def youtube_video_id(url):
     """Return the video ID for supported HTTPS links, or None for everything else."""
     try:
-        parsed = urlsplit(url)
+        parsed = urlsplit(normalize_youtube_url(url))
         if (parsed.scheme != "https" or parsed.username is not None or parsed.password is not None
                 or parsed.port not in (None, 443)):
             return None
