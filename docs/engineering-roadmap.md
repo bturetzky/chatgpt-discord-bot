@@ -8,8 +8,15 @@ This roadmap covers application code. The separate [deployment workflow](deploym
 
 - **Implemented:** Persistent SQLite with separate dev/prod PVCs, live message archive, FTS5 history search, bounded/resumable historical backfill, startup reconciliation and reaction add/remove/clear observation. Operator completed a 30-day production backfill and verified dev reaction membership persistence.
 - **Shadow evaluation (bot PRs #70–71):** Two candidate paths (1-in-12 independent sampling and pile-on after 2 distinct human reactors), 60-second debounce, 8 persistent evaluations/rolling 24h, diagnostic logs and an opt-in dev-only deterministic test prefix. Dev real-model test completed with `ignore/no_clear_reaction` (303 input, 41 output tokens), no reaction posted. GitOps PRs #224–225 were merged to remove the dev test prefix and configure production guild `<production guild ID>` with the validated image. **Production runtime confirmation and multi-day observation remain outstanding.**
-- **Next:** Confirm production startup and SQLite evaluations, review decision quality/usage over several days, then design/approve live reaction posting limits, durable action reservations and cooldowns. Selective automatic memory extraction remains later. No live proactive reaction posting is implemented.
+- **Next:** Keep production reaction shadow evaluation unchanged for multi-day observation. In parallel, begin Server Awareness extraction infrastructure (conversation segmentation and SQLite ledger), followed by bounded dry-run extraction. Live reaction posting remains a separate future decision; no live proactive reaction posting is implemented.
 - **Documentation:** [reaction shadow runbook](reaction-shadow-runbook.md), [proactive design](proactive-personality-design.md), [SQLite foundation](sqlite-foundation.md), [Server Awareness](server-awareness-design.md). Kubernetes configuration remains in `homelab-gitops`.
+
+## Server culture memory extraction decision (2026-11-09)
+
+- **Approved direction:** build persistent, provenance-backed server collective culture/lore memories from ordinary SQLite-archived conversations, including messages not addressed to the bot. Accepted memories will use the existing Pinecone recall path. Extraction uses a separate prompt, runs periodically every several hours in the existing bot pod after dry-run validation, and supports explicit bounded historical processing.
+- **First code PR:** extraction ledger schema and deterministic text-only conversation segmentation with tests; no LLM calls, scheduling, Pinecone writes, or reaction changes. Subsequent PRs cover dry-run candidate extraction, deduplication/invalidation, then guarded autonomous writes and scheduling.
+- **Deferred:** reply/reference graph persistence and attachment/URL/embed metadata archiving are distinct future enhancements, not dependencies of the first extraction PR.
+- **Design:** [Server Awareness](server-awareness-design.md#memory-extraction-architecture-decision-2026-11-09). These are approved plans, not deployed behavior.
 
 ## Autonomous feature development checkpoint (2026-11-08)
 
