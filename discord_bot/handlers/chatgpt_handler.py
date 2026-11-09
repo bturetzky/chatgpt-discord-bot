@@ -74,10 +74,10 @@ class ChatGPTHandler:
                             raise ValueError("Tool arguments must be an object")
                         if arguments.get("quick_update") and self.send_interim_message:
                             await self.send_interim_message(channel, arguments["quick_update"])
-                        if call.name == "get_webpage_contents" and page_reads >= MAX_PAGE_READS:
+                        if call.name in ("get_webpage_contents", "read_youtube") and page_reads >= MAX_PAGE_READS:
                             result = json.dumps({"ok": False, "error": {"code": "READ_LIMIT", "message": "Page read limit reached for this response."}})
                         else:
-                            if call.name == "get_webpage_contents":
+                            if call.name in ("get_webpage_contents", "read_youtube"):
                                 page_reads += 1
                             result = await self.function_handler.execute_function(call.name, arguments)
                     except (ValueError, json.JSONDecodeError) as exc:

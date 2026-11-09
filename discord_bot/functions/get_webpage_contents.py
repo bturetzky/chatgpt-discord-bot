@@ -17,6 +17,7 @@ from urllib3.util import connection
 from bs4 import BeautifulSoup
 
 from .base import BaseFunction
+from ..youtube_url import youtube_video_id
 
 MAX_REDIRECTS = 3
 MAX_BODY_BYTES = 1_000_000
@@ -226,6 +227,8 @@ class GetWebPageContents(BaseFunction):
         url = args.get("url")
         if not isinstance(url, str) or not url.strip():
             return self.failure(PageError("INVALID_ARGUMENT", "You need to provide a URL."), started)
+        if youtube_video_id(url):
+            return json.dumps({"ok": False, "error": {"code": "USE_YOUTUBE_READER", "message": "Use read_youtube for this video."}})
         try:
             content = await asyncio.to_thread(fetch_public_html, url)
             soup = BeautifulSoup(content, "lxml")
