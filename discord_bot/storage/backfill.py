@@ -16,26 +16,27 @@ async def main(args):
     token = os.environ["DISCORD_TOKEN"]
     intents = discord.Intents.default()
     intents.message_content = True
-    client = discord.Client(intents=intents)
-    with Database(path) as database:
-        archive = MessageArchive(database)
-        completed = False
+    async with discord.Client(intents=intents) as client:
+        with Database(path) as database:
+            archive = MessageArchive(database)
+            completed = False
 
-        @client.event
-        async def on_ready():
-            nonlocal completed
-            if completed:
-                return
-            completed = True
-            try:
-                await run_backfill(
-                    client, archive, days=args.days,
-                    limit_per_channel=args.limit_per_channel, dry_run=args.dry_run,
-                )
-            finally:
-                await client.close()
+            @client.event
+            async def on_ready():
+                nonlocal completed
+                if completed:
+                    return
+                completed = True
+                try:
+                    await run_backfill(
+                        client, archive, days=args.days,
+                        limit_per_channel=args.limit_per_channel, dry_run=args.dry_run,
+                    )
+                finally:
+                    await client.close()
 
-        await client.start(token)
+            await client.start(token)
+
 
 
 if __name__ == "__main__":
