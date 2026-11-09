@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import requests
 
 from discord_bot.functions.read_youtube import (
-    BoundedYouTubeSession, MAX_REQUESTS, MAX_RESPONSE_BYTES, MAX_SEGMENTS, MAX_TRANSCRIPT_CHARS,
-    ReadYouTube, _read_youtube,
+    BoundedYouTubeSession, MAX_REQUESTS, MAX_RESPONSE_BYTES, MAX_SEGMENTS, MAX_SECTIONS, MAX_TRANSCRIPT_CHARS,
+    ReadYouTube, _read_youtube, select_transcript_sections, validate_read_options,
 )
 from discord_bot.handlers.chatgpt_handler import ChatGPTHandler
 from tests.test_responses_api import text_response
@@ -72,12 +72,14 @@ class YouTubeReaderTests(unittest.TestCase):
         self.assertIn("No usable caption", result["limitations"][0])
 
     def test_caption_segments_are_bounded(self):
-        snippets = [SimpleNamespace(text="x", start=n) for n in range(MAX_SEGMENTS + 1)]
+        snippets = [SimpleNamespace(text="x", start=n) for n in range(MAX_SEGMENTS * MAX_SECTIONS + 1)]
         with patch("discord_bot.functions.read_youtube.BoundedYouTubeSession", return_value=mock_session()), \
              patch("discord_bot.functions.read_youtube.YouTubeTranscriptApi", mock_provider(snippets)):
             result = _read_youtube(VIDEO_ID)
-        self.assertEqual(len(result["transcript"]), MAX_SEGMENTS)
+        self.assertEqual(len(result["transcript"]), MAX_SEGMENTS * MAX_SECTIONS)
+        self.assertEqual(len(result["sections"]), MAX_SECTIONS)
         self.assertTrue(result["content_truncated"])
+        self.assertEqual(result["next_cursor"]["segment_index"], MAX_SEGMENTS * MAX_SECTIONS)
 
     def test_long_first_segment_is_truncated_not_discarded(self):
         snippets = [SimpleNamespace(text="x" * (MAX_TRANSCRIPT_CHARS + 1), start=0)]
@@ -85,8 +87,68 @@ class YouTubeReaderTests(unittest.TestCase):
              patch("discord_bot.functions.read_youtube.YouTubeTranscriptApi", mock_provider(snippets)):
             result = _read_youtube(VIDEO_ID)
         self.assertTrue(result["transcript_available"])
-        self.assertTrue(result["content_truncated"])
-        self.assertEqual(len(result["transcript"][0]["text"]), MAX_TRANSCRIPT_CHARS)
+        self.assertFalse(result["content_truncated"])
+        self.assertEqual(len(result["sections"]), 2)
+        self.assertEqual("".join(item["text"] for item in result["transcript"]), snippets[0].text)
+
+    def test_timestamp_range_includes_overlapping_caption_and_stops_at_end(self):
+        snippets = Fetched([SimpleNamespace(text="before", start=10, duration=5),
+                            SimpleNamespace(text="overlap", start=18, duration=4),
+                            SimpleNamespace(text="inside", start=25, duration=2),
+                            SimpleNamespace(text="after", start=30, duration=3)])
+        entries, sections, cursor = select_transcript_sections(snippets, start_seconds=20, end_seconds=30)
+        self.assertEqual([entry["text"] for entry in entries], ["overlap", "inside"])
+        self.assertEqual(sections[0]["start_seconds"], 18)
+        self.assertIsNone(cursor)
+
+    def test_range_after_caption_track_is_not_reported_as_missing_captions(self):
+        provider = mock_provider([SimpleNamespace(text="first", start=10, duration=3)])
+        with patch("discord_bot.functions.read_youtube.BoundedYouTubeSession", return_value=mock_session()), \
+             patch("discord_bot.functions.read_youtube.YouTubeTranscriptApi", provider):
+            result = _read_youtube(VIDEO_ID, start_seconds=500)
+        self.assertTrue(result["transcript_available"])
+        self.assertTrue(result["range_empty"])
+        self.assertFalse(result["content_truncated"])
+        self.assertEqual(result["transcript"], [])
+
+    def test_continuation_has_no_gaps_or_duplicates_for_split_segment(self):
+        long_text = "a" * (MAX_TRANSCRIPT_CHARS * MAX_SECTIONS + 17)
+        snippets = [SimpleNamespace(text=long_text, start=0), SimpleNamespace(text="last", start=20)]
+        provider = mock_provider(snippets)
+        with patch("discord_bot.functions.read_youtube.BoundedYouTubeSession", side_effect=lambda: mock_session()), \
+             patch("discord_bot.functions.read_youtube.YouTubeTranscriptApi", provider):
+            first = _read_youtube(VIDEO_ID)
+            second = _read_youtube(VIDEO_ID, cursor=first["next_cursor"])
+        self.assertTrue(first["content_truncated"])
+        self.assertFalse(second["content_truncated"])
+        combined = first["transcript"] + second["transcript"]
+        self.assertEqual("".join(entry["text"] for entry in combined), long_text + "last")
+
+    def test_changed_track_rejects_continuation(self):
+        snippets = [SimpleNamespace(text="x", start=n) for n in range(MAX_SEGMENTS * MAX_SECTIONS + 1)]
+        provider = mock_provider(snippets)
+        with patch("discord_bot.functions.read_youtube.BoundedYouTubeSession", side_effect=lambda: mock_session()), \
+             patch("discord_bot.functions.read_youtube.YouTubeTranscriptApi", provider):
+            first = _read_youtube(VIDEO_ID)
+            snippets[-1].text = "changed"
+            result = _read_youtube(VIDEO_ID, cursor=first["next_cursor"])
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "INVALID_CURSOR")
+
+    def test_cursor_preserves_range_and_rejects_modifications(self):
+        cursor = {"segment_index": 200, "char_offset": 0, "track_hash": "a" * 64,
+                  "range_start": 500.0, "range_end": 900.0}
+        self.assertEqual(validate_read_options({"cursor": cursor}), (500.0, 900.0, cursor))
+        with self.assertRaises(ValueError):
+            validate_read_options({"cursor": cursor, "start_seconds": 100})
+
+    def test_overlapping_captions_and_repeated_timestamps_are_not_lost_at_boundary(self):
+        snippets = Fetched([SimpleNamespace(text=f"line {n}", start=500, duration=2)
+                            for n in range(MAX_SECTIONS * MAX_SEGMENTS + 3)])
+        first, _, cursor = select_transcript_sections(snippets, start_seconds=500)
+        second, _, next_cursor = select_transcript_sections(snippets, start_seconds=500, cursor=cursor)
+        self.assertIsNone(next_cursor)
+        self.assertEqual([entry["text"] for entry in first + second], [snippet.text for snippet in snippets])
 
     def test_failed_caption_parsing_never_returns_partial_transcript_as_unavailable(self):
         snippets = [SimpleNamespace(text="partial", start=1), SimpleNamespace(text="broken", start="bad")]
@@ -188,6 +250,27 @@ class YouTubeSecurityTests(unittest.TestCase):
 
 
 class YouTubeToolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_invalid_ranges_are_rejected_before_fetch(self):
+        cases = [
+            {"start_seconds": -1}, {"start_seconds": True}, {"start_seconds": float("nan")},
+            {"start_seconds": 10, "end_seconds": 10}, {"cursor": {"segment_index": -1}},
+            {"cursor": {"segment_index": 0, "char_offset": 0, "track_hash": "bad", "range_start": None, "range_end": None}},
+        ]
+        for options in cases:
+            with self.subTest(options=options), patch("discord_bot.functions.read_youtube.read_youtube") as fetch:
+                result = json.loads(await ReadYouTube().execute({"url": "https://youtu.be/" + VIDEO_ID, **options}))
+                self.assertEqual(result["error"]["code"], "INVALID_ARGUMENT")
+                fetch.assert_not_called()
+
+    async def test_time_range_passed_to_reader(self):
+        payload = {"ok": True, "source": "transcript", "transcript_available": True,
+                   "content_truncated": False, "sections": []}
+        with patch("discord_bot.functions.read_youtube.read_youtube", return_value=payload) as fetch:
+            result = json.loads(await ReadYouTube().execute({"url": "https://youtu.be/" + VIDEO_ID,
+                                                             "start_seconds": 500, "end_seconds": 560}))
+        self.assertTrue(result["ok"])
+        fetch.assert_called_once_with(VIDEO_ID, 500.0, 560.0, None)
+
     async def test_invalid_url_never_fetches(self):
         with patch("discord_bot.functions.read_youtube.read_youtube") as fetch:
             result = json.loads(await ReadYouTube().execute({"url": "https://youtube.com.evil.test/watch?v=" + VIDEO_ID}))
@@ -233,3 +316,103 @@ class YouTubeToolTests(unittest.IsolatedAsyncioTestCase):
         sent = handler.client.responses.create.await_args.kwargs["input"]
         outputs = [item for item in sent if isinstance(item, dict) and item.get("type") == "function_call_output"]
         self.assertEqual(json.loads(outputs[-1]["output"])["error"]["code"], "READ_LIMIT")
+
+    async def test_whole_video_automatically_continues_and_merges_sections(self):
+        with patch("discord_bot.handlers.chatgpt_handler.FunctionHandler"):
+            handler = ChatGPTHandler("test-key")
+        handler.client = MagicMock()
+        handler.function_handler.api_functions = []
+        cursor = {"segment_index": 2, "char_offset": 0, "track_hash": "a" * 64, "range_start": None, "range_end": None}
+        first = {"ok": True, "source": "transcript", "transcript_available": True, "content_truncated": True,
+                 "next_cursor": cursor, "transcript": [{"start_seconds": 1, "text": "first"}],
+                 "sections": [{"first_segment": 0, "last_segment_exclusive": 1, "start_seconds": 1, "last_start_seconds": 1}], "limitations": []}
+        second = {"ok": True, "source": "transcript", "transcript_available": True, "content_truncated": False,
+                  "next_cursor": None, "transcript": [{"start_seconds": 600, "text": "later"}],
+                  "sections": [{"first_segment": 0, "last_segment_exclusive": 1, "start_seconds": 600, "last_start_seconds": 600}], "limitations": []}
+        handler.function_handler.execute_function = AsyncMock(side_effect=[json.dumps(first), json.dumps(second)])
+        handler.client.responses.create = AsyncMock(side_effect=[response([
+            tool_call("video", "read_youtube", '{"url":"https://youtu.be/jNQXAC9IVRw"}')]), text_response("Summary")])
+        await handler.get_response([{"role": "user", "content": "Summarize the whole video"}], None)
+        self.assertEqual(handler.function_handler.execute_function.await_count, 2)
+        self.assertEqual(handler.function_handler.execute_function.await_args_list[1].args[1]["cursor"], cursor)
+        sent = handler.client.responses.create.await_args.kwargs["input"]
+        result = json.loads(next(item for item in sent if item.get("type") == "function_call_output")["output"])
+        self.assertEqual([item["text"] for item in result["transcript"]], ["first", "later"])
+        self.assertEqual(result["sections"][1]["first_segment"], 1)
+        self.assertFalse(result["content_truncated"])
+
+    async def test_whole_video_path_returns_late_captions_end_to_end(self):
+        snippets = [SimpleNamespace(text=f"caption {n}", start=n * 5, duration=4) for n in range(900)]
+        with patch("discord_bot.handlers.function_handler.FunctionHandler.load_functions", return_value={"read_youtube": ReadYouTube}):
+            handler = ChatGPTHandler("test-key")
+        handler.client = MagicMock()
+        handler.client.responses.create = AsyncMock(side_effect=[response([
+            tool_call("video", "read_youtube", '{"url":"https://youtu.be/jNQXAC9IVRw", "start_seconds":0}')]), text_response("Summary")])
+        with patch("discord_bot.functions.read_youtube.BoundedYouTubeSession", side_effect=lambda: mock_session()), \
+             patch("discord_bot.functions.read_youtube.YouTubeTranscriptApi", mock_provider(snippets)):
+            await handler.get_response([{"role": "user", "content": "Summarize the whole video"}], None)
+        sent = handler.client.responses.create.await_args.kwargs["input"]
+        result = json.loads(next(item for item in sent if item.get("type") == "function_call_output")["output"])
+        self.assertEqual(len(result["transcript"]), 900)
+        self.assertEqual(result["transcript"][-1]["text"], "caption 899")
+        self.assertFalse(result["content_truncated"])
+
+    async def test_failed_automatic_continuation_reports_partial_coverage(self):
+        from discord_bot.handlers.chatgpt_handler import combine_youtube_pages
+        first = {"ok": True, "content_truncated": True, "next_cursor": {"segment_index": 200},
+                 "transcript": [{"start_seconds": 500, "text": "last"}], "limitations": []}
+        for second in (None, {"ok": False, "error": {"code": "BUSY"}}):
+            result = combine_youtube_pages(first, second)
+            self.assertTrue(result["content_truncated"])
+            self.assertEqual(result["next_cursor"], first["next_cursor"])
+            self.assertIn("only the returned caption range", result["limitations"][-1])
+
+    async def test_automatic_continuation_timeout_does_not_lose_first_page(self):
+        import asyncio
+        with patch("discord_bot.handlers.chatgpt_handler.FunctionHandler"):
+            handler = ChatGPTHandler("test-key")
+        handler.client = MagicMock()
+        handler.function_handler.api_functions = []
+        first = {"ok": True, "source": "transcript", "transcript_available": True, "content_truncated": True,
+                 "next_cursor": {"segment_index": 200}, "transcript": [{"start_seconds": 500, "text": "first"}],
+                 "sections": [], "limitations": []}
+        async def execute(_name, args):
+            if "cursor" in args:
+                await asyncio.sleep(1)
+            return json.dumps(first)
+        handler.function_handler.execute_function = AsyncMock(side_effect=execute)
+        handler.client.responses.create = AsyncMock(side_effect=[response([
+            tool_call("video", "read_youtube", '{"url":"https://youtu.be/jNQXAC9IVRw"}')]), text_response("Partial")])
+        with patch("discord_bot.handlers.chatgpt_handler.YOUTUBE_CONTINUATION_TIMEOUT", 0.01):
+            await handler.get_response([{"role": "user", "content": "Summarize"}], None)
+        sent = handler.client.responses.create.await_args.kwargs["input"]
+        output = json.loads(next(item for item in sent if item.get("type") == "function_call_output")["output"])
+        self.assertTrue(output["content_truncated"])
+        self.assertIn("failed or timed out", output["limitations"][-1])
+        self.assertEqual(output["transcript"][0]["text"], "first")
+
+    async def test_targeted_time_range_does_not_automatically_spend_second_read(self):
+        with patch("discord_bot.handlers.chatgpt_handler.FunctionHandler"):
+            handler = ChatGPTHandler("test-key")
+        handler.client = MagicMock()
+        handler.function_handler.api_functions = []
+        page = {"ok": True, "source": "transcript", "transcript_available": True, "content_truncated": True,
+                "next_cursor": {"segment_index": 200}, "transcript": [], "sections": [], "limitations": []}
+        handler.function_handler.execute_function = AsyncMock(return_value=json.dumps(page))
+        handler.client.responses.create = AsyncMock(side_effect=[response([
+            tool_call("video", "read_youtube", '{"url":"https://youtu.be/jNQXAC9IVRw", "start_seconds":500}')]), text_response("Partial")])
+        await handler.get_response([{"role": "user", "content": "What happens after 8:20?"}], None)
+        handler.function_handler.execute_function.assert_awaited_once()
+
+    async def test_multiple_youtube_reads_send_at_most_one_progress_message(self):
+        callback = AsyncMock()
+        with patch("discord_bot.handlers.chatgpt_handler.FunctionHandler"):
+            handler = ChatGPTHandler("test-key", callback)
+        handler.client = MagicMock()
+        handler.function_handler.api_functions = []
+        handler.function_handler.execute_function = AsyncMock(return_value="ok")
+        handler.client.responses.create = AsyncMock(side_effect=[response([
+            tool_call("1", "read_youtube", '{"url":"https://youtu.be/jNQXAC9IVRw", "quick_update":"Reading"}'),
+            tool_call("2", "read_youtube", '{"url":"https://youtu.be/jNQXAC9IVRw", "quick_update":"Still reading"}')]), text_response("Done")])
+        await handler.get_response([{"role": "user", "content": "Summarize"}], None)
+        callback.assert_awaited_once_with(None, "Reading")
