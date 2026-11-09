@@ -11,6 +11,28 @@ from discord_bot.functions.discord_history_function import (SearchDiscordHistory
 
 
 class HistorySearchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_channel_attribution_same_cross_and_permission_scope(self):
+        from discord_bot.functions.discord_history_function import add_channel_attribution
+
+        class Channel:
+            def __init__(self, channel_id, name):
+                self.id = channel_id
+                self.name = name
+
+        guild = SimpleNamespace(text_channels=[
+            Channel(10, "general"), Channel(11, "bot-testing"),
+            Channel(12, "private")])
+        hits = [{"channel_id": "10"}, {"channel_id": "11"}]
+        result = add_channel_attribution(hits, guild, {"10", "11"}, "10")
+        self.assertEqual(result[0]["channel_name"], "general")
+        self.assertFalse(result[0]["different_channel"])
+        self.assertEqual(result[1]["channel_name"], "bot-testing")
+        self.assertTrue(result[1]["different_channel"])
+        self.assertIsNone(add_channel_attribution(
+            [{"channel_id": "12"}], guild, {"10", "11"}, "10")[0]["channel_name"])
+        self.assertIsNone(add_channel_attribution(
+            [{"channel_id": "11"}], guild, {"10", "11"}, None)[0]["different_channel"])
+
     async def test_scoping_filters_and_deleted_content(self):
         with tempfile.TemporaryDirectory() as tmp:
             with Database(str(Path(tmp) / "test.db")) as db:
