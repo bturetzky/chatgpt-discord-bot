@@ -49,7 +49,17 @@ class DiscordHandler:
             if 'content' not in payload.data:
                 return
             try:
-                self.archive.edit(str(payload.message_id), payload.data['content'])
+                self.archive.edit(str(payload.message_id), payload.data['content'], payload.data.get('edited_timestamp'))
+                # Recover edits for messages not yet indexed (e.g. after downtime).
+                if not self.archive.db.execute(
+                    'SELECT 1 FROM messages WHERE message_id=?', (str(payload.message_id),)
+                ).fetchone():
+                    channel = self.client.get_channel(payload.channel_id)
+                    if channel is not None and hasattr(channel, 'fetch_message'):
+                        try:
+                            self.archive.upsert(await channel.fetch_message(payload.message_id))
+                        except (discord.NotFound, discord.Forbidden):
+                            logging.debug('Edited message unavailable for archive recovery')
             except Exception:
                 logging.exception('Discord message archive edit failed')
 
