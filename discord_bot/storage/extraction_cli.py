@@ -17,6 +17,8 @@ from .extraction_dry_run import dry_run
 def main():
     parser = argparse.ArgumentParser(description="Bounded culture-memory dry-run (no Pinecone writes)")
     parser.add_argument("--guild-id", required=True)
+    parser.add_argument("--human-author-id", action="append", required=True,
+                        help="trusted human Discord user ID; repeat for each human author")
     parser.add_argument("--since", required=True, help="inclusive ISO-8601 timestamp with timezone")
     parser.add_argument("--until", required=True, help="exclusive ISO-8601 timestamp with timezone")
     parser.add_argument("--max-windows", type=int, default=5)
@@ -38,6 +40,7 @@ def main():
             db.connection, guild_id=args.guild_id, since=since, until=until,
             max_windows=args.max_windows, max_rows=args.max_rows,
             max_messages=args.max_messages, model=args.model,
+            human_author_ids=args.human_author_id,
             api_key=os.environ["OPENAI_API_KEY"],
         ))
     print(json.dumps(counts, sort_keys=True))
