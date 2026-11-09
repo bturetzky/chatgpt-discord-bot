@@ -4,6 +4,7 @@ from .vector_handler import VectorHandler
 from .image_context import ImageContextBuilder
 from ..storage.history import reconcile_recent
 from ..storage.reaction_observer import ReactionObserver
+from .reaction_shadow import ReactionShadow
 
 CONTEXT_LIMIT = int(os.getenv("DISCORD_CONTEXT_LIMIT", "30"))
 RELATIONSHIP_MEMORY_LIMIT = int(os.getenv("RELATIONSHIP_MEMORY_LIMIT", "4"))
@@ -12,6 +13,7 @@ class DiscordHandler:
     def __init__(self, discord_token, openai_key, pinecone_apikey, archive=None):
         self.token = discord_token
         self.archive = archive
+        self.reaction_shadow = None
         self._reconcile_task = None
         logging.debug('Initializing discord client')
         self.client = discord.Client(intents=self.get_discord_intents())
@@ -30,6 +32,8 @@ class DiscordHandler:
         @self.client.event
         async def on_ready():
             logging.info('Discord gateway ready: bot_id=%s guilds=%d message_content_intent=%s', self.client.user.id, len(self.client.guilds), self.client.intents.message_content)
+            if self.reaction_shadow is not None:
+                self.reaction_shadow.bot_user_id = str(self.client.user.id)
             if self.archive is not None and self._reconcile_task is None:
                 self._reconcile_task = asyncio.create_task(
                     reconcile_recent(self.client, self.archive), name='discord-history-reconcile'
@@ -46,6 +50,11 @@ class DiscordHandler:
                     self.archive.upsert(message)
                 except Exception:
                     logging.exception('Discord message archive write failed')
+            if self.reaction_shadow is not None and self.archive is not None:
+                try:
+                    self.reaction_shadow.observe_message(message, bot_id=self.client.user.id)
+                except Exception:
+                    logging.exception('Reaction shadow message gate failed')
             await self.process_message(message)
 
         @self.client.event
@@ -57,6 +66,8 @@ class DiscordHandler:
                 if payload.member is None or payload.member.bot:
                     return
                 ReactionObserver(self.archive.db).add(payload, bot_user_id=self.client.user.id)
+                if self.reaction_shadow is not None:
+                    self.reaction_shadow.observe_reaction(payload)
             except Exception:
                 logging.exception("Reaction observation add failed")
 
@@ -160,6 +171,9 @@ class DiscordHandler:
             reconcile_task.cancel()
             await asyncio.gather(reconcile_task, return_exceptions=True)
         try:
+            shadow = getattr(self, 'reaction_shadow', None)
+            if shadow is not None:
+                await shadow.close()
             await self.client.close()
         finally:
             await self.vector_handler.close()
