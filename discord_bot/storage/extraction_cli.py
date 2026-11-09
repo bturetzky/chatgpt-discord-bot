@@ -8,6 +8,7 @@ import argparse
 import asyncio
 import json
 import os
+import aiohttp
 from datetime import datetime
 
 from .database import Database
@@ -17,8 +18,6 @@ from .extraction_dry_run import dry_run
 def main():
     parser = argparse.ArgumentParser(description="Bounded culture-memory dry-run (no Pinecone writes)")
     parser.add_argument("--guild-id", required=True)
-    parser.add_argument("--human-author-id", action="append", required=True,
-                        help="trusted human Discord user ID; repeat for each human author")
     parser.add_argument("--since", required=True, help="inclusive ISO-8601 timestamp with timezone")
     parser.add_argument("--until", required=True, help="exclusive ISO-8601 timestamp with timezone")
     parser.add_argument("--max-windows", type=int, default=5)
@@ -35,12 +34,25 @@ def main():
         parser.error("DISCORD_SQLITE_PATH is required")
     if not os.getenv("OPENAI_API_KEY"):
         parser.error("OPENAI_API_KEY is required")
+    async def bot_id_from_discord():
+        token = os.environ.get("DISCORD_TOKEN")
+        if not token:
+            parser.error("DISCORD_TOKEN is required to identify the bot")
+        async with aiohttp.ClientSession() as session:
+            async with session.get("https://discord.com/api/v10/users/@me",
+                                   headers={"Authorization": f"Bot {token}"},
+                                   timeout=aiohttp.ClientTimeout(total=10)) as response:
+                response.raise_for_status()
+                data = await response.json()
+                return str(data["id"])
+
+    bot_author_id = asyncio.run(bot_id_from_discord())
     with Database(path) as db:
         counts = asyncio.run(dry_run(
             db.connection, guild_id=args.guild_id, since=since, until=until,
             max_windows=args.max_windows, max_rows=args.max_rows,
             max_messages=args.max_messages, model=args.model,
-            human_author_ids=args.human_author_id,
+            bot_author_id=bot_author_id,
             api_key=os.environ["OPENAI_API_KEY"],
         ))
     print(json.dumps(counts, sort_keys=True))

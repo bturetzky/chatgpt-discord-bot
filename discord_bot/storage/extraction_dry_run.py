@@ -15,7 +15,7 @@ VALID_TYPES = {"lore", "fact", "relationship", "event"}
 VALID_CONFIDENCE = {"high", "medium", "low"}
 
 
-def parse_candidates(output, window, human_author_ids):
+def parse_candidates(output, window, bot_author_id):
     """Reject unsupported model claims and IDs instead of storing them."""
     data = json.loads(output)
     if not isinstance(data, dict) or not isinstance(data.get("candidates"), list):
@@ -24,8 +24,8 @@ def parse_candidates(output, window, human_author_ids):
         raise ValueError("too many candidates")
     message_ids = {row[2] for row in window.messages}
     author_ids = {row[3] for row in window.messages}
-    human_messages = {row[2] for row in window.messages if row[3] in human_author_ids}
-    human_authors = author_ids & human_author_ids
+    human_messages = {row[2] for row in window.messages if row[3] != bot_author_id}
+    human_authors = author_ids - {bot_author_id}
     result = []
     for item in data["candidates"]:
         if not isinstance(item, dict):
@@ -51,13 +51,13 @@ def parse_candidates(output, window, human_author_ids):
     return result
 
 
-def _input(window, human_author_ids):
+def _input(window, bot_author_id):
     # Never pass arbitrary unbounded text to the model.
     return json.dumps({"guild_id": window.guild_id, "channel_id": window.channel_id,
                        "messages": [
                            {"message_id": row[2], "author_id": row[3],
                             "content": row[4][:1000], "created_at": row[5],
-                            "human_evidence": row[3] in human_author_ids}
+                            "human_evidence": row[3] != bot_author_id}
                            for row in window.messages
                        ]}, ensure_ascii=False)
 
@@ -68,7 +68,7 @@ def _canonical(summary):
 
 async def dry_run(
     connection, *, guild_id, since, until, max_windows=5, max_rows=1000,
-    max_messages=40, model, human_author_ids=None, api_key=None, client=None,
+    max_messages=40, model, bot_author_id=None, api_key=None, client=None,
 ):
     """Explicit bounded slice; stores proposed candidates locally only.
 
@@ -77,9 +77,9 @@ async def dry_run(
     """
     if not guild_id or not model or max_windows < 1 or max_windows > 50:
         raise ValueError("guild, model and max_windows (1..50) are required")
-    if not human_author_ids or not all(str(x).isdecimal() for x in human_author_ids):
-        raise ValueError("explicit trusted human author IDs are required")
-    human_author_ids = {str(x) for x in human_author_ids}
+    if not bot_author_id or not str(bot_author_id).isdecimal():
+        raise ValueError("bot author ID is required")
+    bot_author_id = str(bot_author_id)
     if since >= until or until > datetime.now(timezone.utc):
         raise ValueError("invalid historical time range")
     windows = discover_windows(
@@ -97,7 +97,7 @@ async def dry_run(
               "failed": 0, "candidates": 0, "duplicates": 0, "input_tokens": 0, "output_tokens": 0}
     try:
         for window in windows:
-            if not any(row[3] in human_author_ids for row in window.messages):
+            if not any(row[3] != bot_author_id for row in window.messages):
                 counts["skipped"] += 1
                 continue
             row = connection.execute(
@@ -114,9 +114,9 @@ async def dry_run(
             try:
                 response = await asyncio.wait_for(client.responses.create(
                     model=model, instructions=EXTRACTION_INSTRUCTIONS,
-                    input=_input(window, human_author_ids), max_output_tokens=1200,
+                    input=_input(window, bot_author_id), max_output_tokens=1200,
                 ), timeout=45)
-                candidates = parse_candidates(response.output_text, window, human_author_ids)
+                candidates = parse_candidates(response.output_text, window, bot_author_id)
                 usage = getattr(response, "usage", None)
                 input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
                 output_tokens = int(getattr(usage, "output_tokens", 0) or 0)

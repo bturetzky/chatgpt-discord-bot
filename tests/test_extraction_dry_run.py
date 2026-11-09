@@ -45,7 +45,7 @@ class DryRunTests(unittest.IsolatedAsyncioTestCase):
         return await dry_run(
             self.db.connection, guild_id="guild", since=self.start,
             until=self.start + timedelta(hours=1), model="test-model",
-            client=self.client, human_author_ids={"12345"},
+            client=self.client, bot_author_id="99999",
         )
 
     async def test_persists_dry_run_and_skips_completed_batch(self):
@@ -89,7 +89,7 @@ class DryRunTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await dry_run(self.db.connection, guild_id="guild", since=self.start,
                           until=self.start + timedelta(hours=1), model="test",
-                          client=self.client, human_author_ids={"12345"}, max_windows=0)
+                          client=self.client, bot_author_id="99999", max_windows=0)
         self.client.responses.create.assert_not_awaited()
 
     async def test_prompt_is_separate_and_no_tools(self):
