@@ -13,6 +13,12 @@ def search_messages(db, *, query, guild_id, channel_ids, channel_id=None,
         raise ValueError("query must be 1..200 characters")
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 10:
         raise ValueError("limit must be between 1 and 10")
+    # Models may supply empty strings for optional tool arguments.
+    # Treat blanks as omitted, but never relax a nonblank channel restriction.
+    channel_id = channel_id.strip() or None if isinstance(channel_id, str) else channel_id
+    author_id = author_id.strip() or None if isinstance(author_id, str) else author_id
+    after = after.strip() or None if isinstance(after, str) else after
+    before = before.strip() or None if isinstance(before, str) else before
     if channel_id is not None and str(channel_id) not in channel_ids:
         return []
     allowed = [str(channel_id)] if channel_id is not None else list(channel_ids)
@@ -54,8 +60,8 @@ class SearchDiscordHistory(BaseFunction):
                    "Results contain short excerpts and source links; don't invent missing context.")
     parameters = {"type": "object", "properties": {
         "query": {"type": "string", "description": "Literal words to find (all words must match)."},
-        "channel_id": {"type": "string"},
-        "author_id": {"type": "string"},
+        "channel_id": {"type": "string", "description": "Optional channel ID; omit to search all visible channels."},
+        "author_id": {"type": "string", "description": "Optional author ID; omit to search all authors."},
         "after": {"type": "string", "description": "Inclusive ISO 8601 date/time with timezone."},
         "before": {"type": "string", "description": "Inclusive ISO 8601 date/time with timezone."},
         "limit": {"type": "integer", "minimum": 1, "maximum": 10}
