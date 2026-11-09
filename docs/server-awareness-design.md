@@ -1,7 +1,7 @@
 # Server Awareness — design
 
 **Status (2026-11-09):** SQLite persistence, live ingestion, FTS5 history search, restart reconciliation and bounded backfill implemented. Operator completed 30-day production backfill. Reaction add/remove/clear observation and shadow evaluation implemented; dev acceptance verified. Production shadow configuration merged, runtime verification pending. Automatic memory extraction and live proactive reaction posting remain planned.  
-**Last reviewed:** 2026-11-08  
+**Last reviewed:** 2026-11-09  
 **Scope:** chatgpt-discord-bot application. Kubernetes manifests and storage deployment belong in `bturetzky/homelab-gitops`.
 
 ## Goal
@@ -28,6 +28,27 @@ Let the bot learn from conversations in its home Discord server even when it is 
 5. Add selective automatic memory extraction from indexed history, initially dry-run, with source provenance and Pinecone writes only after validation.
 
 The shared database is infrastructure, **not** a single shared feature schema. Message text belongs in the archive/FTS5; reactions and their rate limits have separate tables and retention policies. The existing Discord recent-history path remains unchanged. Steps 1–3 are implemented as of 2026-11-09, with dev reaction observation and real shadow model evaluation verified. Production shadow rollout is configured and merged but runtime behavior has not been verified. Steps 4–5 remain unimplemented.
+
+## Memory extraction architecture decision (2026-11-09)
+
+**Primary outcome:** autonomously develop evidence-backed understanding of the server's collective culture (shared lore, recurring jokes, group experiences), not merely searchable history. Facts and preferences are useful secondary candidates. An extraction run may correctly produce zero memories.
+
+- **One ingestion path:** live Discord messages and explicit historical backfill both populate SQLite. Extraction consumes **only the SQLite archive**, never the gateway event directly; no per-message LLM calls. The existing bot reply path and reaction shadow evaluation remain unchanged.
+- **Execution:** run a bounded asynchronous background task in the existing single-replica bot pod, every several hours (initial suggested interval: **4 hours**, configurable). Avoid blocking the Discord event loop with synchronous model/database work. Provide an explicitly invoked, bounded historical processing mode against the same pipeline. Do not run competing schedulers. Initial code PRs establish segmentation and durable ledger only; they do **not** start the scheduler or call an LLM.
+- **Conversation windows:** partition by guild/channel and idle gaps with message/token caps; use a settlement delay (initial suggestion: 30 minutes). Stable message boundaries, source hashes, and an extraction prompt version make retries and deliberate reprocessing reproducible. Small overlapping prior context may aid interpretation but must not become fresh extraction evidence.
+- **Progress:** maintain a per-channel watermark or equivalent durable work discovery plus an `extraction_batches` ledger with processing status, attempts, source range/hash, extractor version, and timestamps. Advance progress only after successful durable completion; failures remain retryable. Handle changed/deleted source text by targeted re-evaluation rather than silently retaining invalid memories.
+- **Candidate ledger:** persist proposed/rejected/accepted/superseded candidates with supporting message IDs, participants, attribution, and linked Pinecone IDs. Distinguish processing idempotency from **semantic memory deduplication**: match related memories and create/update/reinforce/ignore rather than writing repeated paraphrases. Track corrections and invalidation.
+- **Prompt:** use a separate, evidence-focused extraction prompt, never the conversational personality prompt. Evaluate context, jokes versus assertions, disagreement and corrections; avoid inferring enduring relationships from isolated teasing. Extract shared lore only with sufficient evidence and avoid fabricated personal facts.
+- **Retrieval:** accepted useful memories belong in the **existing Pinecone index**, because automatic response-time retrieval currently uses Pinecone, while SQLite history is only available through an explicitly invoked search tool. Don't add a second automatic SQLite retrieval path in this milestone. Ephemeral chatter should not become permanent memory; metadata/expiry and provenance allow future retention policies.
+- **Rollout:** first process a bounded historical sample in **dry-run**, saving candidates and metrics to SQLite but making **no Pinecone writes**. Compare quality and token cost before enabling autonomous writes. Historical import never automatically triggers unbounded extraction. Preserve dev/prod isolation and manual production promotion.
+- **Follow-on archive features, explicitly out of scope for this extraction milestone:** persist reply/reference/thread relationships for conversation reconstruction; persist attachment, URL and embed metadata without downloading binaries or automatically enriching every link/image. These need separate code PRs and their own tests.
+
+### Staged code delivery
+
+1. **PR 1:** SQLite migration for extraction ledger and deterministic, bounded text-only conversation segmentation; unit tests. No model calls, scheduling, Pinecone writes or Discord behavior changes.
+2. **PR 2:** separate extraction prompt, structured candidates, bounded dry-run worker, durable result recording and cost metrics; no Pinecone writes.
+3. **PR 3:** semantic deduplication, provenance, correction/supersession and source invalidation; tests against realistic conversations.
+4. **PR 4:** configurable multi-hour in-pod scheduling, guarded autonomous Pinecone writes and observability after dry-run acceptance.
 
 ## Architecture
 
@@ -80,7 +101,7 @@ The five users share relevant channels. For history search, use the request's gu
 
 ### Selective memory extraction
 
-- Schedule bounded analysis of newly indexed, coherent channel conversation windows (e.g. daily; split by idle gaps, participants, and maximum tokens). Do not run an LLM per message.
+- Schedule bounded analysis of newly indexed, coherent channel conversation windows (e.g. every four hours; split by idle gaps, participants, and maximum tokens). Do not run an LLM per message.
 - Candidate categories: durable personal preferences explicitly stated, project/game plans and decisions, meaningful shared experiences, and recurring jokes clearly supported by context.
 - Distinguish asserted fact, joke, quotation, speculation, disagreement and correction. Do not infer lasting relationships or personality traits from a single roast or ambiguous exchange.
 - Each memory candidate should include concise text, type, explicit participant IDs, supporting source message IDs, source timestamps, and confidence/reason. Model confidence is a heuristic, not a guarantee of truth.
@@ -92,7 +113,7 @@ The five users share relevant channels. For history search, use the request's gu
 
 ### Cost, load and operations
 
-- No LLM calls for routine ingestion or FTS queries; one scheduled extraction pass per day initially, only for changed/eligible conversation windows.
+- No LLM calls for routine ingestion or FTS queries; one bounded extraction pass every several hours initially, only for changed/eligible conversation windows.
 - Configure maximum batches/day, messages/tokens/batch, total daily input/output tokens or estimated USD budget, concurrency and retry caps. Stop rather than exceed budget.
 - Use existing OpenAI Responses API and usage logging; report extraction calls, tokens, estimated costs, candidates, accepted/rejected counts and indexing lag. Embeddings/Pinecone costs tracked separately where possible.
 - Keep bounded ingestion queues; handle SQLite busy/disk-full errors gracefully without disrupting normal Discord responses. Surface backlog, indexing lag, disk usage and extraction failures.
