@@ -68,7 +68,8 @@ class SearchDiscordHistory(BaseFunction):
             return json.dumps({"ok": False, "error": "Discord archive unavailable"})
         guild, member = context["guild"], context["member"]
         if member is None or guild.me is None:
-            return json.dumps({"ok": False, "error": "Discord permissions unavailable"})\n        allowed = {str(ch.id) for ch in guild.text_channels
+            return json.dumps({"ok": False, "error": "Discord permissions unavailable"})
+        allowed = {str(ch.id) for ch in guild.text_channels
                    if ch.permissions_for(member).view_channel and
                       ch.permissions_for(member).read_message_history and
                       ch.permissions_for(guild.me).read_message_history}
