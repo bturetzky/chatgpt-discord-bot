@@ -127,6 +127,20 @@ class DryRunTests(unittest.IsolatedAsyncioTestCase):
         # Different evidence in the same batch should still be re-evaluated.
         result = await self.run_dry()
         self.assertEqual(result["processed"], 1)
+        self.db.connection.execute(
+            """INSERT INTO messages
+               (guild_id, channel_id, message_id, author_id, content, created_at)
+               VALUES ('guild', 'channel', '3', '12345', 'another joke',
+                       '2026-11-08T00:45:00+00:00')"""
+        )
+        # A second, separate conversation window returns the same claim.
+        self.client.responses.create.return_value = self.response([{
+            **self.candidate(), "source_message_ids": ["3"]
+        }])
+        result = await self.run_dry()
+        self.assertEqual(result["processed"], 1)
+        self.assertEqual(result["duplicates"], 1)
+        self.assertEqual(result["candidates"], 0)
 
 
 if __name__ == "__main__":
