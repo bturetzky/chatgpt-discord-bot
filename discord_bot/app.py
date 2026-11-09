@@ -1,6 +1,7 @@
 import asyncio, os, logging
 from .handlers.discord_handler import DiscordHandler
 from .storage import Database
+from .storage.message_archive import MessageArchive
 
 def run():
     asyncio.run(_main())
@@ -24,6 +25,7 @@ async def _main():
             database = Database(database_path).open()
             database.integrity_check()
             logging.info("SQLite storage initialized")
+            discord_bot.archive = MessageArchive(database)
         await discord_bot.start()
     finally:
         try:
