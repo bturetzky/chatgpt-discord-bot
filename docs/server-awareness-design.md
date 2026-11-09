@@ -1,6 +1,6 @@
 # Server Awareness — design
 
-**Status (2026-11-09):** SQLite persistence, live ingestion, FTS5 history search, restart reconciliation and bounded backfill implemented. Operator completed 30-day production backfill. Reaction add/remove/clear observation and shadow evaluation implemented; dev acceptance verified. Production shadow configuration merged, runtime verification pending. Automatic memory extraction and live proactive reaction posting remain planned.  
+**Status (2026-11-09):** SQLite persistence, live ingestion, FTS5 history search, restart reconciliation and bounded backfill implemented. Operator completed 30-day production backfill. Reaction add/remove/clear observation and shadow evaluation implemented; dev acceptance verified. Production reaction shadow mode verified running with posting disabled. Manual, bounded memory extraction is implemented and validated in dev and production; autonomous extraction, Pinecone publication, and live proactive reaction posting remain planned.  
 **Last reviewed:** 2026-11-09  
 **Scope:** chatgpt-discord-bot application. Kubernetes manifests and storage deployment belong in `bturetzky/homelab-gitops`.
 
@@ -27,7 +27,7 @@ Let the bot learn from conversations in its home Discord server even when it is 
 4. Enable live proactive reactions only after durable budgets, cooldowns, action reservations and deduplication are implemented and validated. Exact numerical pacing remains undecided.
 5. Add selective automatic memory extraction from indexed history, initially dry-run, with source provenance and Pinecone writes only after validation.
 
-The shared database is infrastructure, **not** a single shared feature schema. Message text belongs in the archive/FTS5; reactions and their rate limits have separate tables and retention policies. The existing Discord recent-history path remains unchanged. Steps 1–3 are implemented as of 2026-11-09, with dev reaction observation and real shadow model evaluation verified. Production shadow rollout is configured and merged but runtime behavior has not been verified. Steps 4–5 remain unimplemented.
+The shared database is infrastructure, **not** a single shared feature schema. Message text belongs in the archive/FTS5; reactions and their rate limits have separate tables and retention policies. The existing Discord recent-history path remains unchanged. Steps 1–3 are implemented as of 2026-11-09, with dev reaction observation and real shadow model evaluation verified. Production shadow rollout is configured and merged but runtime behavior has not been verified. Step 4 (live reaction posting) remains unimplemented. Step 5 has a validated manual dry-run extraction stage; scheduling and Pinecone writes remain unimplemented.
 
 ## Memory extraction architecture decision (2026-11-09)
 
@@ -222,3 +222,40 @@ The first dev dry-run completed successfully (one window, one candidate, zero fa
 Decision: bot-authored recollections may be conversational context, never independent evidence for a new memory. Human corrections and newly stated facts are admissible; asking the bot what it remembers does not confirm its answer. For the next manual dry-run iteration, the operator CLI resolves the running bot's own user ID through Discord's authenticated `/users/@me` endpoint using its existing `DISCORD_TOKEN`. The extractor treats that author's messages as context only, and deterministically rejects candidates citing the bot as evidence. All other authors are provisionally eligible; windows consisting only of the bot's messages do not invoke the model. Future autonomous operation should persist Discord author/bot provenance during ingestion and backfill to exclude other bots and webhooks as well.
 
 A proposed code PR adds exact normalized deduplication against existing SQLite extraction candidates. **It does not compare Pinecone memories or perform semantic deduplication**; both remain requirements before automatic acceptance. No production memory writes or scheduled extraction are authorized. The original dev candidate remains in SQLite for audit; do not interpret its existence as approval.
+
+
+## Memory evaluation and lifecycle decision (2026-11-09)
+
+**Approved scope:** remember both individual participants' interests, preferences, projects and meaningful history **and** collective server culture, including recurring jokes, shared references, traditions and experiences. Do not force a quota of cultural memories; absence of evidence is a valid result. The bot's own messages are context only, not independent evidence. The CLI resolves its own bot identity automatically; no human-ID allowlist or guild IDs in configuration or documentation.
+
+### Observed production acceptance
+
+- Production archive contained 1,483 messages at inspection. A bounded Nov 2 UTC sample produced two source-backed personal preferences; three additional historical slices produced six more candidates across four windows, with no reported extraction failures.
+- Reviewed examples included entertainment preferences, AI-tool workflow, bot-development work, career perspectives, a game milestone and a recurring-comparison candidate. These demonstrate **individual-context extraction**, not yet reliable recognition of recurring collective lore.
+- A dev regression previously re-extracted an old Pinecone recollection spoken by the bot; the human-evidence restriction yielded zero candidates when rerun. This verifies that case, not all possible provenance laundering.
+- All eight inspected production proposals were high-confidence, but model confidence is not a publication decision. A transient milestone and an evolving project plan should not automatically receive the same lifetime as a durable preference.
+- Production dry-runs write extraction ledgers/candidates/usage **only to SQLite**, not Pinecone or Discord. No automatic scheduler is active. Production reaction shadow posting remains disabled.
+
+### Separate extraction, evaluation, consolidation and publication
+
+1. **Extraction (implemented):** evidence-backed proposed candidates in SQLite; preserve exact message IDs and participants, guild, source hash and extractor version.
+2. **Evaluation (next implementation):** independently decide whether each proposal is worth long-term retrieval. Classify scope as `individual` or `collective`, and durability as `durable`, `evolving`, or `transient`. Keep the original candidate immutable as evidence; store review decisions and reasons separately. Reject sensitive, weakly supported, misleading, or purely ephemeral claims. Favor concise attribution over overgeneralized personality labels. Human correction and explicit forget/invalidation take precedence over automated retention.
+3. **Consolidation (subsequent implementation):** match against prior SQLite candidates **and existing Pinecone memories**, not just normalized text. Restrict matching to the same guild and appropriate participant(s); a shared interest between two people is not a duplicate. Distinguish `new`, `reinforce`, `update`, `supersede`, `conflict`, and `ignore`. Do not silently overwrite contradictory claims. A single newer statement may reflect a changed preference; preserve both provenance and effective dates. Never treat bot-recalled content as new corroboration.
+4. **Publication (later, guarded):** publish accepted, consolidated memories to the existing Pinecone retrieval path with deterministic IDs and an SQLite publication ledger. Preserve source links, scope, timestamps and lifecycle status. Publish only after idempotency, reconciliation, deletion/correction handling and failure recovery are tested. Keep manual production promotion.
+
+### Lifecycle semantics
+
+- **Durable:** sustained preferences, personal background explicitly shared, well-supported group lore. Review when contradicted or source evidence changes; no arbitrary permanent-truth guarantee.
+- **Evolving:** active projects, current tools, plans, changing opinions. Store an `observed_at` timestamp, permit updates/supersession and periodically re-evaluate relevance.
+- **Transient:** temporary achievements, immediate plans and one-off trivia. Usually reject from long-term Pinecone publication while retaining the proposal/audit record in SQLite; exceptional shared milestones can qualify with explicit rationale.
+- **Collective culture:** require explicit group-level evidence; an individual's one-off metaphor is not automatically a recurring server joke. Repeated independent human use across windows is stronger evidence. Attribution and source message IDs remain required.
+- **Source edits/deletions:** invalidate dependent proposals/publications or queue re-evaluation before retrieval; do not silently preserve unsupported published facts. Explicit forget requests require a separate supported user-facing workflow before claiming completion.
+
+### Implementation order and acceptance gates
+
+1. **Evaluation PR:** schema and review layer for scope, durability, disposition and rationale, with deterministic rules and optional model-assisted review; bounded read-only preview/CLI of decisions. No Pinecone writes, scheduler or reaction changes. Include unit tests for transient milestones, evolving plans, durable preferences, individual-vs-collective attribution and unsafe/unsupported claims.
+2. **Consolidation PR:** semantic candidate search and similarity evaluation, existing-Pinecone lookup, scoped identity matching, conflict/supersession ledger, and retry/idempotency tests. No automatic writes. Avoid relying on a cosine threshold alone for contradiction detection.
+3. **Publication PR:** opt-in bounded manual publication first, deterministic upsert IDs, provenance metadata, partial-failure reconciliation, deletion/correction propagation and operational metrics. Then separately enable scheduled extraction and publication with rate/token caps and single-instance safeguards.
+4. **Production acceptance:** sample varied conversations and review false positives; verify same claim paraphrased in different windows does not multiply, conflicting preferences are not silently merged, one-off game milestones are filtered, human-supported shared lore survives, and published memories are retrievable through the existing bot path. Preserve dev/prod isolation and existing reaction shadow behavior.
+
+**Decision:** automated evaluation is intended to be autonomous after validation; no permanent per-memory human approval queue. The audit ledger exists for troubleshooting, corrections and rollback, not routine manual curation.
