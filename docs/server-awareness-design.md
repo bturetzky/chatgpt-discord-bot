@@ -1,7 +1,7 @@
 # Server Awareness — design
 
-**Status:** Proposed; design only, not implemented.  
-**Last reviewed:** 2026-11-07  
+**Status:** Approved next feature; implementation not yet started.  
+**Last reviewed:** 2026-11-08  
 **Scope:** chatgpt-discord-bot application. Kubernetes manifests and storage deployment belong in `bturetzky/homelab-gitops`.
 
 ## Goal
@@ -18,6 +18,16 @@ Let the bot learn from conversations in its home Discord server even when it is 
 - **No automatic unbounded historical crawl.** Backfill must be explicitly initiated with bounds, progress and resumability. Normal indexing and missed-message reconciliation can run automatically.
 - **Automatic selective memory extraction**, initially dry-run for validation, then scheduled and autonomous. Memories must carry source references and avoid unsupported inferences.
 - Keep implementation lightweight: Python, discord.py, SQLite/FTS5, existing OpenAI and Pinecone clients; no new server, Redis, Postgres, or GPU.
+
+## Approved implementation sequence (2026-11-08)
+
+1. Establish a small shared SQLite persistence foundation: database initialization, schema migrations, WAL/busy timeout, single-writer assumptions, tests, and separate dev/prod PVCs (manifests in `homelab-gitops`).
+2. Implement Server Awareness message ingestion (including edits/deletes), FTS5 search, and bounded/resumable backfill, with staged validation.
+3. Add reaction observation and shadow-mode candidate evaluation using the archived message context; retain reaction events and per-message counts in separate ordinary SQLite tables rather than FTS5.
+4. Enable live proactive reactions only after durable budgets, cooldowns, action reservations and deduplication are implemented and validated. Exact numerical pacing remains undecided.
+5. Add selective automatic memory extraction from indexed history, initially dry-run, with source provenance and Pinecone writes only after validation.
+
+The shared database is infrastructure, **not** a single shared feature schema. Message text belongs in the archive/FTS5; reactions and their rate limits have separate tables and retention policies. The existing Discord recent-history path remains unchanged. This is an agreed priority order, not a claim of implementation.
 
 ## Architecture
 
