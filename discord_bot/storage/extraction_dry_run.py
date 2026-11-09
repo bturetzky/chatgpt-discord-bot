@@ -97,7 +97,7 @@ async def dry_run(
               "failed": 0, "candidates": 0, "duplicates": 0, "input_tokens": 0, "output_tokens": 0}
     try:
         for window in windows:
-            if not any(row[3] in bot_author_id for row in window.messages):
+            if not any(row[3] != bot_author_id for row in window.messages):
                 counts["skipped"] += 1
                 continue
             row = connection.execute(
