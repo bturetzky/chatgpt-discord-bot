@@ -1,5 +1,6 @@
 import asyncio
 import tempfile
+from unittest.mock import patch
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -65,6 +66,35 @@ class ShadowTests(unittest.IsolatedAsyncioTestCase):
                 shadow.schedule(1, 2, 4, "independent")
                 await asyncio.sleep(.05)
                 self.assertEqual(client.responses.calls, 0)
+                await shadow.close()
+
+    async def test_opt_in_prefix_bypasses_sampling_without_changing_budget(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with Database(str(Path(tmp) / "bot.sqlite3")) as db:
+                client = FakeClient()
+                with patch.dict("os.environ", {"REACTION_SHADOW_TEST_PREFIX": "[shadow-test]"}):
+                    shadow = ReactionShadow(db.connection, guild_id="1", api_key="unused",
+                                            client=client, delay=0, max_evaluations=1)
+                self.assertEqual(shadow.test_prefix, "[shadow-test]")
+                db.connection.execute(
+                    """INSERT INTO messages (guild_id,channel_id,message_id,author_id,content,created_at)
+                       VALUES (?,?,?,?,?,?)""",
+                    ("1", "2", "123", "3", "[shadow-test] funny message for evaluation",
+                     datetime.now(timezone.utc).isoformat()),
+                )
+                message = SimpleNamespace(
+                    id=123, guild=SimpleNamespace(id=1),
+                    channel=SimpleNamespace(id=2, type=SimpleNamespace(name="text")),
+                    author=SimpleNamespace(id=3, bot=False),
+                    content="[shadow-test] funny message for evaluation",
+                    webhook_id=None, mentions=[], reference=None,
+                )
+                shadow.observe_message(message, bot_id=99)
+                await asyncio.sleep(.05)
+                self.assertEqual(client.responses.calls, 1)
+                self.assertEqual(db.connection.execute(
+                    "SELECT trigger FROM shadow_evaluations WHERE message_id='123'"
+                ).fetchone()[0], "independent")
                 await shadow.close()
 
     async def test_reaction_trigger_uses_distinct_people(self):
