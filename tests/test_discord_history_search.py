@@ -31,6 +31,10 @@ class HistorySearchTests(unittest.IsolatedAsyncioTestCase):
                     channel_ids={"10", "11"}, after="2026-11-02T00:00:00Z")), 1)
                 self.assertEqual(search_messages(conn, query="Factorio", guild_id="1",
                     channel_ids={"10"}, channel_id="11"), [])
+                self.assertEqual(len(search_messages(conn, query="Factorio", guild_id="1",
+                    channel_ids={"10", "11"}, channel_id="", author_id="", after="", before="")), 2)
+                self.assertEqual(len(search_messages(conn, query="Factorio", guild_id="1",
+                    channel_ids={"10"}, channel_id="  ", author_id=" ", after=" ", before=" ")), 1)
                 self.assertEqual(search_messages(conn, query="Factorio", guild_id="1",
                     channel_ids=set()), [])
                 self.assertEqual(search_messages(conn, query="Factorio", guild_id="2",
@@ -55,6 +59,12 @@ class HistorySearchTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len(cross_channel["results"]), 1)
                 self.assertIn("permitted_channels=", logs.output[0])
                 self.assertIn("results=1", logs.output[0])
+                blank_filters = json.loads(await tool.execute_with_context(
+                    {"query": "Factorio", "channel_id": "", "author_id": "",
+                     "after": "", "before": ""},
+                    {"archive": SimpleNamespace(db=conn), "guild": guild, "member": object()}))
+                self.assertTrue(blank_filters["ok"])
+                self.assertEqual(len(blank_filters["results"]), 1)
                 self.assertTrue(result["ok"])
                 self.assertEqual(len(result["results"]), 1)
                 self.assertFalse(json.loads(await tool.execute_with_context(
