@@ -32,6 +32,8 @@ class DiscordHandler:
         @self.client.event
         async def on_ready():
             logging.info('Discord gateway ready: bot_id=%s guilds=%d message_content_intent=%s', self.client.user.id, len(self.client.guilds), self.client.intents.message_content)
+            if self.reaction_shadow is not None:
+                self.reaction_shadow.bot_user_id = str(self.client.user.id)
             if self.archive is not None and self._reconcile_task is None:
                 self._reconcile_task = asyncio.create_task(
                     reconcile_recent(self.client, self.archive), name='discord-history-reconcile'
