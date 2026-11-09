@@ -15,7 +15,7 @@ The environment variables belong in the deployment manifest in `homelab-gitops`.
 
 ## Verified dev acceptance (2026-11-09)
 
-With `REACTION_SHADOW_TEST_PREFIX=[shadow-test]` temporarily configured in dev, the operator posted an ordinary message. Logs showed `source=test`, an evaluation after debounce, and `decision=ignore reason=no_clear_reaction input_tokens=303 output_tokens=41`. This validates the live OpenAI request and non-posting path. GitOps PR #224 removed the temporary dev prefix; PR #225 enabled production guild `325378744787271710` using the tested dev image digest. Both PRs were operator-merged; **production runtime has not yet been confirmed**. Dev guild is `584499423590088715`. Do not enable the prefix in production.
+With `REACTION_SHADOW_TEST_PREFIX=[shadow-test]` temporarily configured in dev, the operator posted an ordinary message. Logs showed `source=test`, an evaluation after debounce, and `decision=ignore reason=no_clear_reaction input_tokens=303 output_tokens=41`. This validates the live OpenAI request and non-posting path. GitOps PR #224 removed the temporary dev prefix; PR #225 enabled production guild `<production guild ID>` using the tested dev image digest. Both PRs were operator-merged; **production runtime has not yet been confirmed**. Dev guild is `<dev guild ID>`. Do not enable the prefix in production.
 
 ## Cheap gates
 
@@ -55,7 +55,7 @@ kubectl -n discord-prod exec deploy/chatgpt-discord-bot -- \
   printenv REACTION_SHADOW_ENABLED REACTION_SHADOW_GUILD_ID
 ```
 
-Expect `true`, `325378744787271710`, and `posting=false`; then inspect the `shadow_evaluations` query above over several days. An empty table is not automatically a failure at a 1-in-12 sampling rate and an 8/24h cap. Distinct-human pile-on triggering remains untested live because the dev server has only one active human tester.
+Expect `true`, `<production guild ID>`, and `posting=false`; then inspect the `shadow_evaluations` query above over several days. An empty table is not automatically a failure at a 1-in-12 sampling rate and an 8/24h cap. Distinct-human pile-on triggering remains untested live because the dev server has only one active human tester.
 
 ## Manual acceptance
 
