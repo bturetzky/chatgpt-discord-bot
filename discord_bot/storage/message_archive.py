@@ -9,7 +9,7 @@ def utc_iso(value):
         value = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).isoformat()
+    return value.astimezone(timezone.utc).isoformat(timespec="microseconds")
 
 
 class MessageArchive:
