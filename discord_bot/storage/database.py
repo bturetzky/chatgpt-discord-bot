@@ -79,6 +79,25 @@ MIGRATIONS = (
         )""",
         """CREATE INDEX shadow_evaluations_recent ON shadow_evaluations(guild_id, evaluated_at)""",
     ),
+    (
+        """CREATE TABLE extraction_batches (
+            batch_id TEXT PRIMARY KEY,
+            guild_id TEXT NOT NULL,
+            channel_id TEXT NOT NULL,
+            first_message_id TEXT NOT NULL,
+            last_message_id TEXT NOT NULL,
+            source_hash TEXT NOT NULL,
+            extractor_version TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending', 'processing', 'completed', 'failed')),
+            attempts INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            processed_at TEXT,
+            error_category TEXT
+        )""",
+        """CREATE INDEX extraction_batches_channel
+            ON extraction_batches(guild_id, channel_id, status)""",
+    ),
 )
 
 
