@@ -27,7 +27,16 @@ class ArchiveTests(unittest.TestCase):
                 self.assertEqual(db.connection.execute(
                     "SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'hello'"
                 ).fetchone()[0], 1)
-                archive.edit(3, "updated text")
+                archive.edit(3, "updated text", "2026-11-08T12:00:00Z")
+                stale = SimpleNamespace(**{**vars(message), "content": "stale snapshot"})
+                archive.upsert(stale)
+                self.assertEqual(db.connection.execute(
+                    "SELECT content FROM messages WHERE message_id='3'"
+                ).fetchone()[0], "updated text")
+                archive.edit(3, "older edit", "2026-11-08T11:00:00Z")
+                self.assertEqual(db.connection.execute(
+                    "SELECT content FROM messages WHERE message_id='3'"
+                ).fetchone()[0], "updated text")
                 self.assertEqual(db.connection.execute(
                     "SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'updated'"
                 ).fetchone()[0], 1)
