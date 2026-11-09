@@ -39,6 +39,11 @@ MIGRATIONS = (
             INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
         END""",
     ),
+    (
+        """CREATE TABLE deleted_message_ids (
+            message_id TEXT PRIMARY KEY
+        )""",
+    ),
 )
 
 
