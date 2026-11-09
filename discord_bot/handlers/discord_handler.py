@@ -204,7 +204,7 @@ class DiscordHandler:
             try:
                 response = await self.chatgpt_handler.get_response(
                     messages, channel, discord_context={
-                        'archive': self.archive, 'guild': message.guild, 'member': message.author
+                        'archive': getattr(self, 'archive', None), 'guild': message.guild, 'member': message.author
                     })
             except Exception:
                 logging.exception('Discord message processing failed')
