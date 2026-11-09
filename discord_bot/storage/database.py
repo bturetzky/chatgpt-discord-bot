@@ -14,6 +14,31 @@ MIGRATIONS = (
         applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     """,
+    # Each migration is a sequence of individual statements, not a SQL script.
+    (
+        """CREATE TABLE messages (
+            guild_id TEXT NOT NULL,
+            channel_id TEXT NOT NULL,
+            message_id TEXT PRIMARY KEY,
+            author_id TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            edited_at TEXT,
+            deleted_at TEXT
+        )""",
+        """CREATE INDEX messages_channel ON messages(channel_id, message_id)""",
+        """CREATE VIRTUAL TABLE messages_fts USING fts5(content, content='messages', content_rowid='rowid')""",
+        """CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN
+            INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+        END""",
+        """CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
+            INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+        END""",
+        """CREATE TRIGGER messages_au AFTER UPDATE OF content ON messages BEGIN
+            INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
+            INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+        END""",
+    ),
 )
 
 
@@ -47,14 +72,21 @@ class Database:
     def migrate(self):
         if self.connection is None:
             raise RuntimeError("Database is not open")
+        self.connection.execute("""CREATE TABLE IF NOT EXISTS schema_migrations (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
         for version, sql in enumerate(MIGRATIONS, start=1):
             self.connection.execute("BEGIN IMMEDIATE")
             try:
-                # executescript commits implicitly; execute each statement within
-                # the explicit transaction to keep the migration atomic.
-                for statement in sql.split(";"):
-                    if statement.strip():
-                        self.connection.execute(statement)
+                if self.connection.execute(
+                    "SELECT 1 FROM schema_migrations WHERE version=?", (version,)
+                ).fetchone():
+                    self.connection.execute("COMMIT")
+                    continue
+                statements = sql if isinstance(sql, tuple) else (sql.strip().rstrip(";"),)
+                for statement in statements:
+                    self.connection.execute(statement)
                 self.connection.execute(
                     "INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)",
                     (version,),
