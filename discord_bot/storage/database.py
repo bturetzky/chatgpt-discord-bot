@@ -44,6 +44,13 @@ MIGRATIONS = (
             message_id TEXT PRIMARY KEY
         )""",
     ),
+    (
+        """CREATE TABLE backfill_cursors (
+            channel_id TEXT PRIMARY KEY,
+            before_message_id TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""",
+    ),
 )
 
 

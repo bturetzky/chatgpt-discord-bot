@@ -2,6 +2,7 @@ import discord, asyncio, logging, os, re
 from .chatgpt_handler import ChatGPTHandler
 from .vector_handler import VectorHandler
 from .image_context import ImageContextBuilder
+from ..storage.history import reconcile_recent
 
 CONTEXT_LIMIT = int(os.getenv("DISCORD_CONTEXT_LIMIT", "30"))
 RELATIONSHIP_MEMORY_LIMIT = int(os.getenv("RELATIONSHIP_MEMORY_LIMIT", "4"))
@@ -10,6 +11,7 @@ class DiscordHandler:
     def __init__(self, discord_token, openai_key, pinecone_apikey, archive=None):
         self.token = discord_token
         self.archive = archive
+        self._reconcile_task = None
         logging.debug('Initializing discord client')
         self.client = discord.Client(intents=self.get_discord_intents())
         logging.debug('Discord client initialized')
@@ -27,6 +29,10 @@ class DiscordHandler:
         @self.client.event
         async def on_ready():
             logging.info('Discord gateway ready: bot_id=%s guilds=%d message_content_intent=%s', self.client.user.id, len(self.client.guilds), self.client.intents.message_content)
+            if self.archive is not None and self._reconcile_task is None:
+                self._reconcile_task = asyncio.create_task(
+                    reconcile_recent(self.client, self.archive), name='discord-history-reconcile'
+                )
         
         @self.client.event
         async def on_message(message):
@@ -106,6 +112,10 @@ class DiscordHandler:
         # Close any resources, db connections, etc.
         logging.info('Shutting down Discord client')
         self.shutdown_event.set()
+        reconcile_task = getattr(self, '_reconcile_task', None)
+        if reconcile_task is not None:
+            reconcile_task.cancel()
+            await asyncio.gather(reconcile_task, return_exceptions=True)
         try:
             await self.client.close()
         finally:
