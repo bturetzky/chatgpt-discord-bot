@@ -14,6 +14,7 @@ from .usage_metrics import ChatUsage
 
 GPT_MODEL = os.getenv("OPENAI_MODEL", "gpt-6.1-terra")
 MAX_FUNCTION_CALLS = 11
+MAX_PAGE_READS = 2
 
 
 class ChatGPTHandler:
@@ -39,6 +40,7 @@ class ChatGPTHandler:
 
         usage_metrics = ChatUsage(model=GPT_MODEL)
         started = time.monotonic()
+        page_reads = 0
         try:
             for attempt in range(MAX_FUNCTION_CALLS + 1):
                 response = await self.client.responses.create(
@@ -72,7 +74,12 @@ class ChatGPTHandler:
                             raise ValueError("Tool arguments must be an object")
                         if arguments.get("quick_update") and self.send_interim_message:
                             await self.send_interim_message(channel, arguments["quick_update"])
-                        result = await self.function_handler.execute_function(call.name, arguments)
+                        if call.name == "get_webpage_contents" and page_reads >= MAX_PAGE_READS:
+                            result = json.dumps({"ok": False, "error": {"code": "READ_LIMIT", "message": "Page read limit reached for this response."}})
+                        else:
+                            if call.name == "get_webpage_contents":
+                                page_reads += 1
+                            result = await self.function_handler.execute_function(call.name, arguments)
                     except (ValueError, json.JSONDecodeError) as exc:
                         result = f"Invalid tool arguments: {exc}"
                     conversation.append({

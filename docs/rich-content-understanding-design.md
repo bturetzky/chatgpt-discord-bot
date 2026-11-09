@@ -1,6 +1,6 @@
 # Rich Content Understanding — design
 
-**Status:** Proposed; implementation not started.  
+**Status:** Public HTML article and GitHub README reading implemented; other rich-content capabilities remain proposed.
 **Last reviewed:** 2026-11-07  
 **Scope:** chatgpt-discord-bot. Deployment manifests belong in `bturetzky/homelab-gitops`.
 
@@ -96,6 +96,8 @@ For YouTube, use `kind: youtube`, `source: transcript|description|metadata`, vid
 - The currently configured `OPENAI_MODEL` must be checked for image input support. Provide an independently configurable vision-capable model only if necessary; avoid an additional model call when the normal response model supports images.
 
 ## URL discovery and routing
+
+The existing `get_webpage_contents` tool now reads public HTML on demand, preferring article/main text and the rendered GitHub README for repository or README URLs. It returns the requested and final URL, source type, title, up to 12,000 characters, truncation status, or an explicit failure. Up to two page reads are permitted per response. The model is instructed to cite sources, treat page text as untrusted, and disclose failures and truncation. The fetcher validates redirect destinations and connects to a validated public IP while retaining the original hostname for TLS; size, content-type and timeout limits remain in place. Unit tests use mocked HTTP and model calls. Live Discord article/README behavior still needs manual dev validation, including blocked or JavaScript-only pages. Images, YouTube, reply attachments, background enrichment and non-HTML raw files are not implemented by this change.
 
 - Detect URLs in the triggering message, and optionally directly referenced messages; avoid auto-reading every URL in the last 30 messages.
 - Expose `read_url_content` as a model tool for explicit or contextually necessary reading. Model may read a bounded number of URLs per turn (proposed 2); do not force a network fetch for unrelated casual mentions.
