@@ -1,5 +1,6 @@
 """Read-only, bounded FTS5 lookup scoped to visible Discord channels."""
 import json
+import logging
 import sqlite3
 from datetime import datetime, timezone
 
@@ -72,6 +73,7 @@ class SearchDiscordHistory(BaseFunction):
         allowed = {str(ch.id) for ch in guild.text_channels
                    if ch.permissions_for(member).view_channel and
                       ch.permissions_for(member).read_message_history and
+                      ch.permissions_for(guild.me).view_channel and
                       ch.permissions_for(guild.me).read_message_history}
         try:
             hits = search_messages(
@@ -79,6 +81,11 @@ class SearchDiscordHistory(BaseFunction):
                 channel_ids=allowed, channel_id=args.get("channel_id"),
                 author_id=args.get("author_id"), after=args.get("after"),
                 before=args.get("before"), limit=args.get("limit", 5))
+            logging.info("History search: guild=%s query=%r requested_channel=%s permitted_channels=%s results=%d",
+                         guild.id, args.get("query"), args.get("channel_id"),
+                         sorted(allowed), len(hits))
             return json.dumps({"ok": True, "results": hits})
         except (ValueError, TypeError, sqlite3.Error) as exc:
+            logging.warning("History search failed: guild=%s query=%r permitted_channels=%s error_type=%s",
+                            guild.id, args.get("query"), sorted(allowed), type(exc).__name__)
             return json.dumps({"ok": False, "error": str(exc)[:160]})
