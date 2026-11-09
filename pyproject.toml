@@ -18,6 +18,7 @@ aiohttp = "^3.9.5"
 newsapi-python = "^0.2.7"
 lxml = "^4.9.1"
 pillow = ">=12.3,<13"
+youtube-transcript-api = {version = "1.2.5", markers = "python_version < \"3.16\""}
 
 
 
