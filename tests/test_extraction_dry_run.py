@@ -20,7 +20,7 @@ class DryRunTests(unittest.IsolatedAsyncioTestCase):
             self.db.connection.execute(
                 """INSERT INTO messages
                    (guild_id, channel_id, message_id, author_id, content, created_at)
-                   VALUES ('guild', 'channel', ?, 'author', ?, ?)""",
+                   VALUES ('guild', 'channel', ?, '12345', ?, ?)""",
                 (str(i + 1), "our running joke" if i else "remember the joke",
                  (self.start + timedelta(minutes=i)).isoformat()),
             )
@@ -38,14 +38,14 @@ class DryRunTests(unittest.IsolatedAsyncioTestCase):
 
     def candidate(self):
         return {"memory_type": "lore", "summary": "The group has a recurring joke.",
-                "participant_ids": ["author"], "source_message_ids": ["1", "2"],
+                "participant_ids": ["12345"], "source_message_ids": ["1", "2"],
                 "confidence": "medium", "rationale": "Both messages mention the joke."}
 
     async def run_dry(self):
         return await dry_run(
             self.db.connection, guild_id="guild", since=self.start,
             until=self.start + timedelta(hours=1), model="test-model",
-            client=self.client,
+            client=self.client, human_author_ids={"12345"},
         )
 
     async def test_persists_dry_run_and_skips_completed_batch(self):
@@ -89,7 +89,7 @@ class DryRunTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await dry_run(self.db.connection, guild_id="guild", since=self.start,
                           until=self.start + timedelta(hours=1), model="test",
-                          client=self.client, max_windows=0)
+                          client=self.client, human_author_ids={"12345"}, max_windows=0)
         self.client.responses.create.assert_not_awaited()
 
     async def test_prompt_is_separate_and_no_tools(self):
@@ -99,6 +99,48 @@ class DryRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("tools", kwargs)
         self.assertIn("untrusted evidence", kwargs["instructions"])
         self.assertEqual(kwargs["model"], "test-model")
+
+    async def test_bot_only_recollection_cannot_create_memory(self):
+        self.db.connection.execute(
+            "UPDATE messages SET author_id='99999' WHERE message_id='2'"
+        )
+        self.client.responses.create.return_value = self.response([{
+            **self.candidate(), "source_message_ids": ["2"],
+            "participant_ids": ["99999"],
+        }])
+        result = await self.run_dry()
+        self.assertEqual(result["failed"], 1)
+        self.assertEqual(result["candidates"], 0)
+
+    async def test_bot_only_window_skips_model(self):
+        self.db.connection.execute("UPDATE messages SET author_id='99999'")
+        result = await self.run_dry()
+        self.assertEqual(result["skipped"], 1)
+        self.client.responses.create.assert_not_awaited()
+
+    async def test_same_summary_repeated_in_new_window_is_deduplicated(self):
+        self.client.responses.create.return_value = self.response([self.candidate()])
+        self.assertEqual((await self.run_dry())["candidates"], 1)
+        self.db.connection.execute(
+            "UPDATE messages SET content='a different conversation' WHERE message_id='1'"
+        )
+        # Different evidence in the same batch should still be re-evaluated.
+        result = await self.run_dry()
+        self.assertEqual(result["processed"], 1)
+        self.db.connection.execute(
+            """INSERT INTO messages
+               (guild_id, channel_id, message_id, author_id, content, created_at)
+               VALUES ('guild', 'channel', '3', '12345', 'another joke',
+                       '2026-11-08T00:45:00+00:00')"""
+        )
+        # A second, separate conversation window returns the same claim.
+        self.client.responses.create.return_value = self.response([{
+            **self.candidate(), "source_message_ids": ["3"]
+        }])
+        result = await self.run_dry()
+        self.assertEqual(result["processed"], 1)
+        self.assertEqual(result["duplicates"], 1)
+        self.assertEqual(result["candidates"], 0)
 
 
 if __name__ == "__main__":
