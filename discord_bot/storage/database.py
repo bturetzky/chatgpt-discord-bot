@@ -98,6 +98,28 @@ MIGRATIONS = (
         """CREATE INDEX extraction_batches_channel
             ON extraction_batches(guild_id, channel_id, status)""",
     ),
+    (
+        """CREATE TABLE extraction_candidates (
+            batch_id TEXT NOT NULL REFERENCES extraction_batches(batch_id),
+            candidate_index INTEGER NOT NULL,
+            memory_type TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            participant_ids TEXT NOT NULL,
+            source_message_ids TEXT NOT NULL,
+            confidence TEXT NOT NULL,
+            rationale TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'proposed'
+                CHECK (status IN ('proposed', 'accepted', 'rejected', 'superseded')),
+            PRIMARY KEY (batch_id, candidate_index)
+        )""",
+        """CREATE TABLE extraction_usage (
+            batch_id TEXT PRIMARY KEY REFERENCES extraction_batches(batch_id),
+            model TEXT NOT NULL,
+            input_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL,
+            evaluated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""",
+    ),
 )
 
 
