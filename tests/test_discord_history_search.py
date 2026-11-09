@@ -26,6 +26,7 @@ class HistorySearchTests(unittest.IsolatedAsyncioTestCase):
                     "VALUES (?,?,?,?,?,?,?)", rows)
                 hits = search_messages(conn, query="Factorio", guild_id="1", channel_ids={"10"})
                 self.assertEqual([h["url"].split("/")[-1] for h in hits], ["100"])
+                self.assertEqual(hits[0]["message_id"], "100")
                 self.assertEqual(len(search_messages(conn, query="Factorio", guild_id="1",
                     channel_ids={"10", "11"}, author_id="8")), 1)
                 self.assertEqual(len(search_messages(conn, query="Factorio", guild_id="1",
@@ -92,6 +93,7 @@ class HistorySearchTests(unittest.IsolatedAsyncioTestCase):
                     message_id="4", before=2, after=3)
                 self.assertEqual([x["url"].split("/")[-1] for x in results],
                                  ["2", "3", "4", "5", "7", "8"])
+                self.assertEqual(results[2]["message_id"], "4")
                 self.assertEqual([x["anchor"] for x in results],
                                  [False, False, True, False, False, False])
                 self.assertEqual(get_conversation_context(
@@ -116,3 +118,9 @@ class HistorySearchTests(unittest.IsolatedAsyncioTestCase):
                     {"archive": SimpleNamespace(db=conn), "guild": guild, "member": object()}))
                 self.assertTrue(payload["ok"])
                 self.assertEqual(len(payload["results"]), 3)
+                blanks = json.loads(await tool.execute_with_context(
+                    {"channel_id": "10", "message_id": "4", "before": "", "after": ""},
+                    {"archive": SimpleNamespace(db=conn), "guild": guild, "member": object()}))
+                self.assertTrue(blanks["ok"])
+                self.assertEqual([x["message_id"] for x in blanks["results"]],
+                                 ["1", "2", "3", "4", "5", "7", "8"])

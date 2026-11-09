@@ -48,7 +48,7 @@ def search_messages(db, *, query, guild_id, channel_ids, channel_id=None,
         "WHERE " + " AND ".join(where) + " ORDER BY m.created_at DESC LIMIT ?",
         (*params, limit),
     ).fetchall()
-    return [{"author_id": author, "channel_id": channel, "created_at": created,
+    return [{"message_id": message, "author_id": author, "channel_id": channel, "created_at": created,
              "snippet": content[:350], "url": f"https://discord.com/channels/{guild}/{channel}/{message}"}
             for guild, channel, message, author, content, created in rows]
 
@@ -104,6 +104,8 @@ def get_conversation_context(db, *, guild_id, channel_ids, channel_id, message_i
         raise ValueError("message_id must be a Discord snowflake")
     if not isinstance(channel_id, str) or not channel_id.isdecimal():
         raise ValueError("channel_id must be a Discord snowflake")
+    before = 4 if before is None or before == "" else before
+    after = 4 if after is None or after == "" else after
     if not all(isinstance(n, int) and not isinstance(n, bool) and 0 <= n <= 10
                for n in (before, after)) or before + after > 16:
         raise ValueError("context window must be 0..10 per side and at most 16 total")
@@ -131,7 +133,7 @@ def get_conversation_context(db, *, guild_id, channel_ids, channel_id, message_i
         "ORDER BY created_at ASC,message_id ASC LIMIT ?",
         (str(guild_id), channel_id, timestamp, timestamp, message_id, after)).fetchall()
     return [
-        {"author_id": author, "channel_id": channel, "created_at": created,
+        {"message_id": message, "author_id": author, "channel_id": channel, "created_at": created,
          "content": content[:1200],
          "url": f"https://discord.com/channels/{guild}/{channel}/{message}",
          "anchor": message == message_id}
@@ -149,8 +151,8 @@ class GetDiscordConversationContext(BaseFunction):
     parameters = {"type": "object", "properties": {
         "channel_id": {"type": "string", "description": "Channel ID from a history-search result URL."},
         "message_id": {"type": "string", "description": "Message ID from a history-search result URL."},
-        "before": {"type": "integer", "minimum": 0, "maximum": 10},
-        "after": {"type": "integer", "minimum": 0, "maximum": 10}
+        "before": {"type": "integer", "minimum": 0, "maximum": 10, "description": "Optional; omit for 4 earlier messages."},
+        "after": {"type": "integer", "minimum": 0, "maximum": 10, "description": "Optional; omit for 4 later messages."}
     }, "required": ["channel_id", "message_id"]}
 
     async def execute(self, args):
@@ -178,6 +180,7 @@ class GetDiscordConversationContext(BaseFunction):
                          guild.id, channel_id, message_id, len(results))
             return json.dumps({"ok": True, "results": results})
         except (ValueError, TypeError, sqlite3.Error) as exc:
-            logging.warning("History context failed: guild=%s error_type=%s",
-                            guild.id, type(exc).__name__)
+            logging.warning("History context failed: guild=%s channel=%r anchor=%r before=%r after=%r error_type=%s error=%s",
+                            guild.id, args.get("channel_id"), args.get("message_id"),
+                            args.get("before"), args.get("after"), type(exc).__name__, str(exc)[:160])
             return json.dumps({"ok": False, "error": str(exc)[:160]})
