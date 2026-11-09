@@ -27,6 +27,8 @@ class ReactionShadow:
         self.lock = asyncio.Lock()
         self.closed = False
         self.bot_user_id = None
+        # Explicit dev-only acceptance hook. Never enabled by default.
+        self.test_prefix = os.getenv('REACTION_SHADOW_TEST_PREFIX', '')
 
     def _eligible(self, guild_id, channel_id, message_id):
         if self.closed or str(guild_id) != self.guild_id:
@@ -55,8 +57,13 @@ class ReactionShadow:
             return
         # Stable low-rate sampling, no model call for most messages.
         sample = int.from_bytes(hashlib.sha256(str(message.id).encode()).digest()[:4], "big")
-        if sample % 12 == 0:
-            self.schedule(message.guild.id, message.channel.id, message.id, "independent")
+        forced = bool(self.test_prefix and message.content.startswith(self.test_prefix))
+        if forced or sample % 12 == 0:
+            logging.info('Reaction shadow candidate: trigger=independent source=%s message_id=%s',
+                         'test' if forced else 'sample', message.id)
+            self.schedule(message.guild.id, message.channel.id, message.id, 'independent')
+        else:
+            logging.debug('Reaction shadow skipped: reason=sample message_id=%s', message.id)
 
     def observe_reaction(self, payload):
         if payload.guild_id is None or str(payload.guild_id) != self.guild_id:
@@ -67,14 +74,22 @@ class ReactionShadow:
             (self.guild_id, str(payload.channel_id), str(payload.message_id)),
         ).fetchone()[0]
         if distinct >= 2:
-            self.schedule(payload.guild_id, payload.channel_id, payload.message_id, "pile_on")
+            logging.info('Reaction shadow candidate: trigger=pile_on reactors=%d message_id=%s',
+                         distinct, payload.message_id)
+            self.schedule(payload.guild_id, payload.channel_id, payload.message_id, 'pile_on')
+        else:
+            logging.debug('Reaction shadow skipped: reason=reactor_threshold reactors=%d', distinct)
 
     def schedule(self, guild_id, channel_id, message_id, trigger):
         key = str(message_id)
-        if (self.closed or str(guild_id) != self.guild_id or key in self.pending
-                or len(self.pending) >= 16):
+        if self.closed or str(guild_id) != self.guild_id:
+            return
+        if key in self.pending or len(self.pending) >= 16:
+            logging.info('Reaction shadow skipped: reason=%s trigger=%s',
+                         'pending' if key in self.pending else 'queue_full', trigger)
             return
         if self.db.execute("SELECT 1 FROM shadow_evaluations WHERE message_id=?", (key,)).fetchone():
+            logging.info("Reaction shadow skipped: reason=already_evaluated trigger=%s", trigger)
             return
         task = asyncio.create_task(self._delayed(guild_id, channel_id, message_id, trigger))
         self.pending[key] = task
@@ -85,6 +100,8 @@ class ReactionShadow:
             await asyncio.sleep(self.delay)
             async with self.lock:
                 if not self._eligible(guild_id, channel_id, message_id):
+                    logging.info('Reaction shadow skipped: reason=ineligible trigger=%s message_id=%s',
+                                 trigger, message_id)
                     return
                 # A single rolling 24h budget, shared by both candidate paths.
                 used = self.db.execute(
@@ -106,6 +123,8 @@ class ReactionShadow:
                 ).fetchone()
                 if row is None or row[0] != "reserved":
                     return
+                logging.info('Reaction shadow evaluating: trigger=%s message_id=%s used_before=%d',
+                             trigger, message_id, used)
                 await self._evaluate(channel_id, message_id, trigger)
         except asyncio.CancelledError:
             raise
