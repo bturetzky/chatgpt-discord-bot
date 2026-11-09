@@ -1,6 +1,6 @@
 # Proactive Personality and Reaction Awareness — design
 
-**Status:** Proposed; design only, not implemented.  
+**Status (2026-11-09):** Reaction observation and observation-only shadow evaluation are implemented; **live proactive reaction posting remains design-only**.  
 **Last reviewed:** 2026-11-08  
 **Scope:** chatgpt-discord-bot; Kubernetes deployment configuration belongs in `bturetzky/homelab-gitops`.
 
@@ -31,7 +31,7 @@ This is a feature, not an always-on chatbot: no unsolicited text replies in v1.
 
 ## Approved sequencing decision (2026-11-08)
 
-Server Awareness is prioritized ahead of proactive reactions: first a shared persistent SQLite foundation, then message ingestion/FTS5 search and bounded backfill, then reaction observation/shadow mode, then live proactive reactions, then selective automatic memory extraction. Reaction evaluation can reuse indexed message context and existing gateway observation, rather than building a parallel message-history mechanism. Store reaction events/counts, action reservations, deduplication, rolling budgets and cooldowns in separate ordinary SQLite tables, not the message FTS5 index. The message archive does not itself decide when to react. Numerical rate limits are still unapproved. This is an implementation plan, not evidence that storage, indexing or reactions have been deployed.
+Server Awareness is prioritized ahead of proactive reactions: first a shared persistent SQLite foundation, then message ingestion/FTS5 search and bounded backfill, then reaction observation/shadow mode, then live proactive reactions, then selective automatic memory extraction. Reaction evaluation can reuse indexed message context and existing gateway observation, rather than building a parallel message-history mechanism. Store reaction events/counts, action reservations, deduplication, rolling budgets and cooldowns in separate ordinary SQLite tables, not the message FTS5 index. The message archive does not itself decide when to react. Numerical rate limits are still unapproved. The SQLite archive, FTS5 search, bounded backfill, reaction membership observation and shadow evaluation have since been implemented. The operator verified dev reaction add/remove persistence and a live model decision. Production shadow GitOps enablement was merged but runtime verification is pending. The remaining live-reaction action executor, durable posting budget/cooldowns and automatic memory extraction are not implemented. See [reaction shadow runbook](reaction-shadow-runbook.md).
 
 ## Architecture
 
@@ -58,7 +58,7 @@ Use `discord.py` raw reaction events (`on_raw_reaction_add`, `on_raw_reaction_re
 
 Track per-message emoji identity (Unicode emoji or custom emoji ID), reaction count and **distinct human reactor counts** for candidate scoring; use member IDs only as needed for deduplication and optionally retain bounded aggregate state rather than indefinite individual reaction histories. Prefer minimal data retention. Reactions may be removed, cleared, or missed while the bot is offline: reconcile counts for selected messages when practical and mark historical counts as potentially incomplete. Avoid mistaking bot-added reactions for independent human feedback.
 
-For the Server Awareness SQLite archive, proposed tables:
+For the Server Awareness SQLite archive, the implemented reaction observer uses `reaction_members` and the shadow evaluator uses `shadow_evaluations`. The following remain conceptual live-posting/retention designs rather than exact implemented schema:
 - `message_reactions`: guild/channel/message ID, normalized emoji key, observed count, last observed timestamp, optional reconciliation status.
 - `reaction_events` only if necessary for deduplication/reconciliation; avoid indefinite event-level history by default.
 - `proactive_actions`: unique message ID, guild/channel, selected emoji, decision timestamp, posted timestamp, status, local calendar day, model/policy version and minimal rationale category (not private message text).

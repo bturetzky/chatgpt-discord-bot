@@ -1,6 +1,6 @@
 # Server Awareness — design
 
-**Status:** SQLite ingestion and bounded backfill accepted in dev; FTS5 history search is in PR for dev validation.  
+**Status (2026-11-09):** SQLite persistence, live ingestion, FTS5 history search, restart reconciliation and bounded backfill implemented. Operator completed 30-day production backfill. Reaction add/remove/clear observation and shadow evaluation implemented; dev acceptance verified. Production shadow configuration merged, runtime verification pending. Automatic memory extraction and live proactive reaction posting remain planned.  
 **Last reviewed:** 2026-11-08  
 **Scope:** chatgpt-discord-bot application. Kubernetes manifests and storage deployment belong in `bturetzky/homelab-gitops`.
 
@@ -27,7 +27,7 @@ Let the bot learn from conversations in its home Discord server even when it is 
 4. Enable live proactive reactions only after durable budgets, cooldowns, action reservations and deduplication are implemented and validated. Exact numerical pacing remains undecided.
 5. Add selective automatic memory extraction from indexed history, initially dry-run, with source provenance and Pinecone writes only after validation.
 
-The shared database is infrastructure, **not** a single shared feature schema. Message text belongs in the archive/FTS5; reactions and their rate limits have separate tables and retention policies. The existing Discord recent-history path remains unchanged. This is an agreed priority order, not a claim of implementation.
+The shared database is infrastructure, **not** a single shared feature schema. Message text belongs in the archive/FTS5; reactions and their rate limits have separate tables and retention policies. The existing Discord recent-history path remains unchanged. Steps 1–3 are implemented as of 2026-11-09, with dev reaction observation and real shadow model evaluation verified. Production shadow rollout is configured and merged but runtime behavior has not been verified. Steps 4–5 remain unimplemented.
 
 ## Architecture
 
@@ -48,7 +48,7 @@ Discord gateway (bot's server; dev/prod isolated)
 
 Use a persistent single-writer SQLite database with WAL mode, migrations, appropriate busy timeout and periodic integrity checks. Prefer a dedicated PVC mounted only by the active deployment; **do not let dev and prod concurrently write the same SQLite file**. Use separate volumes/databases for dev and prod, or explicitly assign only one environment as the production indexer. Existing dev/prod Discord bots use different application tokens and servers.
 
-Proposed tables:
+Initial design tables (not a current schema inventory; see `discord_bot/storage/database.py` for authoritative migrations):
 - `messages`: guild/channel/message IDs (unique), author ID, content, created/edited timestamps, deletion/tombstone state, attachment/link metadata, ingestion timestamp. Avoid storing unnecessary private metadata.
 - `messages_fts`: FTS5 index over message text (with synchronized insert/update/delete handling).
 - `channel_cursors`: per-channel last indexed message ID, reconciliation/backfill checkpoints and status.
