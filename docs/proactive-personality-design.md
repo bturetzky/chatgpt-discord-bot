@@ -29,6 +29,10 @@ This is a feature, not an always-on chatbot: no unsolicited text replies in v1.
 
 **Non-goals:** replying to every conversation, reacting on a timer to hit a quota, reacting to its own posts, escalating disagreements, pretending reactions are factual endorsements, or creating permanent relationship memories from emoji alone.
 
+## Implementation sequencing note (recommendation; not a finalized priority decision)
+
+The full live proactive reaction feature needs persistent rolling budgets, deduplication and action reservations across pod restarts. Reuse the minimal durable SQLite foundation planned for Server Awareness if it is available; do not require history backfill, FTS search, or automatic memory extraction before beginning reaction observation/shadow mode. The image-understanding feature is independent and a reasonable next Codex assignment because it has no new storage requirement. Final implementation order remains an operator decision.
+
 ## Architecture
 
 ```text
