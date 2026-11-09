@@ -55,6 +55,22 @@ class OpenAIToolRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item["call_id"] for item in outputs], ["one", "two"])
         self.assertEqual([item["output"] for item in outputs], ["ok", "ok"])
 
+    async def test_both_discord_history_tools_receive_context(self):
+        context = {"guild": object(), "member": object(), "archive": object()}
+        calls = [
+            tool_call("search", "search_discord_history", '{"query":"roast"}'),
+            tool_call("context", "get_discord_conversation_context",
+                      '{"channel_id":"10","message_id":"100"}'),
+        ]
+        self.handler.client.responses.create.side_effect = [
+            response(calls), response([], "Found it"),
+        ]
+        self.assertEqual(await self.handler.get_response(
+            [{"role": "user", "content": "find the roast"}], None,
+            discord_context=context), "Found it")
+        for call in self.handler.function_handler.execute_function.await_args_list:
+            self.assertIs(call.kwargs["context"], context)
+
     async def test_malformed_arguments_are_reported_to_model(self):
         self.handler.client.responses.create.side_effect = [
             response([tool_call("bad", "search_web", "{bad json")]),
