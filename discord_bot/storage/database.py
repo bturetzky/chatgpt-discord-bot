@@ -51,6 +51,18 @@ MIGRATIONS = (
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )""",
     ),
+    (
+        """CREATE TABLE reaction_members (
+            guild_id TEXT NOT NULL,
+            channel_id TEXT NOT NULL,
+            message_id TEXT NOT NULL,
+            emoji_key TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            observed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (message_id, emoji_key, user_id)
+        )""",
+        """CREATE INDEX reaction_members_channel ON reaction_members(guild_id, channel_id, message_id)""",
+    ),
 )
 
 
