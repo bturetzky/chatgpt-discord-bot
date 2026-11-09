@@ -65,7 +65,7 @@ Additional runtime configuration (all optional unless noted):
 | --- | --- |
 | `DISCORD_SQLITE_PATH` | Persistent SQLite file path; required for archive/reaction features. Both deployments use `/data/sqlite/bot.sqlite3` on separate PVCs. |
 | `REACTION_SHADOW_ENABLED` | Explicit opt-in for observation-only reaction evaluation; default `false`. |
-| `REACTION_SHADOW_GUILD_ID` | Numeric guild ID; required when shadow mode is enabled. Dev: `584499423590088715`; prod: `325378744787271710`. |
+| `REACTION_SHADOW_GUILD_ID` | Numeric guild ID; required when shadow mode is enabled. Dev: `<dev guild ID>`; prod: `<production guild ID>`. |
 | `REACTION_SHADOW_MODEL` | Optional shadow evaluator model; falls back to `OPENAI_MODEL`, then the built-in default. |
 | `REACTION_SHADOW_TEST_PREFIX` | **Dev-only** deterministic acceptance prefix; unset in normal operation and production. |
 | `OPENAI_MODEL` | Main Responses model override; also used by shadow mode when its override is absent. |
