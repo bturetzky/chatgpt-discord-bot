@@ -63,6 +63,22 @@ MIGRATIONS = (
         )""",
         """CREATE INDEX reaction_members_channel ON reaction_members(guild_id, channel_id, message_id)""",
     ),
+    (
+        """CREATE TABLE shadow_evaluations (
+            message_id TEXT PRIMARY KEY,
+            guild_id TEXT NOT NULL,
+            channel_id TEXT NOT NULL,
+            trigger TEXT NOT NULL,
+            status TEXT NOT NULL,
+            decision TEXT,
+            emoji_key TEXT,
+            reason_category TEXT,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            evaluated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE INDEX shadow_evaluations_recent ON shadow_evaluations(guild_id, evaluated_at)""",
+    ),
 )
 
 
