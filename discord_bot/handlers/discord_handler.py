@@ -7,8 +7,9 @@ CONTEXT_LIMIT = int(os.getenv("DISCORD_CONTEXT_LIMIT", "30"))
 RELATIONSHIP_MEMORY_LIMIT = int(os.getenv("RELATIONSHIP_MEMORY_LIMIT", "4"))
 
 class DiscordHandler:
-    def __init__(self, discord_token, openai_key, pinecone_apikey):
+    def __init__(self, discord_token, openai_key, pinecone_apikey, archive=None):
         self.token = discord_token
+        self.archive = archive
         logging.debug('Initializing discord client')
         self.client = discord.Client(intents=self.get_discord_intents())
         logging.debug('Discord client initialized')
@@ -33,7 +34,41 @@ class DiscordHandler:
                          getattr(message.guild, 'id', None), message.guild is None,
                          self.client.user.mentioned_in(message) if self.client.user else False,
                          bool(message.content))
+            if self.archive is not None and message.guild is not None:
+                try:
+                    self.archive.upsert(message)
+                except Exception:
+                    logging.exception('Discord message archive write failed')
             await self.process_message(message)
+
+        @self.client.event
+        async def on_raw_message_edit(payload):
+            if self.archive is None or payload.guild_id is None:
+                return
+            # Partial raw edits have no complete content; never overwrite with empty text.
+            if 'content' not in payload.data:
+                return
+            try:
+                self.archive.edit(str(payload.message_id), payload.data['content'])
+            except Exception:
+                logging.exception('Discord message archive edit failed')
+
+        @self.client.event
+        async def on_raw_message_delete(payload):
+            if self.archive is not None and payload.guild_id is not None:
+                try:
+                    self.archive.delete(payload.message_id)
+                except Exception:
+                    logging.exception('Discord message archive deletion failed')
+
+        @self.client.event
+        async def on_raw_bulk_message_delete(payload):
+            if self.archive is not None and payload.guild_id is not None:
+                try:
+                    for message_id in payload.message_ids:
+                        self.archive.delete(message_id)
+                except Exception:
+                    logging.exception('Discord bulk archive deletion failed')
 
         @self.client.event
         async def on_disconnect():
