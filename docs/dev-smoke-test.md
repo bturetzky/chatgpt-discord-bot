@@ -38,6 +38,10 @@ kubectl -n discord-dev logs deployment/chatgpt-discord-bot --since=10m
 
 Send one more basic Discord prompt. Inspect termination/startup logs for errors. A successful rollout alone does not prove graceful shutdown; inspect previous container logs when available.
 
+## Shadow evaluation acceptance (when changing shadow behavior)
+
+See [reaction shadow runbook](reaction-shadow-runbook.md). Confirm `REACTION_SHADOW_ENABLED` and guild ID in the dev deployment, and inspect `Reaction shadow` logs. For a deterministic real-model check, temporarily set `REACTION_SHADOW_TEST_PREFIX` in **dev GitOps only**, send an eligible non-reply text message starting with that prefix, wait at least 60 seconds, and verify a `shadow_evaluations` row. This consumes the real rolling 8/24h evaluation budget; remove the override after testing. No emoji should be posted. The 2-distinct-human pile-on path requires multiple humans and was not live-tested in the one-human dev server.
+
 ## 4. Promote only after dev checks
 
 Use **Actions → Promote Discord bot to production → Run workflow** on main. Review the resulting `homelab-gitops` production PR and merge manually. The workflow promotes the **already tested dev digest**, not a rebuilt image. Verify the production rollout and bot responsiveness afterward.
