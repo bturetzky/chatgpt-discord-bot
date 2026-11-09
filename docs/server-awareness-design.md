@@ -166,3 +166,7 @@ After CI passes and deployment to dev, mention the bot in a channel it can read:
 5. Edit or delete a known archived message and search for its old words; the old text must not be returned after the event is processed.
 
 Search uses literal FTS5 words (AND semantics), at most ten snippets of 350 characters, with optional channel/author/date filters. It is scoped to the request guild and channels visible to the requester and bot. This does not yet implement adjacent-message expansion or semantic search. Production promotion remains deferred.
+
+### History-search diagnostics (dev validation)
+
+The history-search tool logs the literal query, optional requested channel, permitted channel IDs, and number of results for successful searches. Validation failures log the exception type. It does not log message content or excerpts. Use these logs to distinguish a permission-scope mismatch, unexpected query terms, and empty results. Search remains newest-first and defaults to five results; newer mentions can bury an older original message, so this is not yet relevance-ranked search. The November 7 `Roast me` message was verified present in SQLite and FTS5, but Discord end-to-end retrieval is still under investigation.
