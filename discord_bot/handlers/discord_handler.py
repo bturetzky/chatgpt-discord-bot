@@ -171,8 +171,9 @@ class DiscordHandler:
             reconcile_task.cancel()
             await asyncio.gather(reconcile_task, return_exceptions=True)
         try:
-            if self.reaction_shadow is not None:
-                await self.reaction_shadow.close()
+            shadow = getattr(self, 'reaction_shadow', None)
+            if shadow is not None:
+                await shadow.close()
             await self.client.close()
         finally:
             await self.vector_handler.close()
