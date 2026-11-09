@@ -53,11 +53,23 @@ def search_messages(db, *, query, guild_id, channel_ids, channel_id=None,
             for guild, channel, message, author, content, created in rows]
 
 
+def add_channel_attribution(results, guild, allowed, current_channel_id):
+    """Attach source names only for permitted channels."""
+    names = {str(ch.id): ch.name for ch in guild.text_channels
+             if str(ch.id) in allowed and isinstance(getattr(ch, "name", None), str)}
+    current = str(current_channel_id) if current_channel_id is not None else None
+    for item in results:
+        source = str(item["channel_id"])
+        item["channel_name"] = names.get(source)
+        item["different_channel"] = source != current if current is not None else None
+    return results
+
+
 class SearchDiscordHistory(BaseFunction):
     name = "search_discord_history"
     description = ("Search archived messages from this Discord server by keywords, including older "
                    "conversations in other channels. Use for questions about what people previously said. "
-                   "Results contain short excerpts and source links; don't invent missing context.")
+                   "Results include source channel names and cross-channel flags. Mention a different channel naturally when useful, not for every same-channel hit; don't invent missing context.")
     parameters = {"type": "object", "properties": {
         "query": {"type": "string", "description": "Literal words to find (all words must match)."},
         "channel_id": {"type": "string", "description": "Optional channel ID; omit to search all visible channels."},
@@ -90,7 +102,8 @@ class SearchDiscordHistory(BaseFunction):
             logging.info("History search: guild=%s query=%r requested_channel=%s permitted_channels=%s results=%d",
                          guild.id, args.get("query"), args.get("channel_id"),
                          sorted(allowed), len(hits))
-            return json.dumps({"ok": True, "results": hits})
+            return json.dumps({"ok": True, "results": add_channel_attribution(
+                hits, guild, allowed, context.get("channel_id"))})
         except (ValueError, TypeError, sqlite3.Error) as exc:
             logging.warning("History search failed: guild=%s query=%r permitted_channels=%s error_type=%s",
                             guild.id, args.get("query"), sorted(allowed), type(exc).__name__)
@@ -147,7 +160,7 @@ class GetDiscordConversationContext(BaseFunction):
     description = ("After finding a message with search_discord_history, read nearby archived "
                    "messages in the same channel to understand the actual exchange. "
                    "Use the channel_id and message_id from a search result's Discord URL. "
-                   "Do not assume adjacent messages are replies; use author and timestamps.")
+                   "Mention a different source channel naturally when useful. Do not assume adjacent messages are replies; use author and timestamps.")
     parameters = {"type": "object", "properties": {
         "channel_id": {"type": "string", "description": "Channel ID from a history-search result URL."},
         "message_id": {"type": "string", "description": "Message ID from a history-search result URL."},
@@ -178,7 +191,8 @@ class GetDiscordConversationContext(BaseFunction):
                 before=args.get("before", 4), after=args.get("after", 4))
             logging.info("History context: guild=%s channel=%s anchor=%s results=%d",
                          guild.id, channel_id, message_id, len(results))
-            return json.dumps({"ok": True, "results": results})
+            return json.dumps({"ok": True, "results": add_channel_attribution(
+                results, guild, allowed, context.get("channel_id"))})
         except (ValueError, TypeError, sqlite3.Error) as exc:
             logging.warning("History context failed: guild=%s channel=%r anchor=%r before=%r after=%r error_type=%s error=%s",
                             guild.id, args.get("channel_id"), args.get("message_id"),
