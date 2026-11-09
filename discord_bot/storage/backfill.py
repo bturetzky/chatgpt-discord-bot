@@ -43,6 +43,8 @@ async def main(args):
                 await client.close()
                 gateway.cancel()
                 await asyncio.gather(gateway, return_exceptions=True)
+                # Let aiohttp's SSL transports finish closing before asyncio.run stops the loop.
+                await asyncio.sleep(0.25)
 
 
 
