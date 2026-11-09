@@ -134,7 +134,7 @@ class WebpageToolRegressions(unittest.IsolatedAsyncioTestCase):
     async def test_network_failure(self):
         with patch("discord_bot.functions.get_webpage_contents.fetch_public_html", side_effect=requests.Timeout):
             result = await GetWebPageContents().execute({"url": "https://example.org"})
-        self.assertIn("Error fetching the webpage", result)
+        self.assertEqual(json.loads(result)["error"]["code"], "TIMEOUT")
 
     async def test_page_without_article_or_div(self):
         reply = MagicMock(content=b"<html><body><p>Plain text</p></body></html>")
