@@ -1,14 +1,15 @@
 # Engineering roadmap and code review
 
-**Reviewed:** 2026-11-08 | **Status:** Living roadmap; Python 3.12 promoted, Renovate enabled, dependency cleanup promoted; ARC dev verification passed, first autonomous Codex feature experiment pending.
+**Reviewed:** 2026-11-08 | **Status:** Living roadmap; Python 3.12 promoted, Renovate enabled, dependency cleanup promoted; ARC dev verification and first autonomous Codex pipeline experiment passed; real-feature behavior validation remains next.
 
 This roadmap covers application code. The separate [deployment workflow](deployment-workflow.md) covers CI, image publishing, dev deployment and production promotion. Deployment manifests remain authoritative in [homelab-gitops](https://github.com/bturetzky/homelab-gitops).
 
 ## Autonomous feature development checkpoint (2026-11-08)
 
 - **Implemented and operator-verified:** ARC runner installed and smoke-tested; dedicated get-only dev Deployment/Argo CD Application RBAC; main-branch build → dev GitOps update → Argo CD rollout → digest/readiness verification job passed. No inbound homelab webhook or extra HTTP verification service.
-- **Next experiment:** Give Codex Cloud one approved contained feature and evaluate its implementation, tests, PR/CI repair, and ability to merge within approved bounds. A green rollout check does not establish live Discord behavior.
-- **Not implemented:** Event-driven agent resumption, autonomous end-to-end feature lifecycle, automatic production promotion, and live Discord integration verification. See [agent development design](agent-development-design.md).
+- **Experiment completed (PR #38):** Codex created a trivial health helper and test, passed 85 local tests and PR CI, merged its PR, polled the main-branch workflow, and posted successful digest-matched ARC verification to the original PR. Commit `9f147f5eab71e36f48b4c99937d899125622ed08`; [workflow evidence](https://github.com/bturetzky/chatgpt-discord-bot/actions/runs/42538409045). No manual handoff during polling.
+- **Next:** Test a small *user-visible* feature under an existing design, then manually smoke-test dev Discord behavior. A green rollout check does not establish functionality. CI repair remains untested.
+- **Not implemented/tested:** Event-driven agent resumption (Codex remained active and polled), automated live Discord integration verification, CI-repair loop, and automatic production promotion (intentionally manual). See [agent development design](agent-development-design.md).
 
 ## Per-chat usage instrumentation (proposed, 2026-11-07)
 
