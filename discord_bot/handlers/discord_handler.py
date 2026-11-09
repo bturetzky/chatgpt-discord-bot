@@ -202,7 +202,10 @@ class DiscordHandler:
                     messages.append({"role": "user", "content": [{"type": "input_text", "text": "Attached image processing failed. Do not claim to have seen the images."}]})
 
             try:
-                response = await self.chatgpt_handler.get_response(messages, channel)
+                response = await self.chatgpt_handler.get_response(
+                    messages, channel, discord_context={
+                        'archive': getattr(self, 'archive', None), 'guild': message.guild, 'member': message.author
+                    })
             except Exception:
                 logging.exception('Discord message processing failed')
 

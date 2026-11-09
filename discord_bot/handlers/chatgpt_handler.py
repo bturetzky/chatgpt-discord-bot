@@ -51,7 +51,7 @@ class ChatGPTHandler:
     def get_response_system_prompt_content(self, bot_mention):
         return build_system_prompt(bot_mention, datetime.now())
 
-    async def get_response(self, messages, channel):
+    async def get_response(self, messages, channel, discord_context=None):
         # Discord history and retrieved memories are already ordinary role/content
         # messages. Responses accepts these directly; legacy function-role messages
         # must never be constructed.
@@ -110,7 +110,11 @@ class ChatGPTHandler:
                         else:
                             if call.name in ("get_webpage_contents", "read_youtube"):
                                 page_reads += 1
-                            result = await self.function_handler.execute_function(call.name, arguments)
+                            result = await self.function_handler.execute_function(
+                                call.name, arguments, context=discord_context
+                            ) if call.name == 'search_discord_history' else await self.function_handler.execute_function(
+                                call.name, arguments
+                            )
                             if call.name == "read_youtube":
                                 try:
                                     parsed_result = json.loads(result)

@@ -1,6 +1,6 @@
 # Server Awareness — design
 
-**Status:** SQLite foundation deployed in dev; message ingestion is next.  
+**Status:** SQLite ingestion and bounded backfill accepted in dev; FTS5 history search is in PR for dev validation.  
 **Last reviewed:** 2026-11-08  
 **Scope:** chatgpt-discord-bot application. Kubernetes manifests and storage deployment belong in `bturetzky/homelab-gitops`.
 
@@ -153,3 +153,16 @@ Server Awareness and [Rich Content Understanding](rich-content-understanding-des
 **Delivery dependency:** implement a stable rich-content reader interface now; Server Awareness can consume it later. Neither feature needs to wait for the other. The initial Server Awareness milestone remains text/URL/attachment-metadata indexing and search.
 
 **Implementation status:** Nothing described here is deployed or implemented merely by creating this design. Keep this document updated as scope, decisions, validation and observed behavior change.
+
+
+## History search dev acceptance
+
+After CI passes and deployment to dev, mention the bot in a channel it can read:
+
+1. Ask it to find a distinctive phrase known to exist in the dev archive; expect a short excerpt and a Discord message permalink.
+2. Ask it to search for a phrase that appears only in a different accessible channel; verify the linked channel and source text.
+3. Ask for a nonexistent phrase; expect an explicit no-results answer rather than invented quotes.
+4. Test a channel hidden from the requesting member, if available; its messages must never be returned.
+5. Edit or delete a known archived message and search for its old words; the old text must not be returned after the event is processed.
+
+Search uses literal FTS5 words (AND semantics), at most ten snippets of 350 characters, with optional channel/author/date filters. It is scoped to the request guild and channels visible to the requester and bot. This does not yet implement adjacent-message expansion or semantic search. Production promotion remains deferred.

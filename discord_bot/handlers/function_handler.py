@@ -20,7 +20,7 @@ class FunctionHandler:
 
         return loaded_functions
 
-    async def execute_function(self, function_name, args):
+    async def execute_function(self, function_name, args, context=None):
         started = time.monotonic()
         try:
             function_class = self.functions.get(function_name)
@@ -29,7 +29,8 @@ class FunctionHandler:
                 if isinstance(args, str):
                     args = json.loads(args)
                 instance = function_class()
-                result = instance.execute(args)
+                result = (instance.execute_with_context(args, context)
+                          if function_name == 'search_discord_history' else instance.execute(args))
                 result = await asyncio.wait_for(result, timeout=30) if inspect.isawaitable(result) else result
                 failed = False
                 if isinstance(result, str):
