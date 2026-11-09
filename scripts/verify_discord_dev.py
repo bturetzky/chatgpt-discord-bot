@@ -86,7 +86,10 @@ while time.monotonic() < deadline:
                         pod.get("metadata", {}).get("deletionTimestamp") or len(statuses) != 1):
                     continue
                 container = statuses[0]
-                if container.get("image") == IMAGE + EXPECTED and container.get("ready"):
+                if (any(spec_container.get("name") == "chatgpt-discord-bot" and
+                        spec_container.get("image") == IMAGE + EXPECTED
+                        for spec_container in pod.get("spec", {}).get("containers", []))
+                        and container.get("ready")):
                     candidates.append((name, container.get("restartCount", 0)))
             if len(candidates) != 1:
                 last_failure = "pod_not_ready: " + pod_summary(pods)
@@ -114,7 +117,9 @@ while time.monotonic() < deadline:
             stable = any(
                 p.get("metadata", {}).get("name") == pod_name and
                 any(s.get("name") == "chatgpt-discord-bot" and s.get("ready") and
-                    s.get("restartCount", 0) == 0 and s.get("image") == IMAGE + EXPECTED
+                    s.get("restartCount", 0) == 0 and
+                    any(sc.get("name") == "chatgpt-discord-bot" and sc.get("image") == IMAGE + EXPECTED
+                        for sc in p.get("spec", {}).get("containers", []))
                     for s in p.get("status", {}).get("containerStatuses", []))
                 for p in current
             )
