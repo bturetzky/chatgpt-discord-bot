@@ -1,7 +1,7 @@
 # Proactive Personality and Reaction Awareness — design
 
 **Status:** Proposed; design only, not implemented.  
-**Last reviewed:** 2026-11-07  
+**Last reviewed:** 2026-11-08  
 **Scope:** chatgpt-discord-bot; Kubernetes deployment configuration belongs in `bturetzky/homelab-gitops`.
 
 ## Goal
@@ -29,9 +29,9 @@ This is a feature, not an always-on chatbot: no unsolicited text replies in v1.
 
 **Non-goals:** replying to every conversation, reacting on a timer to hit a quota, reacting to its own posts, escalating disagreements, pretending reactions are factual endorsements, or creating permanent relationship memories from emoji alone.
 
-## Implementation sequencing note (recommendation; not a finalized priority decision)
+## Approved sequencing decision (2026-11-08)
 
-The full live proactive reaction feature needs persistent rolling budgets, deduplication and action reservations across pod restarts. Reuse the minimal durable SQLite foundation planned for Server Awareness if it is available; do not require history backfill, FTS search, or automatic memory extraction before beginning reaction observation/shadow mode. The image-understanding feature is independent and a reasonable next Codex assignment because it has no new storage requirement. Final implementation order remains an operator decision.
+Server Awareness is prioritized ahead of proactive reactions: first a shared persistent SQLite foundation, then message ingestion/FTS5 search and bounded backfill, then reaction observation/shadow mode, then live proactive reactions, then selective automatic memory extraction. Reaction evaluation can reuse indexed message context and existing gateway observation, rather than building a parallel message-history mechanism. Store reaction events/counts, action reservations, deduplication, rolling budgets and cooldowns in separate ordinary SQLite tables, not the message FTS5 index. The message archive does not itself decide when to react. Numerical rate limits are still unapproved. This is an implementation plan, not evidence that storage, indexing or reactions have been deployed.
 
 ## Architecture
 
