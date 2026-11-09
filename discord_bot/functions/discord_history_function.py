@@ -95,3 +95,89 @@ class SearchDiscordHistory(BaseFunction):
             logging.warning("History search failed: guild=%s query=%r permitted_channels=%s error_type=%s",
                             guild.id, args.get("query"), sorted(allowed), type(exc).__name__)
             return json.dumps({"ok": False, "error": str(exc)[:160]})
+
+
+def get_conversation_context(db, *, guild_id, channel_ids, channel_id, message_id,
+                             before=4, after=4):
+    """Read a bounded chronological window around an archived message."""
+    if not isinstance(message_id, str) or not message_id.isdecimal():
+        raise ValueError("message_id must be a Discord snowflake")
+    if not isinstance(channel_id, str) or not channel_id.isdecimal():
+        raise ValueError("channel_id must be a Discord snowflake")
+    if not all(isinstance(n, int) and not isinstance(n, bool) and 0 <= n <= 10
+               for n in (before, after)) or before + after > 16:
+        raise ValueError("context window must be 0..10 per side and at most 16 total")
+    if channel_id not in channel_ids:
+        return []
+    anchor = db.execute(
+        "SELECT created_at FROM messages WHERE guild_id=? AND channel_id=? "
+        "AND message_id=? AND deleted_at IS NULL",
+        (str(guild_id), channel_id, message_id)).fetchone()
+    if anchor is None:
+        return []
+    timestamp = anchor[0]
+    fields = ("SELECT guild_id,channel_id,message_id,author_id,content,created_at "
+              "FROM messages WHERE guild_id=? AND channel_id=? AND deleted_at IS NULL "
+              "AND content != '' AND ")
+    prior = db.execute(
+        fields + "(created_at < ? OR (created_at = ? AND message_id < ?)) "
+        "ORDER BY created_at DESC,message_id DESC LIMIT ?",
+        (str(guild_id), channel_id, timestamp, timestamp, message_id, before)).fetchall()
+    current = db.execute(
+        fields + "message_id=? LIMIT 1",
+        (str(guild_id), channel_id, message_id)).fetchall()
+    following = db.execute(
+        fields + "(created_at > ? OR (created_at = ? AND message_id > ?)) "
+        "ORDER BY created_at ASC,message_id ASC LIMIT ?",
+        (str(guild_id), channel_id, timestamp, timestamp, message_id, after)).fetchall()
+    return [
+        {"author_id": author, "channel_id": channel, "created_at": created,
+         "content": content[:1200],
+         "url": f"https://discord.com/channels/{guild}/{channel}/{message}",
+         "anchor": message == message_id}
+        for guild, channel, message, author, content, created
+        in [*reversed(prior), *current, *following]
+    ]
+
+
+class GetDiscordConversationContext(BaseFunction):
+    name = "get_discord_conversation_context"
+    description = ("After finding a message with search_discord_history, read nearby archived "
+                   "messages in the same channel to understand the actual exchange. "
+                   "Use the channel_id and message_id from a search result's Discord URL. "
+                   "Do not assume adjacent messages are replies; use author and timestamps.")
+    parameters = {"type": "object", "properties": {
+        "channel_id": {"type": "string", "description": "Channel ID from a history-search result URL."},
+        "message_id": {"type": "string", "description": "Message ID from a history-search result URL."},
+        "before": {"type": "integer", "minimum": 0, "maximum": 10},
+        "after": {"type": "integer", "minimum": 0, "maximum": 10}
+    }, "required": ["channel_id", "message_id"]}
+
+    async def execute(self, args):
+        return json.dumps({"ok": False, "error": "Discord request context required"})
+
+    async def execute_with_context(self, args, context):
+        if context is None or context.get("archive") is None or context.get("guild") is None:
+            return json.dumps({"ok": False, "error": "Discord archive unavailable"})
+        guild, member = context["guild"], context.get("member")
+        if member is None or guild.me is None:
+            return json.dumps({"ok": False, "error": "Discord permissions unavailable"})
+        allowed = {str(ch.id) for ch in guild.text_channels
+                   if ch.permissions_for(member).view_channel and
+                      ch.permissions_for(member).read_message_history and
+                      ch.permissions_for(guild.me).view_channel and
+                      ch.permissions_for(guild.me).read_message_history}
+        try:
+            channel_id = str(args.get("channel_id") or "")
+            message_id = str(args.get("message_id") or "")
+            results = get_conversation_context(
+                context["archive"].db, guild_id=guild.id, channel_ids=allowed,
+                channel_id=channel_id, message_id=message_id,
+                before=args.get("before", 4), after=args.get("after", 4))
+            logging.info("History context: guild=%s channel=%s anchor=%s results=%d",
+                         guild.id, channel_id, message_id, len(results))
+            return json.dumps({"ok": True, "results": results})
+        except (ValueError, TypeError, sqlite3.Error) as exc:
+            logging.warning("History context failed: guild=%s error_type=%s",
+                            guild.id, type(exc).__name__)
+            return json.dumps({"ok": False, "error": str(exc)[:160]})

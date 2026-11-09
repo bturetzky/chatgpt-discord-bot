@@ -6,7 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from discord_bot.storage import Database
-from discord_bot.functions.discord_history_function import SearchDiscordHistory, search_messages
+from discord_bot.functions.discord_history_function import (SearchDiscordHistory, search_messages,
+    GetDiscordConversationContext, get_conversation_context)
 
 
 class HistorySearchTests(unittest.IsolatedAsyncioTestCase):
@@ -70,3 +71,48 @@ class HistorySearchTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(json.loads(await tool.execute_with_context(
                     {"query": "Factorio"}, {"archive": SimpleNamespace(db=conn),
                     "guild": guild, "member": None}))["ok"])
+
+    async def test_conversation_context_window_permissions_and_deleted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with Database(str(Path(tmp) / "test.db")) as db:
+                conn = db.connection
+                for i in range(1, 9):
+                    conn.execute(
+                        "INSERT INTO messages(guild_id,channel_id,message_id,author_id,content,created_at,deleted_at) "
+                        "VALUES (?,?,?,?,?,?,?)",
+                        ("1", "10", str(i), "7" if i % 2 else "8",
+                         f"message {i}", f"2026-11-01T12:00:{i:02d}+00:00",
+                         "2026-11-02" if i == 6 else None))
+                conn.execute(
+                    "INSERT INTO messages(guild_id,channel_id,message_id,author_id,content,created_at) "
+                    "VALUES (?,?,?,?,?,?)",
+                    ("1", "11", "99", "7", "private", "2026-11-01T12:00:04+00:00"))
+                results = get_conversation_context(
+                    conn, guild_id="1", channel_ids={"10"}, channel_id="10",
+                    message_id="4", before=2, after=3)
+                self.assertEqual([x["url"].split("/")[-1] for x in results],
+                                 ["2", "3", "4", "5", "7", "8"])
+                self.assertEqual([x["anchor"] for x in results],
+                                 [False, False, True, False, False, False])
+                self.assertEqual(get_conversation_context(
+                    conn, guild_id="1", channel_ids={"10"}, channel_id="11",
+                    message_id="99"), [])
+                self.assertEqual(get_conversation_context(
+                    conn, guild_id="1", channel_ids={"10"}, channel_id="10",
+                    message_id="6"), [])
+                with self.assertRaises(ValueError):
+                    get_conversation_context(conn, guild_id="1", channel_ids={"10"},
+                                             channel_id="10", message_id="4",
+                                             before=10, after=10)
+
+                class Channel:
+                    id = 10
+                    def permissions_for(self, member):
+                        return SimpleNamespace(view_channel=True, read_message_history=True)
+                guild = SimpleNamespace(id=1, text_channels=[Channel()], me=object())
+                tool = GetDiscordConversationContext()
+                payload = json.loads(await tool.execute_with_context(
+                    {"channel_id": "10", "message_id": "4", "before": 1, "after": 1},
+                    {"archive": SimpleNamespace(db=conn), "guild": guild, "member": object()}))
+                self.assertTrue(payload["ok"])
+                self.assertEqual(len(payload["results"]), 3)
