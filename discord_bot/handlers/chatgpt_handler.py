@@ -112,7 +112,7 @@ class ChatGPTHandler:
                                 page_reads += 1
                             result = await self.function_handler.execute_function(
                                 call.name, arguments, context=discord_context
-                            ) if call.name == 'search_discord_history' else await self.function_handler.execute_function(
+                            ) if call.name in ('search_discord_history', 'get_discord_conversation_context') else await self.function_handler.execute_function(
                                 call.name, arguments
                             )
                             if call.name == "read_youtube":
