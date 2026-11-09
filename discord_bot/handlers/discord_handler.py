@@ -114,7 +114,6 @@ class DiscordHandler:
             if self.archive is not None and payload.guild_id is not None:
                 try:
                     self.archive.delete(payload.message_id)
-                if payload.guild_id is not None:
                     ReactionObserver(self.archive.db).clear(payload)
                 except Exception:
                     logging.exception('Discord message archive deletion failed')
