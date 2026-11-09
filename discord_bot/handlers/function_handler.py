@@ -29,7 +29,8 @@ class FunctionHandler:
                 if isinstance(args, str):
                     args = json.loads(args)
                 instance = function_class()
-                result = (instance.execute_with_context(args, context)\n                          if function_name == 'search_discord_history' else instance.execute(args))
+                result = (instance.execute_with_context(args, context)
+                          if function_name == 'search_discord_history' else instance.execute(args))
                 result = await asyncio.wait_for(result, timeout=30) if inspect.isawaitable(result) else result
                 failed = False
                 if isinstance(result, str):
