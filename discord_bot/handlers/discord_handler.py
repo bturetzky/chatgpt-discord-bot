@@ -54,7 +54,7 @@ class DiscordHandler:
                 return
             try:
                 # Member may be absent on uncached events; never classify bot reactions as human.
-                if payload.member is not None and payload.member.bot:
+                if payload.member is None or payload.member.bot:
                     return
                 ReactionObserver(self.archive.db).add(payload, bot_user_id=self.client.user.id)
             except Exception:
@@ -114,6 +114,8 @@ class DiscordHandler:
             if self.archive is not None and payload.guild_id is not None:
                 try:
                     self.archive.delete(payload.message_id)
+                if payload.guild_id is not None:
+                    ReactionObserver(self.archive.db).clear(payload)
                 except Exception:
                     logging.exception('Discord message archive deletion failed')
 
@@ -123,6 +125,8 @@ class DiscordHandler:
                 try:
                     for message_id in payload.message_ids:
                         self.archive.delete(message_id)
+                        self.archive.db.execute(
+                            'DELETE FROM reaction_members WHERE message_id=?', (str(message_id),))
                 except Exception:
                     logging.exception('Discord bulk archive deletion failed')
 
