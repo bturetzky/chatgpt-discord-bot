@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import io
+import threading
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -108,6 +109,22 @@ class ImageBuilderTests(unittest.IsolatedAsyncioTestCase):
         result = await self.builder.build(message([attachment(), attachment(), attachment()]))
         self.assertEqual(self.builder.download.await_count, 2)
         self.assertIn("image_limit", result["content"][-1]["text"])
+
+    async def test_unsupported_files_do_not_displace_two_images(self):
+        self.builder.download = AsyncMock(return_value=(image_bytes(), "image/png"))
+        result = await self.builder.build(message([attachment(mime="application/pdf"), attachment(), attachment()]))
+        self.assertEqual(self.builder.download.await_count, 2)
+        self.assertEqual(sum(part["type"] == "input_image" for part in result["content"]), 2)
+        self.assertIn("unsupported_type", result["content"][-1]["text"])
+        self.assertNotIn("image_limit", result["content"][-1]["text"])
+
+    async def test_unsupported_current_files_do_not_displace_reply_image(self):
+        reply = SimpleNamespace(attachments=[attachment()], author=SimpleNamespace(display_name="Sam"))
+        ref = SimpleNamespace(resolved=reply, channel_id=12, message_id=55)
+        self.builder.download = AsyncMock(return_value=(image_bytes(), "image/png"))
+        result = await self.builder.build(message([attachment(mime="application/pdf"), attachment()], ref))
+        self.assertEqual(self.builder.download.await_count, 2)
+        self.assertIn("Sam", result["content"][2]["text"])
 
     async def test_failed_image_is_not_sent_and_logs_no_url_or_data(self):
         self.builder.download = AsyncMock(side_effect=ImageFailure("download_unavailable"))
@@ -237,6 +254,55 @@ class ImageBuilderTests(unittest.IsolatedAsyncioTestCase):
         with patch("discord_bot.handlers.image_context.aiohttp.ClientSession", side_effect=lambda **kwargs: Session()):
             await asyncio.gather(*(self.builder.download(attachment(), MAX_IMAGE_BYTES) for _ in range(3)))
         self.assertEqual(peak, 2)
+
+    async def test_cancelled_decode_keeps_permit_until_worker_finishes(self):
+        started, release = threading.Event(), threading.Event()
+
+        def blocked_decode(*args):
+            started.set()
+            release.wait(3)
+
+        class Response:
+            status = 200
+            headers = {"Content-Type": "image/png"}
+            content = None
+
+            async def __aenter__(self):
+                self.content = self
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def iter_chunked(self, _size):
+                yield image_bytes()
+
+        class Session:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            def get(self, *args, **kwargs):
+                return Response()
+
+        with patch("discord_bot.handlers.image_context.aiohttp.ClientSession", side_effect=lambda **kwargs: Session()), \
+             patch("discord_bot.handlers.image_context.validate_image", side_effect=blocked_decode):
+            task = asyncio.create_task(self.builder.download(attachment(), MAX_IMAGE_BYTES))
+            try:
+                self.assertTrue(await asyncio.to_thread(started.wait, 2))
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+                self.assertEqual(self.builder.semaphore._value, 1)
+            finally:
+                release.set()
+            for _ in range(100):
+                if self.builder.semaphore._value == 2:
+                    break
+                await asyncio.sleep(0.01)
+            self.assertEqual(self.builder.semaphore._value, 2)
 
 
 class DiscordImageRoutingTests(unittest.IsolatedAsyncioTestCase):
