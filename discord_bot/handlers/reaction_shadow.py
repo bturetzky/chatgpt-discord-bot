@@ -26,6 +26,7 @@ class ReactionShadow:
         self.pending = {}
         self.lock = asyncio.Lock()
         self.closed = False
+        self.bot_user_id = None
 
     def _eligible(self, guild_id, channel_id, message_id):
         if self.closed or str(guild_id) != self.guild_id:
@@ -35,7 +36,8 @@ class ReactionShadow:
                WHERE guild_id=? AND channel_id=? AND message_id=? AND deleted_at IS NULL""",
             (self.guild_id, str(channel_id), str(message_id)),
         ).fetchone()
-        if row is None or not row[0] or len(row[0].strip()) < 12:
+        if (row is None or not row[0] or len(row[0].strip()) < 12
+                or (self.bot_user_id is not None and row[1] == str(self.bot_user_id))):
             return False
         try:
             age = (datetime.now(timezone.utc) - datetime.fromisoformat(row[2])).total_seconds()
