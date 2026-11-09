@@ -1,7 +1,7 @@
 # Rich Content Understanding — design
 
 **Status:** Public URL reading and Discord image inputs are implemented; YouTube transcript support is implemented and operator-confirmed complete. Other rich-content capabilities remain proposed.
-**Last reviewed:** 2026-11-08  
+**Last reviewed:** 2026-11-09  
 **Scope:** chatgpt-discord-bot. Deployment manifests belong in `bturetzky/homelab-gitops`.
 
 ## Objective
@@ -25,73 +25,48 @@ This feature is independent of, but compatible with, [Server Awareness](server-a
 - **No new hardware or always-on infrastructure.** Reuse the existing Python process, discord.py, aiohttp, BeautifulSoup and OpenAI Responses API.
 - **User-triggered analysis:** Process rich content when the bot is mentioned or DM'd, or when a tool is explicitly called during that response. Do not invoke OpenAI for every image/link posted on the server.
 - **Direct vision:** For attached images, supply validated image bytes as multimodal input to a vision-capable model. Do not first call a separate captioning model unless later measurement justifies it.
-- **Structured URL extraction:** Specialized readers behind a shared interface; distinguish metadata, fetched page content and transcript. Never imply content was read when extraction failed.
+- **Structured URL extraction:** Current separate webpage and YouTube tools distinguish fetched content, metadata and transcripts. A shared reader interface is a future design option, not an implemented component. Never imply content was read when extraction failed.
 - **YouTube is metadata + transcript-aware, not full video understanding in v1.** No video download, frame analysis or audio transcription pipeline initially.
 - **Conservative bounds:** small limits on images, links, bytes, tokens, duration and concurrent requests; explicit timeouts and content-type checks.
 - **Security:** URLs and extracted text are untrusted input. Defend against SSRF, prompt injection, redirect-to-private-address attacks, decompression bombs, oversized downloads and unsupported formats.
 - **No persistence requirement for v1:** temporary content is held in memory only and discarded after response. A future Server Awareness integration may store derived metadata or descriptions in its own archive.
 - **Dev/prod isolation:** validate using the independent dev bot/server; promote to prod through the existing manual workflow.
 
-## Current code integration
+## Current code integration (implemented)
 
-- `discord_bot/handlers/discord_handler.py` currently serializes recent Discord history as **text-only** `role/content` messages. The current message's attachments, embeds and referenced messages are not represented as multimodal inputs. Extend its message-context builder rather than bolting image URLs into plain text.
-- `discord_bot/handlers/chatgpt_handler.py` sends the conversation to the OpenAI **Responses API** and supports function calls. Add support for valid multimodal content items, while retaining existing tool-call loop behavior and usage metrics.
-- `discord_bot/handlers/function_handler.py` dynamically registers `BaseFunction` subclasses. Existing webpage extraction should be inspected and reused/refactored before introducing duplicate URL fetching logic.
-- `discord_bot/functions/` is the natural home for a `read_url_content` tool, with readers implemented in a separate reusable service/module so the Discord input path and future archive enrichment can share them.
-- `tests/` should cover attachment handling, Responses payloads, URL safety, reader fallbacks and regression of existing text-only chat.
+- `discord_bot/handlers/discord_handler.py` preserves text-only recent history and Pinecone memory retrieval. For mentions and DMs with attachments or a direct reply, it separately appends the multimodal context returned by `ImageContextBuilder`.
+- `discord_bot/handlers/image_context.py` validates and downloads supported still-image attachments from the triggering message and at most one directly replied-to message. It supplies bounded `input_image` data URLs with source attribution; it does not ingest historical images or persist image bytes.
+- `discord_bot/handlers/chatgpt_handler.py` sends text and optional image parts to the Responses API. Its existing function-call loop dispatches two distinct on-demand reading tools: `get_webpage_contents` for public HTML/GitHub README extraction and `read_youtube` for public metadata and best-effort captions.
+- `discord_bot/functions/function_handler.py` is not a module; the function registry lives in `discord_bot/handlers/function_handler.py`, with tool implementations under `discord_bot/functions/`.
+- `tests/test_image_context.py`, `tests/test_url_reading.py`, `tests/test_youtube_reader.py` and related regression tests exercise these paths with mocked external services.
 
-## Component boundaries
+### Implemented request flow
 
 ```text
-Discord mention/DM (+ optional referenced message)
-    |
-    +-- ConversationContextBuilder
-    |      |-- ordinary text + speaker attribution
-    |      |-- image attachment validation/fetch -> Responses image input
-    |      +-- URL candidates / attachment metadata
-    |
-    +-- ChatGPTHandler (Responses API)
-           |-- direct vision on images included in context
-           +-- read_url_content(url, question?) tool
-                  |
-                  +-- URL safety / fetch policy
-                  +-- ReaderRegistry
-                         |-- generic HTML/article
-                         |-- GitHub public content
-                         +-- YouTube metadata + available transcript
-                  |
-                  +-- bounded structured extraction result
+Discord mention/DM (+ optional direct reply)
+    |-- recent channel text + attributed memories
+    |-- ImageContextBuilder -> supported attachment validation/download
+    |                         -> optional Responses input_image data URLs
+    +-- ChatGPTHandler (Responses API and existing tool loop)
+          |-- get_webpage_contents -> bounded public HTML/GitHub README extraction
+          +-- read_youtube -> bounded YouTube metadata/caption retrieval
 ```
 
-Use a shared normalized result shape for all URL readers:
-
-```json
-{
-  "ok": true,
-  "url": "https://example.com/post",
-  "canonical_url": "https://example.com/post",
-  "kind": "article",
-  "title": "Example",
-  "author": null,
-  "published_at": null,
-  "source": "fetched_html",
-  "content": "bounded extracted text",
-  "content_truncated": false,
-  "limitations": []
-}
-```
-
-For YouTube, use `kind: youtube`, `source: transcript|description|metadata`, video ID, available language, and explicit transcript availability. Return `ok: false` and a short typed error for fetch failures; do not fabricate extracted content.
+The earlier proposed `ConversationContextBuilder`, `read_url_content` and `ReaderRegistry` abstractions are **not** implemented; the existing separate tool modules provide current behavior. The design notes below retain potential extensions, not an alternate description of shipped code.
 
 ## Image / multimodal ingestion
 
-The Discord image slice sends validated PNG, JPEG and WebP attachments from the triggering message and its direct reply as Responses API `input_image` data URLs. It is restricted to mentioned messages and DMs, keeps ordinary history and memory lookup text-only, and does not persist image bytes. At most two attachments are processed per response, with 4 MiB per image, 8 MiB total, 20 million pixels per image, a 10-second download timeout and two concurrent image downloads per bot instance. The fetcher accepts only HTTPS Discord CDN hosts, rejects redirects and compressed transfer encodings, sends no Discord credentials, and verifies the declared MIME and decoded still-image content with Pillow. Unsupported, expired, oversized and failed attachments are described as unavailable; logs contain counts, bytes, duration and categories only. Replies resolve at most one same-channel referenced message with a five-second timeout. No older-history attachment scanning is performed.
+The implemented Discord image slice sends validated PNG, JPEG and WebP attachments from the triggering message and its direct reply as Responses API `input_image` data URLs. It is restricted to mentioned messages and DMs, keeps ordinary history and memory lookup text-only, and does not persist image bytes. At most two attachments are processed per response, with 4 MiB per image, 8 MiB total, 20 million pixels per image, a 10-second download timeout and two concurrent image downloads per bot instance. The fetcher accepts only HTTPS Discord CDN hosts, rejects redirects and compressed transfer encodings, sends no Discord credentials, and verifies the declared MIME and decoded still-image content with Pillow. Unsupported, expired, oversized and failed attachments are described as unavailable; logs contain counts, bytes, duration and categories only. Replies resolve at most one same-channel referenced message with a five-second timeout. No older-history attachment scanning is performed.
 
 Image selection inspects at most 20 attachment metadata entries and skips unsupported file types before choosing up to two supported image candidates; failed image downloads still consume a candidate slot to bound work. If a request is cancelled during decoding, the concurrency permit remains held until its decoder thread finishes.
 
 The default `gpt-6.1-terra` model is documented as accepting text and image inputs ([model documentation](https://developers.openai.com/api/docs/models/gpt-6.1-terra)); deployments overriding `OPENAI_MODEL` must use a Responses-compatible vision model. Automated tests cover mocked Discord and Responses payloads; latency and cost remain unmeasured. This slice does not implement GIF, PDF, video, or image indexing.
 
 The operator subsequently reported successful Discord testing of PR #43 and promotion to production. PR #44 hardened selection of supported image attachments and cancellation of in-flight decoding; its own live Discord acceptance and production promotion are separate.
+
+### Original image design notes (superseded where implemented limits differ)
+
+The following bullets preserve the initial design proposals. The implemented bounds and supported formats are authoritative in the preceding paragraphs and `discord_bot/handlers/image_context.py`.
 
 - Include the triggering message and optionally a directly replied-to message. For ordinary history, preserve existing text-only context; do **not** fetch every historical attachment by default.
 - Accept supported image MIME types (initially JPEG, PNG, WebP, GIF with model-specific behavior verified). Check actual content signatures, not just file extensions or Discord-supplied MIME.
@@ -119,7 +94,7 @@ The existing `get_webpage_contents` tool reads public HTML on demand, preferring
 Failed reads include a category, safe hostname, elapsed milliseconds and HTTP status when available; the corresponding warning log omits paths, query strings, exception text and page contents. Timeout classification preserves connect and streamed read timeouts, and connection attempts share a bounded connect timeout across resolved addresses. HTTP errors are reported as responses from the server, not automatically attributed to bot protection. A failure after an HTTP 200 can reflect unsupported content, download size or extraction rather than an HTTP error. Manual Discord retests remain necessary to diagnose the earlier News Tribune and Ars failures in the dev network: their original generic results did not preserve the cause. From the cloud proxy, the Ars page returned HTTP 200 and its HTML extracted successfully; the News Tribune request received an upstream connection reset. Those observations do not establish what happened in the dev cluster.
 
 - Detect URLs in the triggering message, and optionally directly referenced messages; avoid auto-reading every URL in the last 30 messages.
-- Expose `read_url_content` as a model tool for explicit or contextually necessary reading. Model may read a bounded number of URLs per turn (proposed 2); do not force a network fetch for unrelated casual mentions.
+- A unified `read_url_content` model tool was proposed; the current implementation instead exposes `get_webpage_contents` and `read_youtube` for explicit or contextually necessary reading. Model may read a bounded number of URLs per turn (proposed 2); do not force a network fetch for unrelated casual mentions.
 - Normalize and validate URLs, strip tracking parameters only when safe, and deduplicate. Permit only HTTP(S); reject credentials in URLs, localhost, loopback, RFC1918/link-local/unique-local and metadata-service addresses, internal DNS resolutions and redirects to them. Validate DNS resolution and connection destination on each redirect; beware DNS rebinding. If secure outbound fetch restrictions cannot be implemented reliably, use a proven safe-fetch library or explicit public-domain provider API instead.
 - Set request timeouts, redirect limit, compressed/uncompressed byte caps, response content-type allowlist, per-host throttling, user agent and concurrency cap. Do not log full private URLs/query strings or page contents.
 - Treat retrieved content as untrusted quoted material, never instructions to the assistant. Do not follow links embedded in fetched content automatically.
@@ -231,4 +206,4 @@ The Server Awareness extractor may summarize what participants **said about** sh
 
 No shared persistent cache or archive database is required to ship Rich Content Understanding v1; persistence, retention and indexing are owned by the Server Awareness design.
 
-**Implementation status:** This document specifies intended behavior and starting limits, not completed work. Update it as providers are validated and implementation decisions are confirmed.
+**Implementation status:** The current image, public webpage/GitHub README and YouTube reader paths described above are implemented. Other bullets preserve the original proposal and possible future enhancements; they are not claims that the proposed shared reader architecture, automatic enrichment, GIF/video processing or background indexing have shipped.
