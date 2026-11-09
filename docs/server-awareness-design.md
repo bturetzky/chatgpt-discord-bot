@@ -46,7 +46,7 @@ The shared database is infrastructure, **not** a single shared feature schema. M
 ### Staged code delivery
 
 1. **PR 1:** SQLite migration for extraction ledger and deterministic, bounded text-only conversation segmentation; unit tests. No model calls, scheduling, Pinecone writes or Discord behavior changes.
-2. **PR 2:** separate extraction prompt, structured candidates, bounded dry-run worker, durable result recording and cost metrics; no Pinecone writes.
+2. **PR 2:** separate extraction prompt, structured candidates, bounded **operator-invoked** dry-run worker, durable result recording and token-usage metrics; no Pinecone writes. Implementation proposed in the dry-run PR; no scheduler or automated work discovery yet.
 3. **PR 3:** semantic deduplication, provenance, correction/supersession and source invalidation; tests against realistic conversations.
 4. **PR 4:** configurable multi-hour in-pod scheduling, guarded autonomous Pinecone writes and observability after dry-run acceptance.
 
@@ -195,3 +195,22 @@ The history-search tool logs the literal query, optional requested channel, perm
 ### Conversation-aware recall (dev acceptance pending)
 
 After `search_discord_history` finds an anchor message, `get_discord_conversation_context` can read up to 10 archived messages before and after that anchor (16 combined), from the same channel, in chronological order. The caller must supply both IDs from the search result's Discord URL. Results include author, timestamp, bounded message content, permalink and anchor flag. The tool applies the requesting member's and bot's channel/history permissions, excludes deleted messages, and never crosses guild or channel boundaries. This is chronological context, not a verified reply graph. Test with the November 7 roast request: the bot should describe a specific detail from the subsequent reply rather than merely linking it. Search narration and response-style tuning remain separate follow-ups.
+
+### Operator-invoked extraction dry-run (PR 2; pending merge and validation)
+
+The second extraction PR introduces migration 8 (`extraction_candidates`, `extraction_usage`), an independent evidence-focused prompt, and a manual CLI. It is **not** wired into startup, Discord events, reaction shadow mode or Pinecone. There is no periodic scheduling or automatic checkpoint yet.
+
+Choose a **small, settled, explicit UTC interval** in the dev guild, preferably containing a few actual conversations. Invoke from the dev pod with `DISCORD_SQLITE_PATH` and `OPENAI_API_KEY` already configured:
+
+```bash
+kubectl -n discord-dev exec deploy/chatgpt-discord-bot -- \\
+  python -m discord_bot.storage.extraction_cli \\
+  --guild-id "$DEV_GUILD_ID" \\
+  --since 2026-11-08T12:00:00+00:00 \\
+  --until 2026-11-08T13:00:00+00:00 \\
+  --max-windows 5 --max-rows 1000
+```
+
+Replace the example dates with a window that actually has messages; the CLI does not discover a guild ID automatically. Avoid committing guild IDs to Git. **Running this command makes OpenAI API calls and stores proposed candidates locally**, but does not upsert Pinecone memories. It prints aggregate counts only; review the SQLite candidate table locally without pasting private message content into issues/logs. The input is capped at 40 messages per conversation window (1000 characters/message), five windows per invocation by default, and 1200 output tokens/model call. It rejects unsupported source/participant IDs and skips successfully completed unchanged batches. Changed source text reopens its batch. It does not yet resolve semantic duplicates or invalidate previously accepted Pinecone memories.
+
+Validation: confirm migration 8, green unit tests, zero candidates is valid, failed calls remain retryable, and repeated invocation skips completed batches. Test with a copied representative archive if the dev guild has insufficient conversation history. The operator should assess candidate quality, source attribution, and token usage before authorizing autonomous writes. Do not run this against the production archive as an automatic task.
