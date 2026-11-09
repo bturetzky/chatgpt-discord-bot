@@ -22,6 +22,13 @@ class MessageArchive:
              str(message.author.id), message.content or "", created, edited),
         )
 
+    def edit(self, message_id, content):
+        self.db.execute(
+            """UPDATE messages SET content=?, edited_at=CURRENT_TIMESTAMP
+               WHERE message_id=? AND deleted_at IS NULL""",
+            (content, str(message_id)),
+        )
+
     def delete(self, message_id):
         self.db.execute(
             """UPDATE messages SET content='', deleted_at=CURRENT_TIMESTAMP
