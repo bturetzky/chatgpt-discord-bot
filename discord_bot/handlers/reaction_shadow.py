@@ -46,7 +46,8 @@ class ReactionShadow:
     def observe_message(self, message, *, bot_id):
         if message.guild is None or str(message.guild.id) != self.guild_id:
             return
-        if message.author.bot or message.webhook_id or message.mentions or message.reference:
+        if (message.author.bot or getattr(message, "webhook_id", None)
+                or getattr(message, "mentions", None) or getattr(message, "reference", None)):
             return
         if message.channel.type.name != "text" or str(message.author.id) == str(bot_id):
             return
@@ -139,7 +140,7 @@ class ReactionShadow:
                               "(short snake_case label). Do not use tools."),
                 input=json.dumps({"trigger": trigger, "messages": context,
                                   "allowed_emoji": emojis}, ensure_ascii=False),
-                max_output_tokens=160,
+                max_output_tokens=400,
             ), timeout=25)
             usage = getattr(response, "usage", None)
             input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
