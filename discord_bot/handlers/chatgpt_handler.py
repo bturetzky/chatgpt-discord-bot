@@ -110,7 +110,11 @@ class ChatGPTHandler:
                         else:
                             if call.name in ("get_webpage_contents", "read_youtube"):
                                 page_reads += 1
-                            result = await self.function_handler.execute_function(call.name, arguments, context=discord_context)
+                            result = await self.function_handler.execute_function(
+                                call.name, arguments, context=discord_context
+                            ) if call.name == 'search_discord_history' else await self.function_handler.execute_function(
+                                call.name, arguments
+                            )
                             if call.name == "read_youtube":
                                 try:
                                     parsed_result = json.loads(result)
