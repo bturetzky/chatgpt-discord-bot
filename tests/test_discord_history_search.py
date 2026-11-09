@@ -48,6 +48,13 @@ class HistorySearchTests(unittest.IsolatedAsyncioTestCase):
                 result = json.loads(await tool.execute_with_context(
                     {"query": "Factorio"}, {"archive": SimpleNamespace(db=conn),
                     "guild": guild, "member": object()}))
+                with self.assertLogs(level="INFO") as logs:
+                    cross_channel = json.loads(await tool.execute_with_context(
+                        {"query": "Factorio"}, {"archive": SimpleNamespace(db=conn),
+                        "guild": guild, "member": object()}))
+                self.assertEqual(len(cross_channel["results"]), 1)
+                self.assertIn("permitted_channels=", logs.output[0])
+                self.assertIn("results=1", logs.output[0])
                 self.assertTrue(result["ok"])
                 self.assertEqual(len(result["results"]), 1)
                 self.assertFalse(json.loads(await tool.execute_with_context(
