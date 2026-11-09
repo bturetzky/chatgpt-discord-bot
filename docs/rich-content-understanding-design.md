@@ -1,6 +1,6 @@
 # Rich Content Understanding — design
 
-**Status:** Public HTML article and GitHub README reading implemented and manually exercised in dev (PRs #41–42); other rich-content capabilities remain proposed.
+**Status:** Public URL reading and Discord image inputs are implemented; YouTube caption reading is implemented pending integrated dev acceptance. Other rich-content capabilities remain proposed.
 **Last reviewed:** 2026-11-08  
 **Scope:** chatgpt-discord-bot. Deployment manifests belong in `bturetzky/homelab-gitops`.
 
@@ -89,7 +89,9 @@ The Discord image slice sends validated PNG, JPEG and WebP attachments from the 
 
 Image selection inspects at most 20 attachment metadata entries and skips unsupported file types before choosing up to two supported image candidates; failed image downloads still consume a candidate slot to bound work. If a request is cancelled during decoding, the concurrency permit remains held until its decoder thread finishes.
 
-The default `gpt-6.1-terra` model is documented as accepting text and image inputs ([model documentation](https://developers.openai.com/api/docs/models/gpt-6.1-terra)); deployments overriding `OPENAI_MODEL` must use a Responses-compatible vision model. Tests cover mocked Discord and Responses payloads; live Discord image understanding, latency and cost remain pending manual dev acceptance. This slice does not implement GIF, PDF, video, or image indexing.
+The default `gpt-6.1-terra` model is documented as accepting text and image inputs ([model documentation](https://developers.openai.com/api/docs/models/gpt-6.1-terra)); deployments overriding `OPENAI_MODEL` must use a Responses-compatible vision model. Automated tests cover mocked Discord and Responses payloads; latency and cost remain unmeasured. This slice does not implement GIF, PDF, video, or image indexing.
+
+The operator subsequently reported successful Discord testing of PR #43 and promotion to production. PR #44 hardened selection of supported image attachments and cancellation of in-flight decoding; its own live Discord acceptance and production promotion are separate.
 
 - Include the triggering message and optionally a directly replied-to message. For ordinary history, preserve existing text-only context; do **not** fetch every historical attachment by default.
 - Accept supported image MIME types (initially JPEG, PNG, WebP, GIF with model-specific behavior verified). Check actual content signatures, not just file extensions or Discord-supplied MIME.
@@ -108,11 +110,11 @@ The default `gpt-6.1-terra` model is documented as accepting text and image inpu
 - The News Tribune timed out (~10 seconds) without an HTTP status; connection/TLS/header/read phase is not distinguished. Search fallback found no matching result for the article ID.
 - `http://127.0.0.1/` was rejected as a loopback target, as intended. This is one live negative test, not a complete SSRF security audit.
 - PR #42 added safe diagnostic categories and logging (hostname, HTTP status when present, duration) without exposing page content. Operator confirmed pasted Markdown artifacts were not present in Discord rendering.
-- Successful CI/ARC dev rollout and honest fallback behavior do **not** establish broad article compatibility. Additional live smoke tests remain useful. Images, YouTube and reply-attachment ingestion remain unimplemented.
+- Successful CI/ARC dev rollout and honest fallback behavior do **not** establish broad article compatibility. Additional live smoke tests remain useful. At the time of these tests, images, YouTube and reply-attachment ingestion had not yet been implemented.
 
 ## URL discovery and routing
 
-The existing `get_webpage_contents` tool now reads public HTML on demand, preferring article/main text and the rendered GitHub README for repository or README URLs. It returns the requested and final URL, source type, title, up to 12,000 characters, truncation status, or an explicit failure. Up to two page reads are permitted per response. The model is instructed to cite sources, treat page text as untrusted, and disclose failures and truncation. The fetcher validates redirect destinations and connects to a validated public IP while retaining the original hostname for TLS; size, content-type and timeout limits remain in place. Unit tests use mocked HTTP and model calls. Live Discord article/README behavior still needs manual dev validation, including blocked or JavaScript-only pages. Images, YouTube, reply attachments, background enrichment and non-HTML raw files are not implemented by this change.
+The existing `get_webpage_contents` tool reads public HTML on demand, preferring article/main text and the rendered GitHub README for repository or README URLs. It returns the requested and final URL, source type, title, up to 12,000 characters, truncation status, or an explicit failure. Up to two page reads are permitted per response. The model is instructed to cite sources, treat page text as untrusted, and disclose failures and truncation. The fetcher validates redirect destinations and connects to a validated public IP while retaining the original hostname for TLS; size, content-type and timeout limits remain in place. Unit tests use mocked HTTP and model calls. Additional live Discord article testing remains useful, including blocked or JavaScript-only pages. Background enrichment and non-HTML raw files are not implemented by this change.
 
 Failed reads include a category, safe hostname, elapsed milliseconds and HTTP status when available; the corresponding warning log omits paths, query strings, exception text and page contents. Timeout classification preserves connect and streamed read timeouts, and connection attempts share a bounded connect timeout across resolved addresses. HTTP errors are reported as responses from the server, not automatically attributed to bot protection. A failure after an HTTP 200 can reflect unsupported content, download size or extraction rather than an HTTP error. Manual Discord retests remain necessary to diagnose the earlier News Tribune and Ars failures in the dev network: their original generic results did not preserve the cause. From the cloud proxy, the Ars page returned HTTP 200 and its HTML extracted successfully; the News Tribune request received an upstream connection reset. Those observations do not establish what happened in the dev cluster.
 
