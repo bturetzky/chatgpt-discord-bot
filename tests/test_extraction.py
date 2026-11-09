@@ -81,7 +81,7 @@ class ExtractionFoundationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.windows(max_rows=0)
         with self.assertRaises(ValueError):
-            self.windows(max_rows=0)
+            self.windows(idle_minutes=0)
         self.add(4, 4)
         with self.assertRaises(ValueError):
             self.windows(max_rows=1)
