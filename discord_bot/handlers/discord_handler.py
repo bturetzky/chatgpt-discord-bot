@@ -112,9 +112,10 @@ class DiscordHandler:
         # Close any resources, db connections, etc.
         logging.info('Shutting down Discord client')
         self.shutdown_event.set()
-        if self._reconcile_task is not None:
-            self._reconcile_task.cancel()
-            await asyncio.gather(self._reconcile_task, return_exceptions=True)
+        reconcile_task = getattr(self, '_reconcile_task', None)
+        if reconcile_task is not None:
+            reconcile_task.cancel()
+            await asyncio.gather(reconcile_task, return_exceptions=True)
         try:
             await self.client.close()
         finally:
