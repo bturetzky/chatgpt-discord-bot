@@ -59,7 +59,24 @@ Tool-specific optional variables:
 | `IGDB_CLIENT_ID` | IGDB/Twitch API client ID |
 | `IGDB_CLIENT_SECRET` | IGDB/Twitch API client secret |
 
-The Pinecone index name (`discord-bot-context2`), model choices and other settings are currently hardcoded. See the roadmap for planned configuration improvements.
+Additional runtime configuration (all optional unless noted):
+
+| Variable | Purpose / default |
+| --- | --- |
+| `DISCORD_SQLITE_PATH` | Persistent SQLite file path; required for archive/reaction features. Both deployments use `/data/sqlite/bot.sqlite3` on separate PVCs. |
+| `REACTION_SHADOW_ENABLED` | Explicit opt-in for observation-only reaction evaluation; default `false`. |
+| `REACTION_SHADOW_GUILD_ID` | Numeric guild ID; required when shadow mode is enabled. Dev: `584499423590088715`; prod: `325378744787271710`. |
+| `REACTION_SHADOW_MODEL` | Optional shadow evaluator model; falls back to `OPENAI_MODEL`, then the built-in default. |
+| `REACTION_SHADOW_TEST_PREFIX` | **Dev-only** deterministic acceptance prefix; unset in normal operation and production. |
+| `OPENAI_MODEL` | Main Responses model override; also used by shadow mode when its override is absent. |
+| `DISCORD_CONTEXT_LIMIT` | Recent Discord context message limit (default 30). |
+| `SEMANTIC_MEMORY_LIMIT` | Semantic memory retrieval limit (default 8). |
+| `RELATIONSHIP_MEMORY_LIMIT` | Relationship memory retrieval limit (default 4). |
+| `OPENAI_INPUT_USD_PER_1M` | Optional model input price for usage estimates. |
+| `OPENAI_CACHED_INPUT_USD_PER_1M` | Optional cached input price for usage estimates. |
+| `OPENAI_OUTPUT_USD_PER_1M` | Optional output price for usage estimates. |
+
+The Pinecone index name (`discord-bot-context2`) remains hardcoded; not all configuration is environment-driven. See the [reaction shadow runbook](docs/reaction-shadow-runbook.md) and [engineering roadmap](docs/engineering-roadmap.md) for behavior, limitations, and remaining work.
 
 **Never commit API keys or Discord tokens.** For Kubernetes, supply credentials via a Secret and `envFrom`; the manifests live in the separate GitOps repository.
 
@@ -99,6 +116,12 @@ The Kubernetes deployments are managed separately through [homelab-gitops](https
 - `discord-prod`: separate production Discord application, token and server; image digest is updated only through reviewed manual promotion.
 
 Both environments are reconciled by Argo CD. Immutable-image CI/CD, automatic read-only ARC dev rollout verification (first run passed 2026-11-08), and manual production promotion are implemented and verified; see [Deployment workflow](docs/deployment-workflow.md). The operator confirmed the latest dependency-cleanup image was merged and promoted on 2026-11-07.
+
+## Current feature checkpoint (2026-11-09)
+
+- Persistent SQLite archive, FTS5 search, bounded backfill and restart reconciliation are implemented; production 30-day backfill was operator-run. Reaction add/remove/clear observation is implemented and tested in dev.
+- Reaction **shadow evaluation** is deployed in dev and production GitOps configuration. Dev live acceptance succeeded: a deterministic candidate produced a real model decision (`ignore`, `no_clear_reaction`, 303 input/41 output tokens). Production configuration PRs were merged; production runtime startup and ongoing evaluations have **not yet been independently verified**. No unsolicited reactions are posted.
+- Live proactive reactions and automatic memory extraction remain unimplemented. See the [proactive personality design](docs/proactive-personality-design.md).
 
 ## Documentation
 
