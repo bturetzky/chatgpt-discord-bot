@@ -1,7 +1,7 @@
 # Rich Content Understanding — design
 
-**Status:** Public HTML article and GitHub README reading implemented; other rich-content capabilities remain proposed.
-**Last reviewed:** 2026-11-07  
+**Status:** Public HTML article and GitHub README reading implemented and manually exercised in dev (PRs #41–42); other rich-content capabilities remain proposed.
+**Last reviewed:** 2026-11-08  
 **Scope:** chatgpt-discord-bot. Deployment manifests belong in `bturetzky/homelab-gitops`.
 
 ## Objective
@@ -94,6 +94,15 @@ For YouTube, use `kind: youtube`, `source: transcript|description|metadata`, vid
 - For replies to older image messages, fetch the referenced message only when explicitly relevant; do not recursively follow chains.
 - Model output should be honest about image ambiguity; no image generation or OCR-specific pipeline is in scope for v1.
 - The currently configured `OPENAI_MODEL` must be checked for image input support. Provide an independently configurable vision-capable model only if necessary; avoid an additional model call when the normal response model supports images.
+
+## Observed dev validation (PRs #41–42)
+
+- Public GitHub README `unclebob/ub-mode` was successfully retrieved and summarized during operator testing of PR #41; not repeated after PR #42.
+- Ars Technica returned HTTP 403 (~300 ms) in PR #42 retests. This establishes refusal of the request, not the reason for refusal; the bot appropriately reported that it had not read the article. A later search-based answer clearly identified a separate partial excerpt and withheld the missing conclusion.
+- The News Tribune timed out (~10 seconds) without an HTTP status; connection/TLS/header/read phase is not distinguished. Search fallback found no matching result for the article ID.
+- `http://127.0.0.1/` was rejected as a loopback target, as intended. This is one live negative test, not a complete SSRF security audit.
+- PR #42 added safe diagnostic categories and logging (hostname, HTTP status when present, duration) without exposing page content. Operator confirmed pasted Markdown artifacts were not present in Discord rendering.
+- Successful CI/ARC dev rollout and honest fallback behavior do **not** establish broad article compatibility. Additional live smoke tests remain useful. Images, YouTube and reply-attachment ingestion remain unimplemented.
 
 ## URL discovery and routing
 
