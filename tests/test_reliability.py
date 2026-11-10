@@ -1,5 +1,6 @@
 """Reliability regressions for Discord routing and blocking integrations."""
 import asyncio
+import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -61,6 +62,7 @@ class DiscordReliabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent_history, [{"role": "user", "content": "friend (Discord ID 123): <@bot> hi"}])
         message.channel.send.assert_awaited()
 
+    @patch.dict(os.environ, {"MEMORY_RETRIEVAL_ENHANCED": "false"})
     async def test_memory_failure_does_not_prevent_reply(self):
         handler, message = make_handler(), make_message()
         handler.vector_handler.get_relevant_contexts.side_effect = RuntimeError("pinecone unavailable")
@@ -69,6 +71,7 @@ class DiscordReliabilityTests(unittest.IsolatedAsyncioTestCase):
         handler.chatgpt_handler.get_response.assert_awaited_once()
         message.channel.send.assert_awaited()
 
+    @patch.dict(os.environ, {"MEMORY_RETRIEVAL_ENHANCED": "false"})
     async def test_none_memories_does_not_prevent_reply(self):
         handler, message = make_handler(), make_message()
         handler.vector_handler.get_relevant_contexts.return_value = None

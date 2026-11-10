@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import io
+import os
 import threading
 import unittest
 from types import SimpleNamespace
@@ -315,6 +316,7 @@ class DiscordImageRoutingTests(unittest.IsolatedAsyncioTestCase):
         await handler.process_message(msg)
         handler.image_context_builder.build.assert_not_awaited()
 
+    @patch.dict(os.environ, clear=True)
     async def test_mentioned_message_appends_images_after_text_memory_query(self):
         handler, msg = make_handler(), make_message()
         msg.attachments = [attachment()]
@@ -322,13 +324,11 @@ class DiscordImageRoutingTests(unittest.IsolatedAsyncioTestCase):
         content = {"role": "user", "content": [{"type": "input_text", "text": "Image attached to current message."},
                                                  {"type": "input_image", "image_url": "data:image/png;base64,abc", "detail": "auto"}]}
         handler.image_context_builder.build = AsyncMock(return_value=content)
-        handler.vector_handler.get_relevant_contexts.return_value = []
-        handler.vector_handler.get_relationship_contexts.return_value = []
         with patch("discord_bot.handlers.discord_handler.asyncio.sleep", new_callable=AsyncMock):
             await handler.process_message(msg)
         messages = handler.chatgpt_handler.get_response.await_args.args[0]
         self.assertEqual(messages[-1], content)
-        handler.vector_handler.get_relevant_contexts.assert_called_once_with("hi")
+        handler.vector_handler.encode_message.assert_called_once_with("hi")
 
     async def test_multimodal_message_reaches_responses_api(self):
         with patch("discord_bot.handlers.chatgpt_handler.FunctionHandler"):

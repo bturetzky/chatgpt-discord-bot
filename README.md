@@ -72,7 +72,7 @@ Additional runtime configuration (all optional unless noted):
 | `DISCORD_CONTEXT_LIMIT` | Recent Discord context message limit (default 30). |
 | `SEMANTIC_MEMORY_LIMIT` | Legacy semantic memory retrieval limit (default 8). |
 | `RELATIONSHIP_MEMORY_LIMIT` | Legacy relationship retrieval limit (default 4). |
-| `MEMORY_RETRIEVAL_ENHANCED` | Enable relevance selection and one bounded memory section (default false). |
+| `MEMORY_RETRIEVAL_ENHANCED` | Enhanced relevance selection is on by default. Set to `false` to restore legacy retrieval and injection. |
 | `MEMORY_SEMANTIC_CANDIDATES` | Enhanced semantic pool, default 16, range 1–50. |
 | `MEMORY_RELATIONSHIP_CANDIDATES` | Enhanced intent-gated relationship pool, default 4, range 0–20. |
 | `MEMORY_SEMANTIC_SELECTED` | Enhanced semantic selection cap, default 6, range 0–6. |

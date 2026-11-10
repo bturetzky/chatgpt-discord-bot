@@ -1,5 +1,6 @@
 """Memory integration regressions using mocked OpenAI/Pinecone clients."""
 import asyncio
+import os
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -64,6 +65,7 @@ class MemoryToolTests(unittest.IsolatedAsyncioTestCase):
         vector.store_additional_data.assert_called_once_with("2026-11-07 08:00:00: likes gardening", memory_type="fact", participant_ids=[])
 
 
+@patch.dict(os.environ, {"MEMORY_RETRIEVAL_ENHANCED": "false"})
 class DiscordMemoryIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_retrieved_memory_precedes_history_in_model_input(self):
         handler, message = make_handler(), make_message()

@@ -1,6 +1,6 @@
 # Memory retrieval relevance and injection enhancement
 
-Status: **Opt-in enhancement implemented, pending calibration and manual dev acceptance.** The original design and baseline below describe PR #98. See the implemented enhancement section for shipped behavior and deferred work.
+Status: **Default-on enhancement implemented, pending calibration and manual dev acceptance.** The original design and baseline below describe PR #98. See the implemented enhancement section for shipped behavior and deferred work.
 
 ## Problem and verified baseline (2026-11-10)
 
@@ -58,7 +58,7 @@ Collect representative examples: weather, factual Q&A, software debugging, game 
 - Mock Pinecone/OpenAI tests: query limits, participant filters, no writes, failures/timeouts, and preservation of response order and scores.
 - Shadow/preview comparison against baseline queries: selected vs rejected, score distribution, estimated injection size, false-positive and false-negative examples.
 - Acceptance: weather/factual questions typically inject no unrelated memories; explicit recall retrieves relevant memories; relationship jokes surface for relevant participants; no extra system instructions from memory bodies; no unexpected cross-guild scope changes.
-- Roll out to dev behind a feature flag; inspect samples and logs with **counts/scores only**, never raw memory bodies by default. Promote to prod only after operator Discord tests.
+- Roll out to dev with an explicit rollback switch; inspect samples and logs with **counts/scores only**, never raw memory bodies by default. Promote to prod only after operator Discord tests.
 - Track relevance/precision and missed recall, not just number of injected memories. Revisit candidate limits only after evidence.
 
 ## Non-goals
@@ -67,9 +67,9 @@ No changes to extraction/evaluation/publication, no Pinecone index migration, no
 
 ## Implemented enhancement (2026-11-10)
 
-PR #98 is the dependency and baseline. The enhancement is opt-in through
-`MEMORY_RETRIEVAL_ENHANCED=true`, default false. With the flag disabled the
-baseline retrieval limits and per-memory injection remain available for rollback.
+PR #98 is the dependency and baseline. Enhanced retrieval runs by default in
+Discord and the diagnostic CLI. Set `MEMORY_RETRIEVAL_ENHANCED=false` to restore
+baseline retrieval and injection.
 
 The enhanced path keeps the bounded recent-user-turn embedding query. Selection
 uses the latest addressed message, excluding speaker prefixes and Discord user mentions. Only explicit
@@ -113,9 +113,8 @@ manual acceptance testing and is not guaranteed by prompt construction alone.
 
 ### Diagnostics and validation
 
-Existing CLI flags and legacy preview remain supported. With the enhancement
-flag enabled the CLI runs the identical selection policy and prints candidate
-scores/metadata, per-candidate decisions, retrieved/selected/rejected counts and
+The CLI uses the same selection policy as Discord and prints candidate
+scores/metadata by default, per-candidate decisions, retrieved/selected/rejected counts and
 the selected context. For multi-turn queries pass `--latest` containing the
 latest addressed message without a speaker prefix. CLI output is explicitly
 private, including rejected candidate bodies. Default logs contain counts and
@@ -134,15 +133,16 @@ acceptance has been performed.
 ### Rollout and rollback
 
 1. Review the PR and CI results before deploying it through the normal workflow.
-2. Enable the flag only in dev using the operator-managed configuration.
-   Keep optional similarity filtering unset until private labeled examples justify it.
-3. Compare baseline and enhanced CLI previews on representative private queries.
+2. Deploy to dev using the existing configuration. Keep optional similarity
+   filtering unset until private labeled examples justify it.
+3. Compare enhanced CLI previews with baseline previews run using
+   `MEMORY_RETRIEVAL_ENHANCED=false` on representative private queries.
    Inspect selected/rejected reasons and missed recall, then run the dev test card.
 4. Roll back by setting `MEMORY_RETRIEVAL_ENHANCED=false` and restarting through
    the normal GitOps deployment workflow. Existing legacy limits apply again.
 
-Manual dev test card (requires dev deployment with the flag enabled and
-operator-confirmed synthetic facts/relationships already available in Pinecone):
+The manual dev test card requires a dev deployment and operator-confirmed
+synthetic facts and relationships already available in Pinecone.
 
 - Ask “What do you remember about my chess preferences?” with a matching synthetic
   chess fact. Expect a useful attributed fact and a selected count within budget.

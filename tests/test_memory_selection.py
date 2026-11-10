@@ -209,7 +209,7 @@ class EnhancedDiscordTests(unittest.IsolatedAsyncioTestCase):
                 },
             ]
         }
-        with patch.dict(os.environ, {"MEMORY_RETRIEVAL_ENHANCED": "true"}), patch(
+        with patch.dict(os.environ, clear=True), patch(
             "discord_bot.handlers.discord_handler.asyncio.sleep", new_callable=AsyncMock
         ), self.assertLogs(level="DEBUG") as logs:
             await handler.process_message(message)
@@ -237,9 +237,7 @@ class EnhancedDiscordTests(unittest.IsolatedAsyncioTestCase):
                     handler.vector_handler.encode_message.side_effect = TimeoutError(
                         "private text"
                     )
-                with patch.dict(
-                    os.environ, {"MEMORY_RETRIEVAL_ENHANCED": "true"}
-                ), patch(
+                with patch.dict(os.environ, clear=True), patch(
                     "discord_bot.handlers.discord_handler.asyncio.sleep",
                     new_callable=AsyncMock,
                 ):
@@ -264,10 +262,10 @@ class EnhancedDiscordTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict(
             os.environ,
             {
-                "MEMORY_RETRIEVAL_ENHANCED": "true",
                 "OPENAI_API_KEY": "mock",
                 "PINECONE_API_KEY": "mock",
             },
+            clear=True,
         ), patch(
             "discord_bot.memory_retrieval_diagnostic.VectorHandler",
             return_value=handler,

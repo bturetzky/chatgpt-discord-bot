@@ -64,7 +64,7 @@ def _setting(name, default, minimum, maximum):
 
 
 def enabled():
-    return os.getenv("MEMORY_RETRIEVAL_ENHANCED", "false").lower() == "true"
+    return os.getenv("MEMORY_RETRIEVAL_ENHANCED", "true").strip().lower() != "false"
 
 
 def render_context(records):
