@@ -7,6 +7,13 @@
 
 This roadmap covers application code. The separate [deployment workflow](deployment-workflow.md) covers CI, image publishing, dev deployment and production promotion. Deployment manifests remain authoritative in [homelab-gitops](https://github.com/bturetzky/homelab-gitops).
 
+## Planned: automatic historical archive and memory catch-up (2026-11-10)
+
+- **Decision:** Keep the Discord message-history archive limited to approximately one year for now. Do not extend manual Discord history backfill further until automatic catch-up is implemented.
+- **Current behavior:** The autonomous memory worker extracts only the rolling 24-hour window ending 30 minutes before the cycle. Historical messages imported into SQLite require explicit operator `python -m discord_bot.admin backfill` extraction. Once historical proposals exist, the autonomous worker evaluates and publishes eligible candidates in bounded batches; PR #97 backlog-draining and idle behavior were verified by operator logs in production (20 then 14 evaluated, pending=0, then idle with zero OpenAI calls).
+- **Feature request (not implemented):** Add bounded, resumable automatic catch-up for historical Discord messages and memory extraction, with durable per-channel archive cursors and per-guild extraction progress; distinguish archive ingestion from extraction/evaluation; configurable lookback (initial target one year), rate and token/cost budgets, backpressure, and clear progress/idle observability. Avoid repeated work and uncontrolled API spend. Respect channel permissions and deleted/edited messages. Keep production publication safeguards and operator controls.
+- **Current operator plan:** Finish manual memory extraction against the already archived one-year history in bounded date ranges. Do not confuse this with additional Discord history ingestion.
+
 ## Current implementation checkpoint (2026-11-09)
 
 - **Implemented:** Persistent SQLite with separate dev/prod PVCs, live message archive, FTS5 history search, bounded/resumable historical backfill, startup reconciliation and reaction add/remove/clear observation. Operator completed a 30-day production backfill and verified dev reaction membership persistence.
