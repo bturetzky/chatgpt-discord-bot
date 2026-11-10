@@ -59,6 +59,7 @@ async def run_once(connection, *, guild_id, bot_author_id, model, vector_handler
     client = client or AsyncOpenAI()
     published = 0
     skipped = 0
+    decisions = {"discard": 0, "review": 0, "blocked_create": 0, "duplicate": 0, "published": 0, "failed": 0}
     try:
         entries = await preview_consolidation(
             connection, guild_id=guild_id, bot_author_id=bot_author_id,
@@ -70,6 +71,10 @@ async def run_once(connection, *, guild_id, bot_author_id, model, vector_handler
         for plan in plans:
             candidate = plan["candidate"]
             if not eligible(plan):
+                operation = plan.get("operation")
+                category = ("discard" if operation == "discard" else
+                            "review" if operation == "review" else "blocked_create")
+                decisions[category] += 1
                 skipped += 1
                 # Blocked candidates remain proposed for operator inspection.
                 continue
@@ -105,6 +110,7 @@ async def run_once(connection, *, guild_id, bot_author_id, model, vector_handler
                         break
                 if duplicate:
                     _mark(connection, candidate, "superseded")
+                    decisions["duplicate"] += 1
                     skipped += 1
                     continue
                 metadata = {
@@ -121,10 +127,13 @@ async def run_once(connection, *, guild_id, bot_author_id, model, vector_handler
                 )
                 _mark(connection, candidate, "accepted")
                 published += 1
+                decisions["published"] += 1
             except Exception as exc:
+                decisions["failed"] += 1
                 LOG.warning("Autonomous memory publication failed: error_type=%s",
                             type(exc).__name__)
-        return {**counts, "published": published, "skipped_publication": skipped}
+        return {**counts, "published": published, "skipped_publication": skipped,
+                "publication_decisions": decisions}
     finally:
         if owns_client:
             await client.close()
