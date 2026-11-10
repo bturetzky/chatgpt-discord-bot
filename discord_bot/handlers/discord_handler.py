@@ -239,9 +239,11 @@ class DiscordHandler:
                 for match in re.findall(r"Discord ID (\d+)", item.get("content", "")):
                     if match not in participant_ids and len(participant_ids) < 3:
                         participant_ids.append(match)
+            semantic_diagnostics = [] if logging.getLogger().isEnabledFor(logging.DEBUG) else None
+            relationship_diagnostics = [] if logging.getLogger().isEnabledFor(logging.DEBUG) else None
             try:
                 memories = await asyncio.to_thread(
-                    self.vector_handler.get_relevant_contexts, memory_query
+                    self.vector_handler.get_relevant_contexts, memory_query, **({'diagnostics': semantic_diagnostics} if semantic_diagnostics is not None else {})
                 ) or []
             except Exception:
                 logging.exception("Semantic memory lookup failed; continuing")
@@ -249,7 +251,7 @@ class DiscordHandler:
             try:
                 relationships = await asyncio.to_thread(
                     self.vector_handler.get_relationship_contexts,
-                    participant_ids, RELATIONSHIP_MEMORY_LIMIT
+                    participant_ids, RELATIONSHIP_MEMORY_LIMIT, **({'diagnostics': relationship_diagnostics} if relationship_diagnostics is not None else {})
                 ) or []
             except Exception:
                 logging.exception("Relationship memory lookup failed; continuing")
@@ -261,13 +263,16 @@ class DiscordHandler:
             unique_memories = list(dict.fromkeys(
                 item for item in relationships + memories if isinstance(item, str) and item.strip()
             ))
-            for memory in unique_memories:
-                logging.debug("Retrieved memory: %s", memory)
+            for source, matches in (("semantic", semantic_diagnostics), ("relationship", relationship_diagnostics)):
+                if matches is not None:
+                    for rank, match in enumerate(matches, 1):
+                        logging.debug("Memory match: source=%s rank=%d score=%s type=%s",
+                                      source, rank, match["score"], match["memory_type"])
             for memory in reversed(unique_memories):
                 messages.insert(0, {"role": "system", "content": f"Memory (possibly outdated): {memory}"})
             logging.info(
-                'Memory retrieval completed: semantic=%d relationship=%d unique=%d',
-                len(memories), len(relationships), len(unique_memories)
+                'Memory retrieval completed: semantic=%d relationship=%d injected=%d injected_chars=%d',
+                len(memories), len(relationships), len(unique_memories), sum(len(s) for s in unique_memories)
             )
 
             if getattr(message, "attachments", None) or getattr(message, "reference", None):
