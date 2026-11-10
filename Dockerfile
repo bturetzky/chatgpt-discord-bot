@@ -25,6 +25,11 @@ COPY pyproject.toml poetry.lock ./
 RUN poetry config virtualenvs.create false \
     && poetry install --only main --no-root --no-interaction
 
+# Temporary compatibility fix for OpenAI SDK serialization (by_alias=None).
+# Reconcile this override with poetry.lock in a subsequent dependency refresh.
+RUN pip install --no-cache-dir 'pydantic==2.13.5' \
+    && pip check
+
 # Copy application code only after dependencies are installed.
 COPY . /app
 
