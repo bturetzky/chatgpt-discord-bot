@@ -53,3 +53,9 @@ This uses the **existing archived SQLite messages**, not the Discord history API
 ## Deferred on purpose
 
 No live reaction posting, memory deletion/correction, arbitrary Pinecone index enumeration, Discord slash admin commands, UI, generic SQL execution or automatic production changes. Keep this CLI a small inspection tool.
+
+## Autonomous memory backlog evaluation (proposed change)
+
+The autonomous worker evaluates at most 20 **unevaluated** proposed candidates per 30-minute cycle, selecting the oldest outstanding proposals first. A SQLite `autonomous_memory_evaluations` ledger stores the candidate/evidence fingerprint and the last decision. Discard, review, and blocked-create proposals remain `proposed` for operator inspection, but are not repeatedly sent to OpenAI while their evidence and evaluator/model versions remain unchanged. Publication failures remain retryable. New candidates and source edits reopen evaluation; an empty backlog results in an idle cycle with zero evaluation API calls. The ledger is separate from the extraction-batch checkpoint and does not itself publish to Pinecone.
+
+After deployment, inspect `Autonomous memory cycle:` logs for `pending_evaluations` and `evaluation_usage`. A pre-existing proposed backlog will be evaluated once under the new ledger, then drained across successive cycles. Verify the count falls to zero and subsequent idle cycles make zero evaluation requests. `memories --stats` still counts unresolved reviewed/blocked proposals as `proposed`; that count is not itself a measure of remaining evaluation work.
