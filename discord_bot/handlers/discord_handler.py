@@ -4,6 +4,7 @@ from .vector_handler import VectorHandler
 from .image_context import ImageContextBuilder
 from ..storage.history import reconcile_recent
 from ..storage.reaction_observer import ReactionObserver
+from ..storage.autonomous_memory import run_forever
 from .reaction_shadow import ReactionShadow
 
 CONTEXT_LIMIT = int(os.getenv("DISCORD_CONTEXT_LIMIT", "30"))
@@ -15,6 +16,7 @@ class DiscordHandler:
         self.archive = archive
         self.reaction_shadow = None
         self._reconcile_task = None
+        self._memory_task = None
         logging.debug('Initializing discord client')
         self.client = discord.Client(intents=self.get_discord_intents())
         logging.debug('Discord client initialized')
@@ -34,6 +36,18 @@ class DiscordHandler:
             logging.info('Discord gateway ready: bot_id=%s guilds=%d message_content_intent=%s', self.client.user.id, len(self.client.guilds), self.client.intents.message_content)
             if self.reaction_shadow is not None:
                 self.reaction_shadow.bot_user_id = str(self.client.user.id)
+            if (self.archive is not None and self._memory_task is None
+                    and os.getenv('AUTONOMOUS_MEMORY_ENABLED', 'false').lower() == 'true'):
+                guild_id = os.getenv('AUTONOMOUS_MEMORY_GUILD_ID') or os.getenv('REACTION_SHADOW_GUILD_ID')
+                if guild_id and guild_id.isdecimal() and any(str(g.id) == guild_id for g in self.client.guilds):
+                    self._memory_task = asyncio.create_task(run_forever(
+                        self.archive, self.vector_handler, guild_id=guild_id,
+                        bot_author_id=self.client.user.id,
+                        model=os.getenv('OPENAI_MODEL', 'gpt-6.1-terra'),
+                        stop_event=self.shutdown_event,
+                    ), name='autonomous-memory')
+                else:
+                    logging.warning('Autonomous memory enabled but guild unavailable or invalid')
             if self.archive is not None and self._reconcile_task is None:
                 self._reconcile_task = asyncio.create_task(
                     reconcile_recent(self.client, self.archive), name='discord-history-reconcile'
@@ -166,6 +180,10 @@ class DiscordHandler:
         # Close any resources, db connections, etc.
         logging.info('Shutting down Discord client')
         self.shutdown_event.set()
+        memory_task = getattr(self, '_memory_task', None)
+        if memory_task is not None:
+            memory_task.cancel()
+            await asyncio.gather(memory_task, return_exceptions=True)
         reconcile_task = getattr(self, '_reconcile_task', None)
         if reconcile_task is not None:
             reconcile_task.cancel()
