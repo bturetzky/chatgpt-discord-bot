@@ -1,3 +1,17 @@
+# Autonomous memory idle-cycle API leak fix — 2026-11-10
+
+**Proposed, not yet deployed or operator-verified.** Overnight logs repeatedly showed roughly 13 Responses calls and 5 embeddings calls per 30-minute cycle even when extraction reported zero new work. The scheduler was invoking read-only evidence evaluation, consolidation and grounding for the same proposed candidates on every cycle.
+
+The worker now persists a per-guild SQLite checkpoint fingerprint after a successful cycle. It covers proposed candidate data, source message contents/edit/delete state, configured model and extraction/evaluation/consolidation versions. With no new extraction and an unchanged fingerprint, the next scheduled cycle skips evaluation, consolidation, grounding and similarity embeddings. Publication failures do not advance the checkpoint, preserving retries. No feature flags or scheduling interval are changed.
+
+**Instrumentation:** Cycle logs expose `idle_checkpoint_hit` and `evaluation_usage` with successful Responses/embeddings request counts, Responses input/output tokens and embedding tokens. Extraction's existing `input_tokens` and `output_tokens` remain separate. These metrics exclude failed API requests, and are not an account-wide billing ledger.
+
+**Known limitation:** This is a cycle-level idle checkpoint, not per-candidate persisted evaluations. Any new pending candidate or changed source invalidates the checkpoint and may cause other pending candidates to be reconsidered. External Pinecone changes alone do not invalidate it; operators can clear the checkpoint row when intentional re-evaluation is required. A later per-candidate state machine can improve this without changing the publication policy.
+
+**Dev acceptance:** Run the unit suite, deploy to dev, wait for one complete cycle, then verify subsequent idle cycles report `idle_checkpoint_hit=True`, zero `evaluation_usage`, and no associated OpenAI requests. Edit a source or allow a new settled human conversation to enter extraction and confirm work resumes. Verify publication errors remain retryable. Promote to production only after observing these conditions.
+
+---
+
 # Operational checkpoint — 2026-11-09
 
 **Dev operator-verified:** The autonomous memory worker is enabled in dev (`AUTONOMOUS_MEMORY_ENABLED=true`) and published two memories successfully (zero failures reported). After the dependency compatibility fix, dev logs showed `Retrieved memory:` summaries, confirming that OpenAI embedding-based lookup and Pinecone retrieval are functioning and summaries reach the model-context insertion path. A response that relies solely on a newly published memory, without Discord history search, has not been independently established.
