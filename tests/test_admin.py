@@ -58,9 +58,11 @@ class OperatorCliTests(unittest.TestCase):
         self.addCleanup(self.env.stop)
 
     def capture(self, function, **kwargs):
-        args = Namespace(guild_id=None, json=True, limit=30,
-                         react_only=False, stats=False, status="accepted",
-                         verify_pinecone=False, **kwargs)
+        values = dict(guild_id=None, json=True, limit=30,
+                      react_only=False, stats=False, status="accepted",
+                      verify_pinecone=False)
+        values.update(kwargs)
+        args = Namespace(**values)
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
             function(args)
