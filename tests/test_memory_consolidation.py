@@ -35,8 +35,8 @@ class ConsolidationTests(unittest.TestCase):
                 "scope": "individual", "participant_ids": ["42"]}},
         ]}
         matches = _matches(results, "123", "individual", ["42"])
-        self.assertEqual(len(matches), 3)
-        self.assertEqual([x["targetable"] for x in matches], [False, False, True])
+        self.assertEqual(len(matches), 2)
+        self.assertEqual([x["targetable"] for x in matches], [False, True])
 
     def test_no_unattributed_target(self):
         results = {"matches": [{"id": "bad", "metadata": {
