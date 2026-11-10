@@ -67,6 +67,8 @@ def _matches(result, guild_id, scope, participants):
         scoped = scoped and metadata.get("scope") == scope
         ids = metadata.get("participant_ids") or []
         scoped = scoped and isinstance(ids, list) and sorted(map(str, ids)) == sorted(participants)
+        if metadata.get("guild_id") is not None and not scoped:
+            continue
         if not isinstance(obj.get("id"), str):
             continue
         safe.append({"id": obj["id"], "score": obj.get("score"),
