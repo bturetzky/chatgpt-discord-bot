@@ -1,5 +1,7 @@
 """Focused tests for Responses API conversation and tool-call handling."""
 import json
+from openai._compat import model_dump
+from openai.types import CreateEmbeddingResponse
 import unittest
 from types import SimpleNamespace
 from pydantic import BaseModel
@@ -76,3 +78,13 @@ class ResponsesTests(unittest.IsolatedAsyncioTestCase):
         handler.functions = {"test": lambda: function}
         self.assertEqual(await handler.execute_function("test", {}), "ok")
         function.execute.assert_awaited_once_with({})
+
+
+class OpenAISerializationCompatibilityTests(unittest.TestCase):
+    def test_openai_sdk_model_dump(self):
+        """Catch Pydantic incompatibilities in OpenAI SDK request serialization."""
+        obj = CreateEmbeddingResponse(
+            data=[], model="test", object="list",
+            usage={"prompt_tokens": 0, "total_tokens": 0},
+        )
+        self.assertEqual(model_dump(obj, mode="json")["model"], "test")
