@@ -51,7 +51,7 @@ def _source_snapshot(connection, guild_id, channel_id, participants, sources, bo
                           hashlib.sha256(row[3].encode("utf-8")).hexdigest()))
     if not set(participants).issubset({r[2] for r in snapshots}):
         raise ValueError("participants not grounded in source authors")
-    return snapshots
+    return sorted(snapshots, key=lambda row: row[0])
 
 
 def _hash_snapshot(snapshots):
