@@ -63,7 +63,7 @@ def inspect(query, participant_ids, *, semantic_limit, relationship_limit):
 
     semantic = search(query, semantic_limit)
     relationship = []
-    if participant_ids:
+    if participant_ids and relationship_limit > 0:
         query_filter = {"$and": [
             {"memory_type": {"$eq": "relationship"}},
             {"participant_ids": {"$in": participant_ids}},
