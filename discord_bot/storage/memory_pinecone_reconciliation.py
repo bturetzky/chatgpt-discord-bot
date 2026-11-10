@@ -21,6 +21,8 @@ def summary_hash(summary):
 
 def expected_metadata(connection, memory_id, revision):
     """Construct expected metadata from persisted SQLite revision, not an LLM plan."""
+    if type(revision) is not int or revision <= 0:
+        raise ValueError("invalid revision")
     row = connection.execute(
         """SELECT r.guild_id, r.scope, r.participant_ids,
                   v.summary, v.source_hash, v.durability, v.proposal_id
@@ -28,7 +30,7 @@ def expected_metadata(connection, memory_id, revision):
            WHERE r.memory_id=? AND v.revision=?""",
         (memory_id, revision),
     ).fetchone()
-    if row is None or type(revision) is not int or revision <= 0:
+    if row is None:
         raise ValueError("unknown memory revision")
     guild, scope, raw_participants, summary, source_hash, durability, proposal_id = row
     participants = json.loads(raw_participants)
