@@ -41,7 +41,7 @@ class ConsolidationTests(unittest.TestCase):
     def test_no_unattributed_target(self):
         results = {"matches": [{"id": "bad", "metadata": {
             "summary": "Something", "guild_id": "123", "scope": "individual"}}]}
-        self.assertFalse(_matches(results, "123", "individual", ["42"])[0]["targetable"])
+        self.assertEqual(_matches(results, "123", "individual", ["42"]), [])
 
 
 if __name__ == "__main__":
