@@ -26,7 +26,7 @@ def guild(args):
 
 def output(data, args):
     if args.json:
-        print(json.dumps(data, indent=2, default=str))
+        print(json.dumps(data, indent=2, default=str, ensure_ascii=False))
     elif isinstance(data, list):
         if not data:
             print("No matching records.")
