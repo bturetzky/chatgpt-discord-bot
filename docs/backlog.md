@@ -9,6 +9,12 @@
 - Keep feature design and historical decisions in their existing documents. Move work here only while outstanding. A green build does not prove a live feature.
 - No blanket demand for multi-tenancy, complex authorization, HA services, enterprise observability, exhaustive privacy machinery, or automated prod promotion.
 
+## P1 — operator visibility and memory quality
+
+| Item | Verification on main | Practical completion |
+| --- | --- | --- |
+| **O1. Small-server operator CLI: reactions, memories, historical extraction** | **High-priority usability gap, confirmed against current code.** Reaction shadow decisions already persist in SQLite (`shadow_evaluations`), and extraction candidates and accepted statuses are in SQLite. Autonomous memories are published to Pinecone, but there is no simple unified inspection command. `extraction_cli` accepts bounded historical time ranges and saves proposals without publishing; the automatic worker only discovers a recent 24-hour window ending 30 minutes ago. | Add a small `python -m ...` operator CLI usable with `kubectl exec`, without a dashboard or service: **`reactions report`** shows recent decisions, emoji, reason, trigger, counts and clickable Discord message URLs, with `--react-only`; **`memories list`** shows accepted candidates, attribution/source IDs and confirmed Pinecone state (clearly distinguish SQLite accepted from remotely verified); **`memories backfill`** walks a specified historical range/`--days` in bounded, resumable batches, reports token usage and candidates, and clearly separates extract-only preview from optional publication. Default to no Pinecone writes; require an explicit opt-in for publication, reuse existing eligibility/grounding safeguards, avoid duplicate writes and test on dev before prod. Keep secrets and guild IDs out of docs/output by default. |
+
 ## P1 — correctness and memory quality
 
 | Item | Verification on main | Practical completion |
@@ -24,7 +30,7 @@
 | --- | --- | --- |
 | **F1. Live proactive emoji reactions** | **Not implemented.** `handlers/reaction_shadow.py` explicitly never posts. Candidate sampling, pile-on detection, delayed model decisions, persistent 8-evaluation/24h shadow budget and reaction observation **are implemented**. | Observe shadow results for a few days, then implement guarded posting with a small durable per-day reaction budget, per-message dedupe, cooldown, Discord permission/rate-limit handling and a kill switch. Test standard and existing server custom emoji in dev. Avoid overengineering for five people. |
 | **F2. Server lore / multi-person memory acceptance** | **Partially implemented.** SQLite archive, FTS5, bounded backfill, conversation context, extraction, grounding and autonomous create-only Pinecone publication exist. The docs note that multi-person relationship recall and bot-only-memory recall are not fully acceptance-tested. | Run realistic two-person conversation and later recall tests, including one correction and one running joke. Improve only demonstrated failures. |
-| **F3. Production autonomous-memory confirmation** | **Status check.** Latest `README.md` and `memory-lifecycle-status.md` confirm dev publication and retrieval, not production promotion. The production state is outside this repo. | Confirm promoted image, feature flag, one cycle and recall in prod; update checkpoint. Do not claim unverified deployment. |
+| **F3. Production autonomous-memory confirmation** | **Operator update (2026-11-09):** Production autonomous memory was just enabled, and the operator reports four memories picked up. The reaction shadow is also running. This confirms enablement, not independently verified Pinecone contents, recall quality or multi-day operation. | Inspect accepted candidates and actual Pinecone records, confirm a successful production recall, and update the checkpoint. Do not re-open enablement as missing. |
 | **F4. Historical reply/reference graph and richer archive metadata** | **Not implemented as designed.** `server-awareness-design.md` defers reply/reference graph and URL/attachment/embed archiving; current context expansion is chronological, not a reply graph. | Only add if actual server-context questions fail. Start with reply references before full media indexing. |
 | **F5. Rich-content enhancements** | **Partially implemented.** Discord image understanding, on-demand public HTML/GitHub README reading and YouTube transcripts exist. No common reader service, background enrichment/indexing, generic video/GIF understanding, or headless browser. | Treat these as optional separate features. Prefer specific requested media types over a generalized ingestion platform; document inaccessible/paywalled/JS-only pages honestly. |
 | **F6. Agentic Codex workflow follow-ups** | **Partial.** Codex PR→CI→dev ARC verification worked; `agent-development-design.md` says event-driven resumption, CI-repair loop and live Discord automated acceptance were not tested/implemented. Automatic prod promotion is intentionally manual. | Defer until repeated manual waiting is a real pain. Live Discord smoke testing has more value than event-driven agent orchestration. |
@@ -58,8 +64,8 @@
 
 ## Suggested burndown order
 
-1. Confirm production memory deployment and restore INFO logging (small operational checks).
-2. Fix memory duplicate/retry behavior, then provide a narrow correct/forget mechanism and crash reconciliation.
+1. **Build O1 operator CLI first**: reaction shadow report, accepted-vs-Pinecone memory listing, and bounded historical memory backfill. Production memory and reaction shadow have been enabled per operator; validate outputs before tuning.
+2. Check INFO logging, then fix memory duplicate/retry behavior and provide a narrow correct/forget mechanism with crash reconciliation.
 3. Review real shadow reaction decisions and ship live emoji reactions behind a kill switch.
 4. Run a real two-person lore/recall acceptance session.
 5. Tackle D1–D3 alongside related changes; pick any other feature only when it sounds fun or solves an observed problem.
