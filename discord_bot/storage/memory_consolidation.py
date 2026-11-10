@@ -5,6 +5,7 @@ import json
 from openai import AsyncOpenAI
 
 from .evidence_evaluation import evaluate_evidence, source_evidence
+from .memory_grounding import adjacent_human_context, verify_proposal
 from ..handlers.vector_handler import EMBEDDING_MODEL
 from ..handlers.vectore_store import INDEX_NAME
 
@@ -100,7 +101,7 @@ async def preview_consolidation(connection, *, guild_id, bot_author_id, model,
                     "operation": "review", "summary": "", "existing_id": None,
                     "rationale": "Uncertain scope or attribution"}
                 continue
-            # Existing vector store records generally lack guild/scope metadata.
+            evidence, evidence_error = source_evidence(\n                connection, entry, bot_author_id=bot_author_id)\n            if evidence_error:\n                entry["consolidation"] = {"operation": "review", "summary": "",\n                                          "existing_id": None, "splits": [],\n                                          "rationale": evidence_error}\n                continue\n            context = adjacent_human_context(\n                connection, entry, bot_author_id=bot_author_id)\n            # Existing vector store records generally lack guild/scope metadata.
             # Search read-only but never permit mutation based on unscoped hits.
             matches = []
             if index is not None:
@@ -121,11 +122,11 @@ async def preview_consolidation(connection, *, guild_id, bot_author_id, model,
             payload = {"candidate": entry["summary"], "scope": scope,
                        "durability": assessment["durability"],
                        "participant_ids": participants, "existing_matches": matches,
-                       "other_candidates": peers}
+                       "other_candidates": peers,\n                       "human_source_messages": evidence,\n                       "adjacent_human_context": context,\n                       "evaluation_caveat": assessment["rationale"]}
             response = await asyncio.wait_for(client.responses.create(
                 model=model, instructions=INSTRUCTIONS,
                 input=json.dumps(payload, ensure_ascii=False),
-                max_output_tokens=500), timeout=45)
+                max_output_tokens=750), timeout=45)
             proposal = parse_proposal(
                 response.output_text, {match["id"] for match in matches if match["targetable"]})
             if proposal["operation"] == "create" and any(
@@ -135,7 +136,7 @@ async def preview_consolidation(connection, *, guild_id, bot_author_id, model,
                 proposal = {"operation": "review", "summary": proposal["summary"],
                             "existing_id": None,
                             "rationale": "Strong legacy/unscoped Pinecone match requires manual review"}
-            entry["consolidation"] = proposal
+            if proposal["operation"] in {"create", "update", "merge", "split"}:\n                verification = await verify_proposal(\n                    client, model, proposal, evidence, context)\n                entry["grounding_verification"] = verification\n                if not verification["supported"]:\n                    proposal = {"operation": "review", "summary": "",\n                                "existing_id": None, "splits": [],\n                                "rationale": "Independent grounding failed: " +\n                                             verification["rationale"][:400]}\n            entry["consolidation"] = proposal
         return entries
     finally:
         if owns_client:
