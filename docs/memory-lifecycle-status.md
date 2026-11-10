@@ -1,8 +1,20 @@
-## Autonomous memory worker (proposed; feature flag OFF by default)
+# Operational checkpoint — 2026-11-09
+
+**Dev operator-verified:** The autonomous memory worker is enabled in dev (`AUTONOMOUS_MEMORY_ENABLED=true`) and published two memories successfully (zero failures reported). After the dependency compatibility fix, dev logs showed `Retrieved memory:` summaries, confirming that OpenAI embedding-based lookup and Pinecone retrieval are functioning and summaries reach the model-context insertion path. A response that relies solely on a newly published memory, without Discord history search, has not been independently established.
+
+**Production:** Promotion is planned by the operator, not yet confirmed. Do not describe the worker as verified in production.
+
+**Dependency incident:** Dev OpenAI embeddings and Responses calls previously failed during SDK/Pydantic serialization (`by_alias=None`). The project now declares a compatible Pydantic dependency and targets Python 3.12; operator observed retrieval working after deploying the fix. Keep the SDK serialization regression test. The earlier Dockerfile override PR #91 was closed without merge.
+
+**Follow-up, not release blockers:** Retrieved memories include semantically duplicated preferences and low-value historical observations. Improve deduplication and durability filtering later. Temporary DEBUG logging exposes full memory summaries and Discord identifiers; restore INFO logging after troubleshooting, especially before production promotion. Existing limitations around updates, deletes, cross-system atomicity and legacy records still apply.
+
+---
+
+## Autonomous memory worker (implemented; opt-in feature flag, disabled by default)
 
 The bot now has an opt-in periodic worker (`AUTONOMOUS_MEMORY_ENABLED=true`) for the configured server (`AUTONOMOUS_MEMORY_GUILD_ID`, falling back to `REACTION_SHADOW_GUILD_ID`). Every 30 minutes it examines settled archived conversations (30-minute settling delay, bounded 24-hour lookback), extracts candidates, runs evidence evaluation and consolidation, and publishes **only unblocked, independently grounded create proposals** to Pinecone. SQLite records extraction progress and marks successfully published candidates accepted; Pinecone remains the retrieval store. Deterministic IDs include guild, scope and participant attribution. High-similarity existing vectors are not overwritten. The bot's `store_memory` tool remains available for explicit requests only; proactive tool-use instructions were removed.
 
-**Operational limits:** No autonomous updates, merges, splits, forget/delete workflow, or full semantic dedup guarantee yet. Blocked candidates remain proposed and may be reconsidered in later cycles, which can incur model costs. Publication is not transactionally atomic across SQLite and Pinecone; a crash after Pinecone upsert may require manual cleanup. Legacy Pinecone vectors remain visible to existing retrieval. The worker has not been deployed or validated against a real Pinecone index. Keep the flag disabled in production until dev end-to-end acceptance.
+**Operational limits:** No autonomous updates, merges, splits, forget/delete workflow, or full semantic dedup guarantee yet. Blocked candidates remain proposed and may be reconsidered in later cycles, which can incur model costs. Publication is not transactionally atomic across SQLite and Pinecone; a crash after Pinecone upsert may require manual cleanup. Legacy Pinecone vectors remain visible to existing retrieval. The worker has been deployed and exercised against a real Pinecone index in dev; production behavior has not been confirmed.
 
 Dev verification after deployment: enable the flag in dev configuration, restart, converse in a test channel, wait at least 30 minutes for the window to settle and up to 30 minutes for the next worker cycle, then ask the bot a question requiring that memory. Inspect logs for `Autonomous memory cycle` and ensure no cross-person memory attribution.
 
