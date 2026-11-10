@@ -82,9 +82,9 @@ def parse_decision(output):
     return {key: result[key] for key in ("scope", "durability", "disposition", "rationale")}
 
 
-def candidates(connection, *, guild_id, limit):
+def candidates(connection, *, guild_id, limit, selected_keys=None):
     """Include stale candidates in preview so operators can see why excluded."""
-    entries = preview(connection, guild_id=guild_id, limit=limit)
+    entries = preview(connection, guild_id=guild_id, limit=limit, selected_keys=selected_keys)
     for entry in entries:
         batch = connection.execute(
             "SELECT channel_id, extractor_version, status FROM extraction_batches WHERE batch_id=?",
@@ -95,11 +95,11 @@ def candidates(connection, *, guild_id, limit):
 
 
 async def evaluate_evidence(connection, *, guild_id, bot_author_id, model,
-                            limit=20, client=None):
+                            limit=20, client=None, selected_keys=None):
     """Bounded model-assisted preview. No DB writes or Pinecone calls."""
     if not model or not 1 <= limit <= 100:
         raise ValueError("model and limit (1..100) required")
-    entries = candidates(connection, guild_id=guild_id, limit=limit)
+    entries = candidates(connection, guild_id=guild_id, limit=limit, selected_keys=selected_keys)
     owns_client = client is None
     if client is None:
         client = AsyncOpenAI()
