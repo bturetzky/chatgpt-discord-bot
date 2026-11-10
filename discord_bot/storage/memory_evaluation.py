@@ -80,7 +80,7 @@ def preview(connection, *, guild_id, limit=20):
     return [{**dict(row), "evaluation": asdict(evaluate(row))} for row in rows]
 
 
-def record(connection, entries):
+def record(connection, entries, *, evaluator_version=EVALUATOR_VERSION):
     """Explicit operator action. Does not change candidate acceptance status."""
     connection.execute("BEGIN IMMEDIATE")
     try:
@@ -97,7 +97,7 @@ def record(connection, entries):
                      disposition=excluded.disposition,
                      rationale=excluded.rationale,
                      evaluated_at=CURRENT_TIMESTAMP""",
-                (item["batch_id"], item["candidate_index"], EVALUATOR_VERSION,
+                (item["batch_id"], item["candidate_index"], evaluator_version,
                  decision["scope"], decision["durability"],
                  decision["disposition"], decision["rationale"]),
             )
