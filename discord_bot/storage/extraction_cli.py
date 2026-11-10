@@ -17,7 +17,8 @@ from .extraction_dry_run import dry_run
 
 def main():
     parser = argparse.ArgumentParser(description="Bounded culture-memory dry-run (no Pinecone writes)")
-    parser.add_argument("--guild-id", required=True)
+    parser.add_argument("--guild-id", default=os.getenv("REACTION_SHADOW_GUILD_ID"),
+                        help="Defaults to REACTION_SHADOW_GUILD_ID from deployment")
     parser.add_argument("--since", required=True, help="inclusive ISO-8601 timestamp with timezone")
     parser.add_argument("--until", required=True, help="exclusive ISO-8601 timestamp with timezone")
     parser.add_argument("--max-windows", type=int, default=5)
@@ -25,6 +26,8 @@ def main():
     parser.add_argument("--max-messages", type=int, default=40)
     parser.add_argument("--model", default=os.getenv("OPENAI_MODEL", "gpt-6.1-terra"))
     args = parser.parse_args()
+    if not args.guild_id or not args.guild_id.isdecimal():
+        parser.error("--guild-id or numeric REACTION_SHADOW_GUILD_ID is required")
     since = datetime.fromisoformat(args.since.replace("Z", "+00:00"))
     until = datetime.fromisoformat(args.until.replace("Z", "+00:00"))
     if since.tzinfo is None or until.tzinfo is None:
