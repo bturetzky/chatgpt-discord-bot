@@ -259,3 +259,12 @@ A proposed code PR adds exact normalized deduplication against existing SQLite e
 4. **Production acceptance:** sample varied conversations and review false positives; verify same claim paraphrased in different windows does not multiply, conflicting preferences are not silently merged, one-off game milestones are filtered, human-supported shared lore survives, and published memories are retrievable through the existing bot path. Preserve dev/prod isolation and existing reaction shadow behavior.
 
 **Decision:** automated evaluation is intended to be autonomous after validation; no permanent per-memory human approval queue. The audit ledger exists for troubleshooting, corrections and rollback, not routine manual curation.
+
+
+## Semantic consolidation preview (implementation in PR; not deployed until merged)
+
+The operator-only `python -m discord_bot.storage.memory_consolidation_cli --limit 20` command re-evaluates candidate provenance and uses the existing embedding model to query the existing Pinecone index. It compares candidate summaries against bounded vector matches and same-scope candidates, then asks a separate model for a proposed `create`, `update`, `merge`, `discard`, or `review` operation and corrected standalone summary. The guild defaults to `REACTION_SHADOW_GUILD_ID`; `--guild-id` overrides it.
+
+**Safety:** This is read-only with respect to SQLite and Pinecone; it does not accept candidates, publish memories, schedule jobs, or change Discord behavior. The Pinecone index currently contains legacy memories without guild/scope metadata. Such results are visible as context but cannot be selected as update/merge targets. Strong unscoped matches block automatic `create` proposals (falling back to `review`). A scoped target must match the candidate guild, scope, and exact participant set. Model-generated target IDs must be present in the scoped query results. Model proposals remain untrusted and require a later explicit publication design and operator validation.
+
+The next implementation stage must handle split/compound memories, corrections, evidence invalidation and provenance-linked Pinecone writes. Existing unscoped records need a deliberate migration strategy before automated consolidation can safely modify them.
