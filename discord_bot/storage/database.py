@@ -120,6 +120,24 @@ MIGRATIONS = (
             evaluated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )""",
     ),
+    (
+        """CREATE TABLE candidate_evaluations (
+            batch_id TEXT NOT NULL,
+            candidate_index INTEGER NOT NULL,
+            evaluator_version TEXT NOT NULL,
+            scope TEXT NOT NULL CHECK(scope IN ('individual', 'collective', 'uncertain')),
+            durability TEXT NOT NULL CHECK(durability IN ('durable', 'evolving', 'transient', 'uncertain')),
+            disposition TEXT NOT NULL CHECK(disposition IN ('eligible', 'review', 'exclude')),
+            rationale TEXT NOT NULL,
+            evaluated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (batch_id, candidate_index, evaluator_version),
+            FOREIGN KEY (batch_id, candidate_index)
+                REFERENCES extraction_candidates(batch_id, candidate_index)
+                ON DELETE CASCADE
+        )""",
+        """CREATE INDEX candidate_evaluations_disposition
+            ON candidate_evaluations(disposition, evaluated_at)""",
+    ),
 )
 
 
