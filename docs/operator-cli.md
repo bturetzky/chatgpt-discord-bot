@@ -15,13 +15,21 @@ kubectl -n discord-dev exec deploy/chatgpt-discord-bot -- python -m discord_bot.
 
 Replace `discord-dev` with `discord-prod` to inspect production. `--json` is a **global** option, so put it before the subcommand, e.g. `python -m discord_bot.admin --json reactions`. The CLI uses the configured `DISCORD_SQLITE_PATH` and `REACTION_SHADOW_GUILD_ID`; override guild with global `--guild-id` when necessary. Never commit guild IDs or memory contents to the repository.
 
+## Dev operator checkpoint — 2026-11-10
+
+The operator ran all read-only report commands against the dev deployment. `status` reported SQLite `quick_check=ok`, autonomous memory enabled, reaction shadow configured, 322 archived messages, 2 shadow evaluations, 16 extraction batches and 5 candidates. `reactions` showed two completed independent evaluations, both `ignore` with `no_clear_reaction`; `--react-only` correctly returned no matches. `archive` reported 2 channels and 1 deleted message. `memories --stats` reported 2 accepted and 3 proposed candidates, with 21,078 extraction input tokens and 1,601 output tokens. These are observations, not automated acceptance tests.
+
+`memories --verify-pinecone` returned **one `confirmed` and one `not_found`** for two accepted candidates that substantially overlap and share source evidence. This is a **reconciliation discrepancy, not yet proof of data loss**: the verifier reconstructs deterministic vector IDs for individual/collective scopes, and publication may have encountered a deduplication or lifecycle edge case. Investigate actual published IDs and publication outcomes; consider persisting exact vector IDs alongside candidates. Do not claim remote verification is authoritative until that investigation is complete.
+
+Historical `backfill` has **not** been exercised in this checkpoint. Production CLI reports have not yet been verified. Do not include real guild IDs or user memory summaries in committed examples.
+
 ## Reports
 
 - **status**: SQLite integrity and table counts, plus selected feature configuration; no external connectivity test.
 - **reactions**: recorded shadow decisions, trigger, emoji, reason, tokens and Discord message links. An empty result means **zero persisted evaluations**, not proof the feature is disabled. Historical archive messages are not replayed as shadow candidates.
 - **archive**: message count, channel coverage, oldest/newest timestamps, deletion count and cursor count. Backfill cursor count is global to the environment's SQLite file.
 - **memories --stats**: candidate and batch statuses, cumulative extraction input/output tokens; not a billing statement.
-- **memories**: accepted candidates by default; `--status all` includes proposed, rejected and superseded. `--verify-pinecone` fetches deterministic autonomous vector IDs and checks for `origin=autonomous-v1`; `not_found` does not prove an older manually stored memory is absent. A local `accepted` status alone does **not** prove the remote vector still exists.
+- **memories**: accepted candidates by default; `--status all` includes proposed, rejected and superseded. `--verify-pinecone` fetches deterministic autonomous vector IDs and checks for `origin=autonomous-v1`; `not_found` does not prove an older manually stored memory is absent. A local `accepted` status alone does **not** prove the remote vector still exists. The current verifier reconstructs IDs rather than reading a recorded publication ID; `not_found` requires investigation, not automatic deletion or retry.
 
 All reports are read-only. `--verify-pinecone` makes read-only Pinecone requests and requires `PINECONE_API_KEY`.
 
