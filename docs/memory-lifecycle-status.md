@@ -1,4 +1,10 @@
-## Transactional ledger operations (PR #86, proposed)
+## Pinecone read-only reconciliation (PR #87, proposed)
+
+`memory_pinecone_reconciliation.py` constructs expected revision metadata directly from the SQLite ledger and fetches **one explicit vector ID** from a caller-supplied Pinecone index and namespace. It requires exact matching `publication_schema`, logical memory ID, revision, guild, scope, participant list, summary, SHA-256 summary hash, source hash, durability and proposal ID. Legacy Pinecone vectors lacking these fields are **mismatched**, never confirmed. A missing vector is `missing`; fetch exceptions or unrecognized responses are `unknown` (never silently `missing`). No secrets, vector values, or summaries are logged.
+
+The expected metadata format is a **contract for a future writer**, not a claim that any current vector contains it. This module does not write vectors, modify SQLite, reconcile an attempt automatically, authenticate observations, or run in the bot's runtime. The existing `reconcile_recorded_attempt` API still trusts caller-supplied flags; production callers must use a future tightly coupled, verified adapter before applying `matching_vector=True`. Namespace and index configuration must be aligned with the future writer; do not infer a namespace from an ID.
+
+## Transactional ledger operations (PR #86, deployed in dev)
 
 `memory_publication_ledger.py` adds **operator-invoked SQLite-only functions**, not a scheduled pipeline: `stage_create` checks current archived human evidence inside `BEGIN IMMEDIATE`, snapshots source hashes and attribution, and stages revision 1 against a caller-supplied logical memory ID. Repeated identical proposal staging is idempotent; changed sources and conflicting IDs fail closed. `validate_sources` compares archived content, timestamps, author and channel to snapshots; `invalidate_changed_sources` can invalidate staged or failed revisions, but deliberately refuses to silently invalidate pending/published remote vectors. `record_attempt` records intent only, while `reconcile_recorded_attempt` records an externally supplied observation.
 
@@ -15,7 +21,7 @@
 - Evidence evaluation: source validation, scope and durability classification, and explicit exclusion of bot-authored recollections and low-value transient milestones.
 - Semantic consolidation preview (v2): bounded Pinecone similarity lookup, same-participant candidate comparisons, human source and adjacent same-channel conversation context, optional split proposals, and an independent model grounding check.
 - Dev preview correctly discarded the bot-authored Ireland recollection; production preview processed eight candidates with **four create, three review, one discard** and no publication. The Witcher conversation demonstrated that human adjacent context can clarify a title; channel name alone cannot prove it. The Mario Odyssey compound preference was still proposed as a single create, despite optional splitting.
-- **Read-only publication planner (this PR, pending merge/deployment):** deterministic proposal IDs, explicit provenance and scope, lifecycle classification, fail-closed blockers and review-required output. It makes no Pinecone upserts, candidate acceptance decisions, or publication ledger writes. This is a plan preview, not a working publication pipeline.
+- **Read-only publication planner:** deterministic proposal IDs, explicit provenance and scope, lifecycle classification, fail-closed blockers and review-required output. It makes no Pinecone upserts, candidate acceptance decisions, or publication ledger writes. This is a plan preview, not a working publication pipeline.
 
 ## Operator commands and boundaries
 
@@ -28,7 +34,7 @@ kubectl -n discord-dev exec deploy/chatgpt-discord-bot -- \
 
 The planner re-runs the evidence and consolidation models, so results can vary between runs and incur API costs; **proposal IDs and deterministic eligibility rules** do not vary for the same candidate identity. The output has `recorded: false` and `publishable: false` even when an entry is `review_required`. `review_required` is not authorization to publish. The CLI opens the existing SQLite database using the application's normal connection lifecycle, but does not add planner records or publish memories. Production promotion remains manual.
 
-## Publication ledger foundation (this PR; not deployed until merged)
+## Publication ledger foundation (migration 10; deployed in dev)
 
 A new ordered SQLite migration defines `memory_records` (logical identity, guild, scope, participant set, lifecycle and current revision), `memory_revisions` (immutable numbered revisions, proposal link, source hash and supersession pointer), `memory_revision_sources` (source IDs, authors, channels, timestamps and content hashes), and `memory_publication_attempts` (upsert/delete attempt state, vector ID and reconciliation status). The migration creates empty tables; it does **not** backfill, approve, publish or change existing Pinecone retrieval.
 
