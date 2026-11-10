@@ -22,7 +22,13 @@ otherwise null), rationale (short string).
 Prefer review if the evidence is insufficient, ambiguous, contradictory,
 sensitive, or the relevant match is not demonstrably the same memory.
 Never authorize writes. Do not invent new facts or participants.
-Use original human source messages as evidence, with adjacent human conversation\nonly for disambiguation. Channel topic is weak context, not proof of a title.\nNever invent names or facts from the candidate, Pinecone, or model rationales.\nDo not use Discord mention syntax in summaries.\nFor compound memories, operation may also be split: return splits array of\n2..3 independently useful supported summaries, summary empty, existing_id null.\nFor other operations return splits as an empty array."""
+Use original human source messages as evidence, with adjacent human conversation
+only for disambiguation. Channel topic is weak context, not proof of a title.
+Never invent names or facts from the candidate, Pinecone, or model rationales.
+Do not use Discord mention syntax in summaries.
+For compound memories, operation may also be split: return splits array of
+2..3 independently useful supported summaries, summary empty, existing_id null.
+For other operations return splits as an empty array."""
 
 def parse_proposal(raw, allowed_ids):
     result = json.loads(raw)
@@ -44,7 +50,15 @@ def parse_proposal(raw, allowed_ids):
             raise ValueError("target must be a retrieved Pinecone ID")
     elif target is not None:
         raise ValueError("unexpected target ID")
-    splits = result.get("splits", [])\n    if not isinstance(splits, list) or any(not isinstance(s, str) or not 1 <= len(s.strip()) <= 1000 for s in splits):\n        raise ValueError("invalid splits")\n    if result["operation"] == "split":\n        if not 2 <= len(splits) <= 3 or summary.strip():\n            raise ValueError("split requires 2..3 summaries and empty summary")\n    elif splits:\n        raise ValueError("unexpected splits")\n    return {**{key: result[key] for key in ("operation", "summary", "existing_id", "rationale")}, "splits": splits}
+    splits = result.get("splits", [])
+    if not isinstance(splits, list) or any(not isinstance(s, str) or not 1 <= len(s.strip()) <= 1000 for s in splits):
+        raise ValueError("invalid splits")
+    if result["operation"] == "split":
+        if not 2 <= len(splits) <= 3 or summary.strip():
+            raise ValueError("split requires 2..3 summaries and empty summary")
+    elif splits:
+        raise ValueError("unexpected splits")
+    return {**{key: result[key] for key in ("operation", "summary", "existing_id", "rationale")}, "splits": splits}
 
 
 def _matches(result, guild_id, scope, participants):
@@ -101,7 +115,16 @@ async def preview_consolidation(connection, *, guild_id, bot_author_id, model,
                     "operation": "review", "summary": "", "existing_id": None,
                     "rationale": "Uncertain scope or attribution"}
                 continue
-            evidence, evidence_error = source_evidence(\n                connection, entry, bot_author_id=bot_author_id)\n            if evidence_error:\n                entry["consolidation"] = {"operation": "review", "summary": "",\n                                          "existing_id": None, "splits": [],\n                                          "rationale": evidence_error}\n                continue\n            context = adjacent_human_context(\n                connection, entry, bot_author_id=bot_author_id)\n            # Existing vector store records generally lack guild/scope metadata.
+            evidence, evidence_error = source_evidence(
+                connection, entry, bot_author_id=bot_author_id)
+            if evidence_error:
+                entry["consolidation"] = {"operation": "review", "summary": "",
+                                          "existing_id": None, "splits": [],
+                                          "rationale": evidence_error}
+                continue
+            context = adjacent_human_context(
+                connection, entry, bot_author_id=bot_author_id)
+            # Existing vector store records generally lack guild/scope metadata.
             # Search read-only but never permit mutation based on unscoped hits.
             matches = []
             if index is not None:
@@ -122,7 +145,10 @@ async def preview_consolidation(connection, *, guild_id, bot_author_id, model,
             payload = {"candidate": entry["summary"], "scope": scope,
                        "durability": assessment["durability"],
                        "participant_ids": participants, "existing_matches": matches,
-                       "other_candidates": peers,\n                       "human_source_messages": evidence,\n                       "adjacent_human_context": context,\n                       "evaluation_caveat": assessment["rationale"]}
+                       "other_candidates": peers,
+                       "human_source_messages": evidence,
+                       "adjacent_human_context": context,
+                       "evaluation_caveat": assessment["rationale"]}
             response = await asyncio.wait_for(client.responses.create(
                 model=model, instructions=INSTRUCTIONS,
                 input=json.dumps(payload, ensure_ascii=False),
@@ -136,7 +162,16 @@ async def preview_consolidation(connection, *, guild_id, bot_author_id, model,
                 proposal = {"operation": "review", "summary": proposal["summary"],
                             "existing_id": None,
                             "rationale": "Strong legacy/unscoped Pinecone match requires manual review"}
-            if proposal["operation"] in {"create", "update", "merge", "split"}:\n                verification = await verify_proposal(\n                    client, model, proposal, evidence, context)\n                entry["grounding_verification"] = verification\n                if not verification["supported"]:\n                    proposal = {"operation": "review", "summary": "",\n                                "existing_id": None, "splits": [],\n                                "rationale": "Independent grounding failed: " +\n                                             verification["rationale"][:400]}\n            entry["consolidation"] = proposal
+            if proposal["operation"] in {"create", "update", "merge", "split"}:
+                verification = await verify_proposal(
+                    client, model, proposal, evidence, context)
+                entry["grounding_verification"] = verification
+                if not verification["supported"]:
+                    proposal = {"operation": "review", "summary": "",
+                                "existing_id": None, "splits": [],
+                                "rationale": "Independent grounding failed: " +
+                                             verification["rationale"][:400]}
+            entry["consolidation"] = proposal
         return entries
     finally:
         if owns_client:
