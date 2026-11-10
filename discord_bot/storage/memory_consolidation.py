@@ -61,17 +61,14 @@ def _matches(result, guild_id, scope, participants):
             continue
         # Historical Pinecone records lack guild/scope metadata. They can be
         # inspected separately later, but cannot authorize cross-scope changes.
-        if str(metadata.get("guild_id", "")) != str(guild_id):
-            continue
-        if metadata.get("scope") != scope:
-            continue
+        scoped = str(metadata.get("guild_id", "")) == str(guild_id)
+        scoped = scoped and metadata.get("scope") == scope
         ids = metadata.get("participant_ids") or []
-        if not isinstance(ids, list) or sorted(map(str, ids)) != sorted(participants):
-            continue
+        scoped = scoped and isinstance(ids, list) and sorted(map(str, ids)) == sorted(participants)
         if not isinstance(obj.get("id"), str):
             continue
         safe.append({"id": obj["id"], "score": obj.get("score"),
-                     "summary": metadata["summary"][:1000]})
+                     "summary": metadata["summary"][:1000], "targetable": scoped})
     return safe
 
 
@@ -126,7 +123,7 @@ async def preview_consolidation(connection, *, guild_id, bot_author_id, model,
                 input=json.dumps(payload, ensure_ascii=False),
                 max_output_tokens=500), timeout=45)
             entry["consolidation"] = parse_proposal(
-                response.output_text, {match["id"] for match in matches})
+                response.output_text, {match["id"] for match in matches if match["targetable"]})
         return entries
     finally:
         if owns_client:
