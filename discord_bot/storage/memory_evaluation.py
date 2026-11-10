@@ -7,10 +7,10 @@ import json
 import re
 
 EVALUATOR_VERSION = "triage-v1"
-EVOLVING = re.compile(r"\\b(currently|current|now|working on|planning|plans to|plan to|"
-                     r"setting up|in progress|recently|next|this week|this month)\\b", re.I)
-TRANSIENT = re.compile(r"\\b(reached the credits|\\d+ moons|finished today|"
-                       r"just beat|just completed)\\b", re.I)
+EVOLVING = re.compile(r"\b(currently|current|now|working on|planning|plans to|plan to|"
+                     r"setting up|in progress|recently|next|this week|this month)\b", re.I)
+TRANSIENT = re.compile(r"\b(reached the credits|\d+ moons|finished today|"
+                       r"just beat|just completed)\b", re.I)
 
 
 @dataclass(frozen=True)
