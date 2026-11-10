@@ -122,8 +122,16 @@ async def preview_consolidation(connection, *, guild_id, bot_author_id, model,
                 model=model, instructions=INSTRUCTIONS,
                 input=json.dumps(payload, ensure_ascii=False),
                 max_output_tokens=500), timeout=45)
-            entry["consolidation"] = parse_proposal(
+            proposal = parse_proposal(
                 response.output_text, {match["id"] for match in matches if match["targetable"]})
+            if proposal["operation"] == "create" and any(
+                not match["targetable"] and isinstance(match["score"], (int, float))
+                and match["score"] >= 0.85 for match in matches
+            ):
+                proposal = {"operation": "review", "summary": proposal["summary"],
+                            "existing_id": None,
+                            "rationale": "Strong legacy/unscoped Pinecone match requires manual review"}
+            entry["consolidation"] = proposal
         return entries
     finally:
         if owns_client:
