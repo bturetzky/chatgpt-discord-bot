@@ -92,14 +92,14 @@ def _matches(result, guild_id, scope, participants):
 
 
 async def preview_consolidation(connection, *, guild_id, bot_author_id, model,
-                                limit=20, openai_client=None, index=None):
+                                limit=20, openai_client=None, index=None, selected_keys=None):
     """Evaluate evidence and propose operations. No writes of any kind."""
     owns_client = openai_client is None
     client = openai_client or AsyncOpenAI()
     try:
         entries = await evaluate_evidence(
             connection, guild_id=guild_id, bot_author_id=bot_author_id,
-            model=model, limit=limit, client=client)
+            model=model, limit=limit, client=client, selected_keys=selected_keys)
         for entry in entries:
             assessment = entry["evaluation"]
             entry["consolidation_version"] = VERSION
