@@ -20,6 +20,10 @@ Status: **Design only — not implemented.** The read-only diagnostic CLI in thi
 
 ## Phase 0 — baseline diagnostics (this PR)
 
+**Live instrumentation:** Every handled bot message continues to retrieve and inject memories exactly as before. At INFO, the handler records semantic/relationship counts, unique injected count, and total injected characters. At DEBUG, it records source, rank, similarity score and memory type for each match, without raw memory text. Debug score collection is opt-in through logging level; it does not add Pinecone queries. Use these real-world observations to calibrate thresholds. Note that historical DEBUG logs may still contain other private message content from unrelated code paths; keep logs private.
+
+**Controlled inspection:** The standalone CLI below permits repeatable synthetic queries and explicit display of private memory summaries. This is complementary to the live logs, not a substitute.
+
 Run inside the bot container, with its existing OpenAI/Pinecone credentials:
 
 ```bash
