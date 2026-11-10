@@ -53,6 +53,75 @@ def pending_fingerprint(connection, guild_id, model):
     return hashlib.sha256(json.dumps(payload, default=str, ensure_ascii=False).encode()).hexdigest()
 
 
+
+def pending_work(connection, guild_id, model, *, limit=20):
+    """Select never-evaluated or evidence-changed proposals, oldest first.
+
+    Ledger records non-published decisions without changing operator-visible
+    'proposed' status. Source changes and evaluator/model upgrades reopen work.
+    """
+    connection.execute("""CREATE TABLE IF NOT EXISTS autonomous_memory_evaluations (
+        guild_id TEXT NOT NULL, batch_id TEXT NOT NULL,
+        candidate_index INTEGER NOT NULL, fingerprint TEXT NOT NULL,
+        decision TEXT NOT NULL,
+        PRIMARY KEY (guild_id, batch_id, candidate_index))""")
+    rows = connection.execute(
+        """SELECT c.batch_id, c.candidate_index, c.memory_type, c.summary,
+                  c.participant_ids, c.source_message_ids, c.confidence,
+                  b.source_hash, b.extractor_version
+           FROM extraction_candidates c
+           JOIN extraction_batches b ON b.batch_id=c.batch_id
+           WHERE b.guild_id=? AND b.status='completed' AND c.status='proposed'
+           ORDER BY b.created_at ASC, c.batch_id, c.candidate_index""",
+        (str(guild_id),),
+    ).fetchall()
+    pending = []
+    for row in rows:
+        batch_id, index, *fields = row
+        # Fingerprint actual source evidence, not only the extraction batch.
+        try:
+            source_ids = json.loads(row[5])
+            if not isinstance(source_ids, list):
+                source_ids = []
+        except (TypeError, ValueError):
+            source_ids = []
+        evidence = []
+        for message_id in source_ids:
+            source = connection.execute(
+                """SELECT guild_id, channel_id, author_id, content, created_at,
+                          edited_at, deleted_at FROM messages WHERE message_id=?""",
+                (str(message_id),),
+            ).fetchone()
+            evidence.append([str(message_id), list(source) if source else None])
+        payload = [model, EXTRACTOR_VERSION, EVALUATOR_VERSION,
+                   CONSOLIDATION_VERSION, list(row), evidence]
+        fingerprint = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, default=str).encode()
+        ).hexdigest()
+        previous = connection.execute(
+            """SELECT fingerprint FROM autonomous_memory_evaluations
+               WHERE guild_id=? AND batch_id=? AND candidate_index=?""",
+            (str(guild_id), batch_id, index),
+        ).fetchone()
+        if previous is None or previous[0] != fingerprint:
+            pending.append(((batch_id, index), fingerprint))
+            if len(pending) >= limit:
+                break
+    return pending
+
+
+def record_evaluation(connection, guild_id, candidate, fingerprint, decision):
+    connection.execute(
+        """INSERT INTO autonomous_memory_evaluations
+           (guild_id, batch_id, candidate_index, fingerprint, decision)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(guild_id, batch_id, candidate_index)
+           DO UPDATE SET fingerprint=excluded.fingerprint,
+                         decision=excluded.decision""",
+        (str(guild_id), candidate["batch_id"], candidate["candidate_index"],
+         fingerprint, decision),
+    )
+
 class MeteredEndpoint:
     def __init__(self, endpoint, usage, name):
         self.endpoint, self.usage, self.name = endpoint, usage, name
@@ -118,16 +187,17 @@ async def run_once(connection, *, guild_id, bot_author_id, model, vector_handler
     owns_client = client is None
     client = client or AsyncOpenAI()
     usage = empty_usage()
+    pending = pending_work(connection, guild_id, model)
     fingerprint = pending_fingerprint(connection, guild_id, model)
     checkpoint = connection.execute(
         "SELECT fingerprint FROM autonomous_memory_checkpoints WHERE guild_id=?",
         (str(guild_id),)).fetchone()
-    if counts["processed"] == 0 and counts["failed"] == 0 and checkpoint and checkpoint[0] == fingerprint:
+    if not pending and counts["processed"] == 0 and counts["failed"] == 0:
         if owns_client:
             await client.close()
         return {**counts, "published": 0, "skipped_publication": 0,
                 "publication_decisions": {}, "idle_checkpoint_hit": True,
-                "evaluation_usage": usage}
+                "evaluation_usage": usage, "pending_evaluations": 0}
     metered = MeteredClient(client, usage)
     published = 0
     skipped = 0
@@ -135,20 +205,23 @@ async def run_once(connection, *, guild_id, bot_author_id, model, vector_handler
     try:
         entries = await preview_consolidation(
             connection, guild_id=guild_id, bot_author_id=bot_author_id,
-            model=model, limit=20, openai_client=metered,
+            model=model, limit=20, selected_keys=[key for key, _ in pending], openai_client=metered,
             index=vector_handler.vector_store.index,
         )
         plans = plan_entries(connection, entries, guild_id=guild_id,
                              bot_author_id=bot_author_id)["plans"]
+        fingerprints = dict(pending)
         for plan in plans:
             candidate = plan["candidate"]
+            key = (candidate["batch_id"], candidate["candidate_index"])
             if not eligible(plan):
                 operation = plan.get("operation")
                 category = ("discard" if operation == "discard" else
                             "review" if operation == "review" else "blocked_create")
                 decisions[category] += 1
                 skipped += 1
-                # Blocked candidates remain proposed for operator inspection.
+                # Preserve blocked/review proposals, but do not reevaluate unchanged evidence.
+                record_evaluation(connection, guild_id, candidate, fingerprints[key], category)
                 continue
             memory = plan["memory"]
             participants = memory["participant_ids"]
@@ -184,6 +257,7 @@ async def run_once(connection, *, guild_id, bot_author_id, model, vector_handler
                     _mark(connection, candidate, "superseded")
                     decisions["duplicate"] += 1
                     skipped += 1
+                    record_evaluation(connection, guild_id, candidate, fingerprints[key], "duplicate")
                     continue
                 metadata = {
                     "summary": summary, "memory_type": "relationship" if memory["scope"] == "collective" else "fact",
@@ -200,6 +274,7 @@ async def run_once(connection, *, guild_id, bot_author_id, model, vector_handler
                 _mark(connection, candidate, "accepted")
                 published += 1
                 decisions["published"] += 1
+                record_evaluation(connection, guild_id, candidate, fingerprints[key], "published")
             except Exception as exc:
                 decisions["failed"] += 1
                 LOG.warning("Autonomous memory publication failed: error_type=%s",
@@ -211,7 +286,8 @@ async def run_once(connection, *, guild_id, bot_author_id, model, vector_handler
                 (str(guild_id), pending_fingerprint(connection, guild_id, model)))
         return {**counts, "published": published, "skipped_publication": skipped,
                 "publication_decisions": decisions, "idle_checkpoint_hit": False,
-                "evaluation_usage": usage}
+                "evaluation_usage": usage,
+                "pending_evaluations": len(pending_work(connection, guild_id, model, limit=21))}
     finally:
         if owns_client:
             await client.close()
