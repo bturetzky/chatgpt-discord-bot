@@ -1,5 +1,8 @@
 # Server Awareness — design
 
+> **Current implementation status:** See [memory lifecycle checkpoint](memory-lifecycle-status.md) for the authoritative implemented/tested/deferred breakdown. Historical sections below (including earlier “next implementation” language and “pending merge” PR notes) document decisions at the time; they do not override the current checkpoint. The read-only publication planner is pending merge/deployment, and Pinecone publication is still disabled.
+
+
 **Status (2026-11-09):** SQLite persistence, live ingestion, FTS5 history search, restart reconciliation and bounded backfill implemented. Operator completed 30-day production backfill. Reaction add/remove/clear observation and shadow evaluation implemented; dev acceptance verified. Production reaction shadow mode verified running with posting disabled. Manual, bounded memory extraction is implemented and validated in dev and production; autonomous extraction, Pinecone publication, and live proactive reaction posting remain planned.  
 **Last reviewed:** 2026-11-09  
 **Scope:** chatgpt-discord-bot application. Kubernetes manifests and storage deployment belong in `bturetzky/homelab-gitops`.
