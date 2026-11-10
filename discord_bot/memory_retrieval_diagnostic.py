@@ -8,22 +8,8 @@ import json
 import os
 
 from .handlers.vectore_store import RETRIEVAL_LIMIT
-from .handlers.vector_handler import EMBEDDING_MODEL
-
-
-def normalize_matches(response):
-    """Keep ordered valid summaries and scores; tolerate Pinecone dict/object results."""
-    matches = response.get("matches", []) if isinstance(response, dict) else getattr(response, "matches", [])
-    output = []
-    for match in matches or []:
-        metadata = match.get("metadata") if isinstance(match, dict) else getattr(match, "metadata", None)
-        summary = metadata.get("summary") if isinstance(metadata, dict) else None
-        if not isinstance(summary, str) or not summary.strip():
-            continue
-        score = match.get("score") if isinstance(match, dict) else getattr(match, "score", None)
-        kind = metadata.get("memory_type", "legacy/unspecified")
-        output.append({"summary": summary, "score": score, "memory_type": kind})
-    return output
+from .handlers.vector_handler import EMBEDDING_MODEL, VectorHandler
+from .memory_selection import enabled, normalize_matches, retrieve_and_select
 
 
 def preview(semantic, relationship, *, semantic_limit=RETRIEVAL_LIMIT, relationship_limit=4):
@@ -45,12 +31,32 @@ def preview(semantic, relationship, *, semantic_limit=RETRIEVAL_LIMIT, relations
     }
 
 
-def inspect(query, participant_ids, *, semantic_limit, relationship_limit):
+def inspect(query, participant_ids, *, semantic_limit=None, relationship_limit=None, latest=None):
     from openai import OpenAI
     from pinecone import Pinecone
     from .handlers.vectore_store import INDEX_NAME
     if not os.getenv("OPENAI_API_KEY") or not os.getenv("PINECONE_API_KEY"):
         raise SystemExit("OPENAI_API_KEY and PINECONE_API_KEY required")
+    if enabled():
+        handler = VectorHandler(os.environ["OPENAI_API_KEY"], os.environ["PINECONE_API_KEY"])
+        candidates = {}
+        context, decisions = retrieve_and_select(
+            handler, query, query if latest is None else latest, participant_ids,
+            semantic_pool=semantic_limit, relationship_pool=relationship_limit, candidates=candidates,
+        )
+        selected = sum(item["reason"] == "selected" for item in decisions)
+        return {
+            **candidates,
+            "retrieved_count": len(decisions),
+            "injected_count": selected,
+            "rejected_count": len(decisions) - selected,
+            "injected_characters": len(context),
+            "context": context,
+            "decisions": decisions,
+        }
+    semantic_limit = RETRIEVAL_LIMIT if semantic_limit is None else semantic_limit
+    if relationship_limit is None:
+        relationship_limit = int(os.getenv("RELATIONSHIP_MEMORY_LIMIT", "4"))
     client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
     index = Pinecone(api_key=os.environ["PINECONE_API_KEY"]).Index(INDEX_NAME)
 
@@ -82,16 +88,18 @@ def main():
     parser = argparse.ArgumentParser(description="Read-only semantic/relationship memory retrieval preview")
     parser.add_argument("--query", required=True, help="Exact text to embed; use the full recent-user-turn query to reproduce production")
     parser.add_argument("--participant-id", action="append", default=[], help="Discord participant ID; repeat for multiple users")
-    parser.add_argument("--semantic-limit", type=int, default=RETRIEVAL_LIMIT)
-    parser.add_argument("--relationship-limit", type=int, default=int(os.getenv("RELATIONSHIP_MEMORY_LIMIT", "4")))
+    parser.add_argument("--semantic-limit", type=int)
+    parser.add_argument("--relationship-limit", type=int)
+    parser.add_argument("--latest", help="Latest addressed message without speaker prefix, for enhanced multi-turn previews")
     parser.add_argument("--json", action="store_true", help="Structured output (default is readable JSON too)")
     args = parser.parse_args()
-    if not 1 <= args.semantic_limit <= 50 or not 0 <= args.relationship_limit <= 20:
+    if ((args.semantic_limit is not None and not 1 <= args.semantic_limit <= 50)
+            or (args.relationship_limit is not None and not 0 <= args.relationship_limit <= 20)):
         parser.error("semantic limit must be 1..50; relationship limit must be 0..20")
     if any(not value.isdecimal() for value in args.participant_id):
         parser.error("--participant-id must be numeric")
     result = inspect(args.query, list(dict.fromkeys(args.participant_id)),
-                     semantic_limit=args.semantic_limit, relationship_limit=args.relationship_limit)
+                     semantic_limit=args.semantic_limit, relationship_limit=args.relationship_limit, latest=args.latest)
     print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
 
 

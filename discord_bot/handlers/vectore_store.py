@@ -1,7 +1,10 @@
 import hashlib
+import logging
 import os
 import re
-from pinecone import Pinecone, ServerlessSpec
+from pinecone import Pinecone
+
+from ..memory_selection import normalize_matches
 
 INDEX_NAME = "discord-bot-context2"
 # This comes from the model we're using for embeddings, ada-002
@@ -55,26 +58,12 @@ class VectorStore:
                 include_metadata=True,  # Whether to include any metadata stored alongside vectors
                 vector=query_vector     # The query vector
             )
-            #print(f"index query results: {results}")
-            # Extract the metadata from the closest matches
-            if results and 'matches' in results and len(results['matches']) > 0:
-                closest_matches = [
-                    match["metadata"]["summary"]
-                    for match in results["matches"]
-                    if isinstance(match.get("metadata"), dict)
-                    and isinstance(match["metadata"].get("summary"), str)
-                    and match["metadata"]["summary"].strip()
-                ]
-            else:
-                print("No matches found.")
-                closest_matches = []
-
+            matches = normalize_matches(results)
             if diagnostics is not None:
-                from ..memory_retrieval_diagnostic import normalize_matches
-                diagnostics.extend(normalize_matches(results))
-            return closest_matches
-        except Exception as e:
-            print(f"An error occurred: {e}")
+                diagnostics.extend(matches)
+            return [match["summary"] for match in matches]
+        except Exception as exc:
+            logging.warning("Memory vector lookup failed: error_type=%s", type(exc).__name__)
             return None
 
 
