@@ -26,12 +26,16 @@ class VectorHandler:
 
     def get_relevant_contexts(self, initial_message, limit=None, diagnostics=None):
         query_vector = self.encode_message(initial_message)
+        if diagnostics is None:
+            return self.vector_store.fetch_context(query_vector, limit=limit)
         return self.vector_store.fetch_context(query_vector, limit=limit, diagnostics=diagnostics)
 
     def get_relationship_contexts(self, participant_ids, limit=4, diagnostics=None):
         if not participant_ids:
             return []
         query_vector = self.encode_message("established relationships, running jokes, shared experiences, and conversational preferences")
+        if diagnostics is None:
+            return self.vector_store.fetch_context(query_vector, limit=limit, participant_ids=participant_ids, memory_type="relationship")
         return self.vector_store.fetch_context(query_vector, limit=limit, participant_ids=participant_ids, memory_type="relationship", diagnostics=diagnostics)
 
     def store_additional_data(self, summary, memory_type="fact", participant_ids=None):
