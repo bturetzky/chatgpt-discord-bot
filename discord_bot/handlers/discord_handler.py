@@ -243,7 +243,7 @@ class DiscordHandler:
             relationship_diagnostics = [] if logging.getLogger().isEnabledFor(logging.DEBUG) else None
             try:
                 memories = await asyncio.to_thread(
-                    self.vector_handler.get_relevant_contexts, memory_query, diagnostics=semantic_diagnostics
+                    self.vector_handler.get_relevant_contexts, memory_query, **({'diagnostics': semantic_diagnostics} if semantic_diagnostics is not None else {})
                 ) or []
             except Exception:
                 logging.exception("Semantic memory lookup failed; continuing")
@@ -251,7 +251,7 @@ class DiscordHandler:
             try:
                 relationships = await asyncio.to_thread(
                     self.vector_handler.get_relationship_contexts,
-                    participant_ids, RELATIONSHIP_MEMORY_LIMIT, diagnostics=relationship_diagnostics
+                    participant_ids, RELATIONSHIP_MEMORY_LIMIT, **({'diagnostics': relationship_diagnostics} if relationship_diagnostics is not None else {})
                 ) or []
             except Exception:
                 logging.exception("Relationship memory lookup failed; continuing")
