@@ -62,20 +62,30 @@ def evaluate(candidate):
     return Assessment(scope, durability, "review", rationale)
 
 
-def preview(connection, *, guild_id, limit=20):
+def preview(connection, *, guild_id, limit=20, selected_keys=None):
     """Return a bounded, guild-scoped preview without modifying SQLite."""
     if not guild_id or not 1 <= limit <= 100:
         raise ValueError("guild_id and limit (1..100) required")
     connection.row_factory = __import__("sqlite3").Row
+    selection = ""
+    params = [str(guild_id)]
+    if selected_keys is not None:
+        if not selected_keys:
+            return []
+        selection = " AND (" + " OR ".join(
+            "(c.batch_id=? AND c.candidate_index=?)" for _ in selected_keys
+        ) + ")"
+        for batch_id, candidate_index in selected_keys:
+            params.extend((batch_id, candidate_index))
     rows = connection.execute(
         """SELECT c.batch_id, c.candidate_index, c.memory_type, c.summary,
                   c.participant_ids, c.source_message_ids, c.confidence,
                   c.status, b.guild_id
            FROM extraction_candidates c
            JOIN extraction_batches b ON b.batch_id=c.batch_id
-           WHERE b.guild_id=? AND c.status='proposed'
+           WHERE b.guild_id=? AND c.status='proposed'""" + selection + """
            ORDER BY b.created_at DESC, c.batch_id, c.candidate_index
-           LIMIT ?""", (str(guild_id), limit),
+           LIMIT ?""", (*params, limit),
     ).fetchall()
     return [{**dict(row), "evaluation": asdict(evaluate(row))} for row in rows]
 
