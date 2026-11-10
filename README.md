@@ -121,7 +121,7 @@ Both environments are reconciled by Argo CD. Immutable-image CI/CD, automatic re
 
 - Persistent SQLite archive, FTS5 search, bounded backfill and restart reconciliation are implemented; production 30-day backfill was operator-run. Reaction add/remove/clear observation is implemented and tested in dev.
 - Reaction **shadow evaluation** is deployed in dev and production GitOps configuration. Dev live acceptance succeeded: a deterministic candidate produced a real model decision (`ignore`, `no_clear_reaction`, 303 input/41 output tokens). Production configuration PRs were merged; production runtime startup and ongoing evaluations have **not yet been independently verified**. No unsolicited reactions are posted.
-- Live proactive reactions and automatic memory extraction remain unimplemented. See the [proactive personality design](docs/proactive-personality-design.md).
+- Autonomous memory extraction and guarded Pinecone publication are implemented and enabled in dev. The operator observed successful publication (two memories, zero failures) and later DEBUG logs showing retrieved summaries from Pinecone. This verifies retrieval and context insertion, but does not by itself prove a response was based exclusively on retrieved memories. Production enablement/promotion has not yet been confirmed. Live proactive reaction posting remains unimplemented. See [memory lifecycle status](docs/memory-lifecycle-status.md).
 
 ## Documentation
 
