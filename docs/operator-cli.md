@@ -3,14 +3,14 @@
 Run inside the existing bot container; no separate service or dashboard.
 
 ```bash
-kubectl -n discord-dev exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin --help
-kubectl -n discord-dev exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin status
-kubectl -n discord-dev exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin reactions
-kubectl -n discord-dev exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin reactions --react-only
-kubectl -n discord-dev exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin archive
-kubectl -n discord-dev exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin memories --stats
-kubectl -n discord-dev exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin memories --limit 20
-kubectl -n discord-dev exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin memories --verify-pinecone
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin --help
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin status
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin reactions
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin reactions --react-only
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin archive
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin memories --stats
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin memories --limit 20
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin memories --verify-pinecone
 ```
 
 Replace `discord-dev` with `discord-prod` to inspect production. `--json` is a **global** option, so put it before the subcommand, e.g. `python -m discord_bot.admin --json reactions`. The CLI uses the configured `DISCORD_SQLITE_PATH` and `REACTION_SHADOW_GUILD_ID`; override guild with global `--guild-id` when necessary. Never commit guild IDs or memory contents to the repository.
