@@ -1,5 +1,8 @@
 # Engineering roadmap and code review
 
+> **Memory lifecycle checkpoint (2026-11-09):** Extraction, human-evidence evaluation and semantic consolidation v2 are implemented and operator-tested in read-only previews. The new publication planner is proposed in a PR, not yet deployed. No automatic memory publication or scheduler is enabled. See [current status and deferred work](memory-lifecycle-status.md). Older sections below retain historical implementation decisions and should not be read as current pending stages.
+
+
 **Reviewed:** 2026-11-09 | **Status:** Living roadmap; Python 3.12 promoted, Renovate enabled, dependency cleanup promoted; ARC dev verification and first autonomous Codex pipeline experiment passed; expanded ARC gateway/stability verifier passed live and orphaned ARC ServiceAccount cleanup restored Synced/Healthy; public URL feature PRs #41–42 deployed and manually exercised; live article access failures classified, while GitHub README and local-address rejection passed.
 
 This roadmap covers application code. The separate [deployment workflow](deployment-workflow.md) covers CI, image publishing, dev deployment and production promotion. Deployment manifests remain authoritative in [homelab-gitops](https://github.com/bturetzky/homelab-gitops).
