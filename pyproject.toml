@@ -9,7 +9,7 @@ authors = [
 
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = ">=3.12,<3.13"
 openai = ">=2.0,<3.0"
 # OpenAI SDK serialization passes by_alias=None; older Pydantic versions fail.
 pydantic = ">=2.13,<3.0"
