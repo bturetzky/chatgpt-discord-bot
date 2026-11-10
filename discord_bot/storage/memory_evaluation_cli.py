@@ -28,7 +28,8 @@ async def discover_bot_id():
 
 def main():
     parser = argparse.ArgumentParser(description="Preview candidate triage (no Pinecone writes)")
-    parser.add_argument("--guild-id", default=os.getenv("REACTION_SHADOW_GUILD_ID"),\n                        help="Defaults to REACTION_SHADOW_GUILD_ID from deployment")
+    parser.add_argument("--guild-id", default=os.getenv("REACTION_SHADOW_GUILD_ID"),
+                        help="Defaults to REACTION_SHADOW_GUILD_ID from deployment")
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--evidence", action="store_true",
                         help="Validate source provenance and call model on human evidence")
