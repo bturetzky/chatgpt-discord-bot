@@ -67,10 +67,12 @@ class MemoryRecallTests(unittest.TestCase):
         self.assertIn("Speaker 11", query)
         self.assertNotIn("Speaker 0", query)
 
-    def test_capture_instructions_encourage_ordinary_context(self):
+    def test_memory_tool_requires_explicit_request(self):
         handler = object.__new__(ChatGPTHandler)
         prompt = handler.get_response_system_prompt_content("@bot")
-        self.assertIn("Ordinary concrete facts", prompt)
+        self.assertIn("Use store_memory only when a human explicitly asks", prompt)
+        self.assertIn("Do not call store_memory for unsolicited facts", prompt)
+        self.assertIn("separate automatic memory pipeline", prompt)
         self.assertIn("standalone", prompt)
         self.assertIn("Never store credentials", prompt)
         self.assertIn("any participant", prompt)
