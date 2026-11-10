@@ -1,4 +1,4 @@
-"""Small-server operator CLI. Inspection is read-only; backfill writes SQLite proposals only.
+"""Small-server operator CLI. Inspection is read-only; backfill writes SQLite proposals only.\nThe running autonomous worker may subsequently publish eligible proposals.
 
 Run: python -m discord_bot.admin --help
 """
@@ -172,7 +172,7 @@ async def extract(args):
             cursor = end
     output({"chunks": results, "next_since": cursor.isoformat(),
             "complete": cursor >= until,
-            "pinecone_writes": False}, args)
+            "direct_pinecone_writes": False,\n            "warning": "The running autonomous worker may publish these proposals later."}, args)
 
 def main():
     parser = argparse.ArgumentParser(description="Discord bot operator inspection and historical extraction")
@@ -189,7 +189,7 @@ def main():
     memory.add_argument("--status", choices=["all", "accepted", "proposed", "rejected", "superseded"], default="accepted")
     memory.add_argument("--limit", type=int, default=30)
     memory.add_argument("--verify-pinecone", action="store_true", help="Fetch deterministic autonomous IDs from Pinecone")
-    backfill = commands.add_parser("backfill", help="Extract historical memory candidates into SQLite; NEVER publishes")
+    backfill = commands.add_parser("backfill", help="Extract candidates to SQLite (running worker may later publish)")
     backfill.add_argument("--since", type=parse_date)
     backfill.add_argument("--until", type=parse_date)
     backfill.add_argument("--days", type=int, default=30)
