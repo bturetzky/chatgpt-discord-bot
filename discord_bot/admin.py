@@ -172,7 +172,8 @@ async def extract(args):
             cursor = end
     output({"chunks": results, "next_since": cursor.isoformat(),
             "complete": cursor >= until,
-            "direct_pinecone_writes": False,\n            "warning": "The running autonomous worker may publish these proposals later."}, args)
+            "direct_pinecone_writes": False,
+            "warning": "The running autonomous worker may publish these proposals later."}, args)
 
 def main():
     parser = argparse.ArgumentParser(description="Discord bot operator inspection and historical extraction")
