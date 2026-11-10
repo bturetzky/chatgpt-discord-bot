@@ -28,7 +28,7 @@ async def discover_bot_id():
 
 def main():
     parser = argparse.ArgumentParser(description="Preview candidate triage (no Pinecone writes)")
-    parser.add_argument("--guild-id", required=True)
+    parser.add_argument("--guild-id", default=os.getenv("REACTION_SHADOW_GUILD_ID"),\n                        help="Defaults to REACTION_SHADOW_GUILD_ID from deployment")
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--evidence", action="store_true",
                         help="Validate source provenance and call model on human evidence")
@@ -36,6 +36,8 @@ def main():
     parser.add_argument("--record", action="store_true",
                         help="Explicitly persist review/exclusion assessments in SQLite")
     args = parser.parse_args()
+    if not args.guild_id or not args.guild_id.isdecimal():
+        parser.error("--guild-id or numeric REACTION_SHADOW_GUILD_ID is required")
     path = os.getenv("DISCORD_SQLITE_PATH")
     if not path:
         parser.error("DISCORD_SQLITE_PATH is required")
