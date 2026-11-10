@@ -17,7 +17,8 @@ from .extraction_dry_run import dry_run
 
 def main():
     parser = argparse.ArgumentParser(description="Bounded culture-memory dry-run (no Pinecone writes)")
-    parser.add_argument("--guild-id", default=os.getenv("REACTION_SHADOW_GUILD_ID"),\n                        help="Defaults to REACTION_SHADOW_GUILD_ID from deployment")
+    parser.add_argument("--guild-id", default=os.getenv("REACTION_SHADOW_GUILD_ID"),
+                        help="Defaults to REACTION_SHADOW_GUILD_ID from deployment")
     parser.add_argument("--since", required=True, help="inclusive ISO-8601 timestamp with timezone")
     parser.add_argument("--until", required=True, help="exclusive ISO-8601 timestamp with timezone")
     parser.add_argument("--max-windows", type=int, default=5)
