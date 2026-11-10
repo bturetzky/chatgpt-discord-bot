@@ -61,6 +61,8 @@ def _matches(result, guild_id, scope, participants):
             continue
         # Historical Pinecone records lack guild/scope metadata. They can be
         # inspected separately later, but cannot authorize cross-scope changes.
+        if metadata.get("guild_id") is not None and str(metadata["guild_id"]) != str(guild_id):
+            continue
         scoped = str(metadata.get("guild_id", "")) == str(guild_id)
         scoped = scoped and metadata.get("scope") == scope
         ids = metadata.get("participant_ids") or []
