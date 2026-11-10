@@ -261,6 +261,8 @@ class DiscordHandler:
             unique_memories = list(dict.fromkeys(
                 item for item in relationships + memories if isinstance(item, str) and item.strip()
             ))
+            for memory in unique_memories:
+                logging.debug("Retrieved memory: %s", memory)
             for memory in reversed(unique_memories):
                 messages.insert(0, {"role": "system", "content": f"Memory (possibly outdated): {memory}"})
             logging.info(
