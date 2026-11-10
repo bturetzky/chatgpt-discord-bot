@@ -22,9 +22,17 @@ kubectl -n discord-dev exec deploy/chatgpt-discord-bot -- \
 
 The planner re-runs the evidence and consolidation models, so results can vary between runs and incur API costs; **proposal IDs and deterministic eligibility rules** do not vary for the same candidate identity. The output has `recorded: false` and `publishable: false` even when an entry is `review_required`. `review_required` is not authorization to publish. The CLI opens the existing SQLite database using the application's normal connection lifecycle, but does not add planner records or publish memories. Production promotion remains manual.
 
+## Publication ledger foundation (this PR; not deployed until merged)
+
+A new ordered SQLite migration defines `memory_records` (logical identity, guild, scope, participant set, lifecycle and current revision), `memory_revisions` (immutable numbered revisions, proposal link, source hash and supersession pointer), `memory_revision_sources` (source IDs, authors, channels, timestamps and content hashes), and `memory_publication_attempts` (upsert/delete attempt state, vector ID and reconciliation status). The migration creates empty tables; it does **not** backfill, approve, publish or change existing Pinecone retrieval.
+
+Pure state-transition helpers reject publication without independent remote confirmation, prohibit unconfirmed supersession and preserve uncertain remote outcomes as uncertain. They do **not** implement a writer or automatically mutate these tables. The planner still reports `publishable: false`; no new CLI, scheduler or automated writes are introduced.
+
+Before connecting a writer, implement transactional persistence APIs with source validation, stable logical identity and semantic deduplication; vector-operation idempotency and reconciliation; and an explicit invalidation/retrieval policy. A schema is not a functioning publication lifecycle.
+
 ## Explicitly deferred / to revisit
 
-1. **Real publication ledger and revisions:** SQLite schema for logical memory IDs, revision history, source snapshots/hashes, supersession, correction, rollback and partial-failure reconciliation. Proposal IDs are *not* semantic deduplication keys or Pinecone vector IDs.
+1. **Publication ledger operations and revisions:** The schema and pure state rules are proposed in this PR; transactional persistence, source snapshot validation, actual revision updates, rollback, and partial-failure reconciliation are not implemented. Proposal IDs are *not* semantic deduplication keys or Pinecone vector IDs.
 2. **Legacy Pinecone migration:** older records lack guild/scope provenance. Never silently adopt or overwrite them; establish attribution, migration or quarantine rules and duplicate detection before enabling writes.
 3. **Atomic memory splitting:** consolidation can propose `split`, but it is not consistently chosen (Mario Odyssey). Require per-atom evidence and duplicate checks before split publication; avoid automatic creation of compound preferences.
 4. **Source invalidation:** edits, deletes, explicit corrections/forget requests and stale evolving projects must invalidate or supersede retrieval entries. The planner conservatively blocks edited sources rather than attempting automatic repair.

@@ -138,6 +138,68 @@ MIGRATIONS = (
         """CREATE INDEX candidate_evaluations_disposition
             ON candidate_evaluations(disposition, evaluated_at)""",
     ),
+    # Publication foundation only. No writer, scheduler or automated transitions.
+    (
+        """CREATE TABLE memory_records (
+            memory_id TEXT PRIMARY KEY,
+            guild_id TEXT NOT NULL,
+            scope TEXT NOT NULL CHECK(scope IN ('individual', 'collective')),
+            participant_ids TEXT NOT NULL,
+            current_revision INTEGER,
+            lifecycle TEXT NOT NULL DEFAULT 'staged'
+                CHECK(lifecycle IN ('staged', 'active', 'superseded', 'invalidated')),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(memory_id, guild_id),
+            FOREIGN KEY(memory_id, current_revision)
+                REFERENCES memory_revisions(memory_id, revision)
+                DEFERRABLE INITIALLY DEFERRED
+        )""",
+        """CREATE TABLE memory_revisions (
+            memory_id TEXT NOT NULL REFERENCES memory_records(memory_id),
+            revision INTEGER NOT NULL CHECK(revision > 0),
+            proposal_id TEXT NOT NULL UNIQUE,
+            summary TEXT NOT NULL,
+            durability TEXT NOT NULL CHECK(durability IN ('durable', 'evolving')),
+            source_hash TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'staged'
+                CHECK(state IN ('staged', 'pending', 'published', 'superseded', 'invalidated', 'failed')),
+            supersedes_revision INTEGER,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(memory_id, revision),
+            FOREIGN KEY(memory_id, supersedes_revision)
+                REFERENCES memory_revisions(memory_id, revision)
+        )""",
+        """CREATE TABLE memory_revision_sources (
+            memory_id TEXT NOT NULL,
+            revision INTEGER NOT NULL,
+            message_id TEXT NOT NULL,
+            channel_id TEXT NOT NULL,
+            author_id TEXT NOT NULL,
+            source_created_at TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            PRIMARY KEY(memory_id, revision, message_id),
+            FOREIGN KEY(memory_id, revision)
+                REFERENCES memory_revisions(memory_id, revision)
+        )""",
+        """CREATE INDEX memory_revision_sources_message
+            ON memory_revision_sources(message_id)""",
+        """CREATE TABLE memory_publication_attempts (
+            attempt_id TEXT PRIMARY KEY,
+            memory_id TEXT NOT NULL,
+            revision INTEGER NOT NULL,
+            operation TEXT NOT NULL CHECK(operation IN ('upsert', 'delete')),
+            status TEXT NOT NULL CHECK(status IN ('pending', 'confirmed', 'failed', 'uncertain')),
+            vector_id TEXT NOT NULL,
+            error_category TEXT,
+            started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            completed_at TEXT,
+            FOREIGN KEY(memory_id, revision)
+                REFERENCES memory_revisions(memory_id, revision)
+        )""",
+        """CREATE INDEX memory_publication_attempts_unresolved
+            ON memory_publication_attempts(status, started_at)""",
+    ),
 )
 
 
