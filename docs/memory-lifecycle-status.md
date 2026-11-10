@@ -1,3 +1,9 @@
+## Transactional ledger operations (PR #86, proposed)
+
+`memory_publication_ledger.py` adds **operator-invoked SQLite-only functions**, not a scheduled pipeline: `stage_create` checks current archived human evidence inside `BEGIN IMMEDIATE`, snapshots source hashes and attribution, and stages revision 1 against a caller-supplied logical memory ID. Repeated identical proposal staging is idempotent; changed sources and conflicting IDs fail closed. `validate_sources` compares archived content, timestamps, author and channel to snapshots; `invalidate_changed_sources` can invalidate staged or failed revisions, but deliberately refuses to silently invalidate pending/published remote vectors. `record_attempt` records intent only, while `reconcile_recorded_attempt` records an externally supplied observation.
+
+**Important limits:** These APIs are not connected to the planner or bot runtime; the caller must independently verify the plan, choose a semantically deduplicated logical ID, and supply trustworthy remote observations. The APIs do not contact Pinecone, validate a remote response themselves, implement updates/merges/splits, or safely retire an already published vector. Do not treat a caller-supplied `matching_vector=True` as independently verified without a future trusted reconciliation adapter. No automatic writes are enabled.
+
 # Server Awareness memory: implementation checkpoint
 
 **Updated:** 2026-11-09. This is the current status; older implementation-order sections in [the design](server-awareness-design.md) are retained as historical decisions, not a current task list.
