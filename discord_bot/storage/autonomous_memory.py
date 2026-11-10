@@ -8,7 +8,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import os
 from datetime import datetime, timedelta, timezone
 
 from openai import AsyncOpenAI
@@ -188,10 +187,6 @@ async def run_once(connection, *, guild_id, bot_author_id, model, vector_handler
     client = client or AsyncOpenAI()
     usage = empty_usage()
     pending = pending_work(connection, guild_id, model)
-    fingerprint = pending_fingerprint(connection, guild_id, model)
-    checkpoint = connection.execute(
-        "SELECT fingerprint FROM autonomous_memory_checkpoints WHERE guild_id=?",
-        (str(guild_id),)).fetchone()
     if not pending and counts["processed"] == 0 and counts["failed"] == 0:
         if owns_client:
             await client.close()
