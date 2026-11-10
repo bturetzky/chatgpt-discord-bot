@@ -38,7 +38,7 @@ class VectorStore:
             'metadata': metadata
         }])
 
-    def fetch_context(self, query_vector, limit=None, participant_ids=None, memory_type=None):
+    def fetch_context(self, query_vector, limit=None, participant_ids=None, memory_type=None, diagnostics=None):
         try:
             #print(f"index is...: {self.index}")
             query_filter = None
@@ -69,6 +69,9 @@ class VectorStore:
                 print("No matches found.")
                 closest_matches = []
 
+            if diagnostics is not None:
+                from ..memory_retrieval_diagnostic import normalize_matches
+                diagnostics.extend(normalize_matches(results))
             return closest_matches
         except Exception as e:
             print(f"An error occurred: {e}")
