@@ -1,4 +1,6 @@
 import unittest
+from unittest.mock import MagicMock
+from discord_bot.handlers.vectore_store import VectorStore
 from discord_bot.memory_retrieval_diagnostic import normalize_matches, preview
 
 
@@ -19,6 +21,19 @@ class RetrievalDiagnosticTests(unittest.TestCase):
         result = preview(semantic, relationship)
         self.assertEqual(result["current_injection"], ["shared", "joke", "fact"])
         self.assertEqual(result["injected_count"], 3)
+
+    def test_live_diagnostics_do_not_change_retrieved_text(self):
+        store = VectorStore('test')
+        store.index = MagicMock()
+        store.index.query.return_value = {'matches': [
+            {'score': 0.91, 'metadata': {'summary': 'Alice grows tomatoes', 'memory_type': 'fact'}},
+            {'score': 0.15, 'metadata': {'summary': 'Unrelated fact'}},
+        ]}
+        diagnostics = []
+        self.assertEqual(store.fetch_context([0.1], diagnostics=diagnostics),
+                         ['Alice grows tomatoes', 'Unrelated fact'])
+        self.assertEqual([m['score'] for m in diagnostics], [0.91, 0.15])
+        self.assertEqual(store.fetch_context([0.1]), ['Alice grows tomatoes', 'Unrelated fact'])
 
     def test_empty_results(self):
         self.assertEqual(preview([], [])["injected_count"], 0)
