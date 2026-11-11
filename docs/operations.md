@@ -17,7 +17,7 @@ kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin memories 
 
 Global `--json` and `--guild-id` options precede the subcommand. Inspection commands are read-only; `--verify-pinecone` makes read-only remote fetches. SQLite `accepted` does not by itself prove the vector still exists; a `not_found` result requires investigation of vector identity, namespace and deduplication, not automatic deletion. The previously observed discrepancy was operator-verified and is not an open acceptance item.
 
-`status` shows integrity, flags and row counts; `reactions` reports recorded decisions/emoji/reason/token use and message links; `archive` reports coverage/cursors; `memories` reports candidates and extraction usage. Empty shadow results mean no persisted evaluations, not necessarily disabled observation.
+`status` shows integrity, flags and row counts; `reactions` reports recorded decisions, posting outcomes, selected emoji and message links; `archive` reports coverage/cursors; `memories` reports candidates and extraction usage. Historical shadow rows have no posting outcome. An `attempting` row may represent an interrupted request with an uncertain outcome.
 
 ## Two different backfills
 
@@ -45,15 +45,21 @@ kubectl -n discord-dev exec deploy/chatgpt-discord-bot -- \
 
 The second command's timestamps are **illustrative**, not current operational dates. Completed extraction batches are skipped. Narrow `--chunk-hours` if bounded window/row limits are exceeded. Model calls cost money. **Critical:** although the CLI does not directly publish to Pinecone, an enabled autonomous worker may later evaluate and publish the resulting proposals. It is not a production-safe dry run. Use dev and obtain approval for production historical processing.
 
-## Reaction shadow inspection
+## Verify live emoji reactions
+
+Select the dev Kubernetes namespace and use a dev text channel in the configured guild with persistent SQLite. The bot needs View Channel, Read Message History and Add Reactions. Choose fresh human messages with at least 12 characters and allow for recent channel and author cooldowns.
+
+1. Send a playful message such as “The rubber duck found the bug before I did.” With the existing dev test prefix configured, start the message with that prefix to force sampling. Wait 60–90 seconds for a decision. The model can still ignore it.
+2. On a fresh message, have two different people add an emoji. Look for a `pile_on` evaluation if the message was not independently sampled. If the bot posts, compare the visible emoji with the CLI result.
+3. As a negative case, have one person add two emoji to a message. This alone should never trigger a pile-on. An `ignored` decision should leave the bot absent from the reaction list.
 
 ```bash
-kubectl -n discord-dev logs deploy/chatgpt-discord-bot --since=24h | grep 'Reaction shadow'
-kubectl -n discord-dev exec deploy/chatgpt-discord-bot -- \
-  python -m discord_bot.admin reactions
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin reactions
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin reactions --posted-only
+kubectl logs deploy/chatgpt-discord-bot --since=24h | grep 'Reaction evaluated'
 ```
 
-With `REACTION_SHADOW_ENABLED=true` and a matching guild ID, the evaluator observes eligible text/reactions but **never posts emoji**. For deterministic **dev-only** testing, set `REACTION_SHADOW_TEST_PREFIX` temporarily in dev GitOps, send a fresh eligible non-reply message starting with it, wait at least 60–90 seconds, and inspect logs and persisted rows. This consumes one of the 8 evaluations/rolling 24 hours; remove the prefix afterward. Two distinct humans reacting to a recent eligible message should yield a `pile_on` evaluation; one human adding several emoji must not. This multi-human path and sustained production decision quality remain pending operator acceptance.
+The CLI includes Discord message links. Use the first command to inspect cooldowns, model decisions and Discord errors. Remove the dev test prefix after use if it was set temporarily.
 
 ## Discovery shadow dev acceptance
 

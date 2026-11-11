@@ -26,7 +26,8 @@ class OperatorCliTests(unittest.TestCase):
             CREATE TABLE shadow_evaluations (
                 guild_id TEXT, channel_id TEXT, message_id TEXT, evaluated_at TEXT,
                 status TEXT, trigger TEXT, decision TEXT, emoji_key TEXT,
-                reason_category TEXT, input_tokens INTEGER, output_tokens INTEGER
+                reason_category TEXT, input_tokens INTEGER, output_tokens INTEGER,
+                posting_outcome TEXT, posted_at TEXT
             );
             CREATE TABLE extraction_batches (
                 batch_id TEXT, guild_id TEXT, channel_id TEXT,
@@ -44,7 +45,7 @@ class OperatorCliTests(unittest.TestCase):
             INSERT INTO messages VALUES ('123','456','789','2026-11-01T00:00:00Z',NULL);
             INSERT INTO shadow_evaluations VALUES (
                 '123','456','789','2026-11-09 00:00:00',
-                'completed','independent','react','unicode:😂','funny',30,5);
+                'completed','independent','react','unicode:😂','funny',30,5,'posted','2026-11-09 00:00:01');
             INSERT INTO extraction_batches VALUES ('batch1','123','456','completed','2026-11-09');
             INSERT INTO extraction_candidates VALUES (
                 'batch1',0,'accepted','fact','A remembered fact','["111"]','["789"]');
@@ -69,7 +70,8 @@ class OperatorCliTests(unittest.TestCase):
         return buffer.getvalue()
 
     def test_reactions_link_and_emoji(self):
-        result = self.capture(admin.reactions)
+        result = self.capture(admin.reactions, posted_only=True)
+        self.assertIn('"posting_outcome": "posted"', result)
         self.assertIn("https://discord.com/channels/123/456/789", result)
         self.assertIn("unicode:😂", result)
 

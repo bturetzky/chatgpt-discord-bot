@@ -9,7 +9,6 @@ from ..storage.discovery_shadow import DiscoveryShadow
 from ..storage.history import reconcile_recent
 from ..storage.reaction_observer import ReactionObserver
 from ..storage.autonomous_memory import run_forever
-from .reaction_shadow import ReactionShadow
 
 CONTEXT_LIMIT = int(os.getenv("DISCORD_CONTEXT_LIMIT", "30"))
 
@@ -75,7 +74,7 @@ class DiscordHandler:
                 try:
                     self.reaction_shadow.observe_message(message, bot_id=self.client.user.id)
                 except Exception:
-                    logging.exception('Reaction shadow message gate failed')
+                    logging.exception('Reaction message gate failed')
             await self.process_message(message)
 
         @self.client.event
