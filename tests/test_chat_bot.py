@@ -77,7 +77,7 @@ class DiscordBehaviorTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_history_is_chronological_with_roles(self):
         handler = make_handler()
-        author = SimpleNamespace(mention="<@123>", id=123, display_name="Alice")
+        author = SimpleNamespace(mention="<@123>", id=123, display_name="Alice", bot=False)
         bot = handler.client.user
         older = SimpleNamespace(author=author, content="first")
         newer = SimpleNamespace(author=bot, content="second")
@@ -86,7 +86,11 @@ class DiscordBehaviorTests(unittest.IsolatedAsyncioTestCase):
             for message in (newer, older):
                 yield message
         channel.history.return_value = history()
-        result = await DiscordHandler.get_message_history(handler, channel, limit=3)
+        participants = ["456"]
+        result = await DiscordHandler.get_message_history(
+            handler, channel, limit=3, participant_ids=participants,
+        )
+        self.assertEqual(participants, ["456", "123"])
         self.assertEqual(result, [
             {"role": "user", "content": "Alice (Discord ID 123): first"},
             {"role": "assistant", "content": f"{bot.mention}: second"},

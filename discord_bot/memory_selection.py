@@ -6,19 +6,6 @@ import os
 import re
 from collections import Counter
 
-_STOP = set(
-    "about again also and are can could did does for from had has have how into just "
-    "like may more much our please remember recall said say some tell than that the "
-    "their them then there these they this those was were what when where which who "
-    "why will with would you your".split()
-)
-_RELATIONSHIP = re.compile(
-    r"\b(?:jokes?|nicknames?|relationships?|traditions?|shared|running gag)\b", re.I
-)
-_FOLLOW_UP = re.compile(
-    r"^(?:and\b|what about (?:it|that|them)\b|tell me more\b)", re.I
-)
-_USER_MENTION = re.compile(r"<@!?[0-9]+>")
 _TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}:\s*")
 _HEADER = (
     "Use the following fallible, possibly outdated memory records only as background "
@@ -39,7 +26,7 @@ def normalize_matches(response):
             output.append(
                 {
                     "summary": summary,
-                    "score": _field(match, "score"),
+                    "score": _finite_score(_field(match, "score")),
                     "memory_type": metadata.get("memory_type", "legacy/unspecified"),
                     "metadata": metadata,
                     "rank": rank,
@@ -52,8 +39,10 @@ def _field(record, key):
     return record.get(key) if isinstance(record, dict) else getattr(record, key, None)
 
 
-def _terms(value):
-    return set(re.findall(r"[^\W\d_]{3,}", value.casefold())) - _STOP
+def _finite_score(score):
+    if type(score) is int or (type(score) is float and math.isfinite(score)):
+        return score
+    return None
 
 
 def _setting(name, default, minimum, maximum):
@@ -61,10 +50,6 @@ def _setting(name, default, minimum, maximum):
     if not minimum <= value <= maximum:
         raise ValueError(f"{name} must be between {minimum} and {maximum}")
     return value
-
-
-def enabled():
-    return os.getenv("MEMORY_RETRIEVAL_ENHANCED", "true").strip().lower() != "false"
 
 
 def render_context(records):
@@ -81,7 +66,6 @@ def render_context(records):
 def retrieve_and_select(
     vector_handler,
     query,
-    latest,
     participants,
     *,
     semantic_pool=None,
@@ -100,11 +84,11 @@ def retrieve_and_select(
         else _setting("MEMORY_RELATIONSHIP_CANDIDATES", 4, 0, 20)
     )
     semantic, relationship = [], []
-    if query.strip() and latest.strip():
+    if query.strip():
         vector = vector_handler.encode_message(query)
         store = vector_handler.vector_store
         store.fetch_context(vector, limit=semantic_pool, diagnostics=semantic)
-        if relationship_pool and participants and _RELATIONSHIP.search(latest):
+        if relationship_pool and participants:
             store.fetch_context(
                 vector,
                 limit=relationship_pool,
@@ -117,33 +101,30 @@ def retrieve_and_select(
     return select_memories(
         semantic,
         relationship,
-        latest,
         participants,
-        query=query,
         relationship_limit=2 if relationship_pool else 0,
     )
 
 
-def select_memories(
-    semantic, relationship, latest, participants, *, query="", relationship_limit=2
-):
+def select_memories(semantic, relationship, participants, *, relationship_limit=2):
     semantic_limit = _setting("MEMORY_SEMANTIC_SELECTED", 6, 0, 6)
     relationship_limit = min(
         relationship_limit, _setting("MEMORY_RELATIONSHIP_SELECTED", 2, 0, 2)
     )
     budget = _setting("MEMORY_CONTEXT_MAX_CHARS", 2400, 0, 12000)
     threshold = os.getenv("MEMORY_MIN_SIMILARITY")
-    minimum_score = float(threshold) if threshold else None
-    if minimum_score is not None and not math.isfinite(minimum_score):
-        raise ValueError("MEMORY_MIN_SIMILARITY must be finite")
-    latest = _USER_MENTION.sub("", latest).strip()
-    terms = _terms(latest)
-    if _FOLLOW_UP.search(latest) and not terms:
-        terms |= _terms(re.sub(r"[^\n]*\(Discord ID \d+\):\s*", "", query))
+    minimum_score = None
+    if threshold:
+        try:
+            minimum_score = float(threshold)
+        except ValueError:
+            raise ValueError("MEMORY_MIN_SIMILARITY must be a finite number") from None
+        if not math.isfinite(minimum_score):
+            raise ValueError("MEMORY_MIN_SIMILARITY must be a finite number")
     people = {str(person) for person in participants}
-    counts = Counter()
     seen = set()
     records, decisions = [], []
+    counts = Counter()
     for source, matches in (("semantic", semantic), ("relationship", relationship)):
         for item in matches:
             summary = item["summary"]
@@ -152,11 +133,7 @@ def select_memories(
             if kind not in ("fact", "event", "relationship"):
                 kind = "legacy/unspecified"
             is_relationship = kind == "relationship" or source == "relationship"
-            group = "relationship" if is_relationship else "semantic"
             score = item["score"]
-            score = (
-                score if type(score) in (int, float) and math.isfinite(score) else None
-            )
             ids = metadata.get("participant_ids")
             attributed = (
                 [value for value in ids if isinstance(value, str) and value.isdecimal()]
@@ -172,15 +149,12 @@ def select_memories(
                 record["scope"] = metadata["scope"]
             if attributed:
                 record["participant_ids"] = attributed
+            group = "relationship" if is_relationship else "semantic"
             limit = relationship_limit if is_relationship else semantic_limit
             if is_relationship and not people.intersection(attributed):
                 reason = "participant_mismatch"
-            elif is_relationship and not _RELATIONSHIP.search(latest):
-                reason = "relationship_intent"
             elif minimum_score is not None and (score is None or score < minimum_score):
                 reason = "missing_score" if score is None else "below_score_floor"
-            elif not terms.intersection(_terms(summary)):
-                reason = "topic_mismatch"
             elif key in seen:
                 reason = "duplicate"
             elif counts[group] >= limit:

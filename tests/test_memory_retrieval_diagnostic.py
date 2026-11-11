@@ -1,7 +1,8 @@
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from discord_bot.handlers.vectore_store import VectorStore
-from discord_bot.memory_retrieval_diagnostic import normalize_matches, preview
+from discord_bot.memory_selection import normalize_matches
+from discord_bot.memory_retrieval_diagnostic import inspect
 
 
 class RetrievalDiagnosticTests(unittest.TestCase):
@@ -14,13 +15,6 @@ class RetrievalDiagnosticTests(unittest.TestCase):
         ]})
         self.assertEqual([r["score"] for r in rows], [0.87, 0.2])
         self.assertEqual(rows[1]["memory_type"], "legacy/unspecified")
-
-    def test_current_injection_relationship_first_and_deduplicated(self):
-        semantic = [{"summary": "shared", "score": 0.9}, {"summary": "fact", "score": 0.8}]
-        relationship = [{"summary": "shared", "score": 0.7}, {"summary": "joke", "score": 0.6}]
-        result = preview(semantic, relationship)
-        self.assertEqual(result["current_injection"], ["shared", "joke", "fact"])
-        self.assertEqual(result["injected_count"], 3)
 
     def test_live_diagnostics_do_not_change_retrieved_text(self):
         store = VectorStore('test')
@@ -36,7 +30,14 @@ class RetrievalDiagnosticTests(unittest.TestCase):
         self.assertEqual(store.fetch_context([0.1]), ['Alice grows tomatoes', 'Unrelated fact'])
 
     def test_empty_results(self):
-        self.assertEqual(preview([], [])["injected_count"], 0)
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "mock", "PINECONE_API_KEY": "mock"}), patch(
+            "discord_bot.memory_retrieval_diagnostic.VectorHandler"
+        ) as handler:
+            result = inspect("What games do I play?", [])
+        self.assertEqual(result["injected_count"], 0)
+        self.assertEqual(result["retrieved_count"], 0)
+        self.assertEqual(result["context"], "")
+        handler.return_value.client.responses.create.assert_not_called()
 
 
 if __name__ == "__main__":

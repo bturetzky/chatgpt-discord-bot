@@ -1,6 +1,5 @@
 """Reliability regressions for Discord routing and blocking integrations."""
 import asyncio
-import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -55,26 +54,24 @@ class DiscordReliabilityTests(unittest.IsolatedAsyncioTestCase):
     async def test_history_failure_falls_back_to_current_message(self):
         handler, message = make_handler(), make_message()
         handler.get_message_history.side_effect = RuntimeError("history unavailable")
-        handler.vector_handler.get_relevant_contexts.return_value = []
+        handler.vector_handler.vector_store.fetch_context.return_value = []
         with patch("discord_bot.handlers.discord_handler.asyncio.sleep", new_callable=AsyncMock):
             await handler.process_message(message)
         sent_history = handler.chatgpt_handler.get_response.await_args.args[0]
         self.assertEqual(sent_history, [{"role": "user", "content": "friend (Discord ID 123): <@bot> hi"}])
         message.channel.send.assert_awaited()
 
-    @patch.dict(os.environ, {"MEMORY_RETRIEVAL_ENHANCED": "false"})
     async def test_memory_failure_does_not_prevent_reply(self):
         handler, message = make_handler(), make_message()
-        handler.vector_handler.get_relevant_contexts.side_effect = RuntimeError("pinecone unavailable")
+        handler.vector_handler.vector_store.fetch_context.side_effect = RuntimeError("pinecone unavailable")
         with patch("discord_bot.handlers.discord_handler.asyncio.sleep", new_callable=AsyncMock):
             await handler.process_message(message)
         handler.chatgpt_handler.get_response.assert_awaited_once()
         message.channel.send.assert_awaited()
 
-    @patch.dict(os.environ, {"MEMORY_RETRIEVAL_ENHANCED": "false"})
     async def test_none_memories_does_not_prevent_reply(self):
         handler, message = make_handler(), make_message()
-        handler.vector_handler.get_relevant_contexts.return_value = None
+        handler.vector_handler.vector_store.fetch_context.return_value = None
         with patch("discord_bot.handlers.discord_handler.asyncio.sleep", new_callable=AsyncMock):
             await handler.process_message(message)
         handler.chatgpt_handler.get_response.assert_awaited_once()

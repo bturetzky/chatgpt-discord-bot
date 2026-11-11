@@ -1,6 +1,5 @@
 import hashlib
 import logging
-import os
 import re
 from pinecone import Pinecone
 
@@ -9,7 +8,7 @@ from ..memory_selection import normalize_matches
 INDEX_NAME = "discord-bot-context2"
 # This comes from the model we're using for embeddings, ada-002
 DIMENSIONS = 1536
-RETRIEVAL_LIMIT = int(os.getenv("SEMANTIC_MEMORY_LIMIT", "8"))
+RETRIEVAL_LIMIT = 8
 
 class VectorStore:
     def __init__(self, pinecone_api_key):
