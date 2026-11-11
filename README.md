@@ -1,47 +1,33 @@
 # ChatGPT Discord Bot
 
-A self-hosted Python Discord bot that responds to mentions and direct messages using OpenAI, with optional tools for web search, webpage reading, weather, news, video-game information and Pinecone-backed long-term memory.
+Self-hosted Python Discord bot for a small trusted server, with OpenAI Responses, on-demand tools, SQLite server history, and Pinecone-backed memory. Development and production use separate Discord applications and deployments.
 
-> **Project status:** This is a personal project deployed in separate development and production Discord environments. The application is functional in its existing deployment, but the codebase has known technical debt. See the [engineering roadmap](docs/engineering-roadmap.md) before making major upgrades.
+## Capabilities
 
-## What it does
+- Responds to mentions and direct messages, with recent channel context and a tool-calling loop.
+- Brave web search, public webpage/GitHub README reading, YouTube metadata and best-effort transcripts, weather, news and IGDB game/platform information.
+- Direct and replied-to Discord image understanding for supported still images.
+- SQLite message archive with FTS5 search, edit/delete handling, restart reconciliation and bounded historical import.
+- Autonomous evidence-grounded memory extraction and guarded **create-only** Pinecone publication; semantic and participant-aware retrieval. Operator-verified in production.
+- Reaction observation and **shadow-only** evaluation: logs potential emoji decisions but **never posts unsolicited reactions**. Longer-term production shadow quality remains pending acceptance.
 
-- Responds to bot mentions in Discord servers and to direct messages.
-- Includes recent channel history as conversational context.
-- Can call tools for Brave Search, webpage extraction, OpenWeather forecasts, NewsAPI headlines and IGDB game/platform information.
-- Uses OpenAI embeddings and a Pinecone index to retrieve and store long-term memories.
-- Splits long replies into Discord messages and can send interim tool-progress messages.
+Memory is shared within the bot's existing trust model; legacy Pinecone records may lack participant provenance. Do not use the bot for sensitive conversations. Memory correction/deletion and crash-safe cross-store publication remain future work; see [backlog](docs/backlog.md).
 
-**Privacy note:** The current memory implementation does not enforce per-user namespace isolation. Logging has been hardened to avoid recording message bodies and memory contents by default. Shared memory still has privacy and retention limitations; do not use it for sensitive conversations.
+## Requirements and local run
 
-## Architecture
+Python 3.12, Poetry 1.8.3 (or Docker), Discord bot permissions/message-content intent, OpenAI and Pinecone credentials. Optional tool credentials depend on the tools used.
 
-```text
-Discord message / DM
-    -> DiscordHandler (message history and routing)
-    -> VectorHandler (embedding + Pinecone memory lookup)
-    -> ChatGPTHandler (OpenAI chat and tool loop)
-    -> FunctionHandler (registered tool implementations)
-    -> Discord reply
+```bash
+poetry install --only main --no-root
+poetry run python -m run
+make test
 ```
 
-- `run.py` and `discord_bot/app.py`: application entry point and environment configuration
-- `discord_bot/handlers/`: Discord, OpenAI, function dispatch and vector storage
-- `discord_bot/functions/`: dynamically registered tools, each subclassing `BaseFunction`
-- `tests/`: regression tests for Discord routing, Responses API, tools, memory, and security
-
-## Requirements
-
-- Python 3.12 runtime (Docker uses `python:3.12-slim`) and Poetry 1.8.3, or Docker
-- Discord bot application with appropriate permissions and message content intent
-- OpenAI API key and Pinecone API key/index
-- Optional credentials for OpenWeather, NewsAPI and IGDB
-
-The bot uses the OpenAI Responses API and the modern OpenAI Python SDK. Renovate proposes weekly Poetry updates; review dependency changes and test dev before production promotion.
+Or build with `docker build -t chatgpt-discord-bot:local .` and run with a securely supplied env file. Never commit `.env`, Discord tokens or API keys.
 
 ## Configuration
 
-The application currently requires these environment variables at startup:
+Required at startup:
 
 | Variable | Purpose |
 | --- | --- |
@@ -49,93 +35,53 @@ The application currently requires these environment variables at startup:
 | `OPENAI_API_KEY` | OpenAI API access |
 | `PINECONE_API_KEY` | Pinecone memory store |
 
-Tool-specific optional variables:
+Optional tool credentials:
 
 | Variable | Purpose |
 | --- | --- |
-| `OPENWEATHER_API_KEY` | Weather lookups |
-| `NEWS_API_KEY` | News search |
-| `BRAVE_SEARCH_API_KEY` | Brave web search |
-| `IGDB_CLIENT_ID` | IGDB/Twitch API client ID |
-| `IGDB_CLIENT_SECRET` | IGDB/Twitch API client secret |
+| `OPENWEATHER_API_KEY` | Weather |
+| `NEWS_API_KEY` | News |
+| `BRAVE_SEARCH_API_KEY` | Web search |
+| `IGDB_CLIENT_ID`, `IGDB_CLIENT_SECRET` | IGDB/Twitch |
 
-Additional runtime configuration (all optional unless noted):
+Runtime settings:
 
 | Variable | Purpose / default |
 | --- | --- |
-| `DISCORD_SQLITE_PATH` | Persistent SQLite file path; required for archive/reaction features. Both deployments use `/data/sqlite/bot.sqlite3` on separate PVCs. |
-| `REACTION_SHADOW_ENABLED` | Explicit opt-in for observation-only reaction evaluation; default `false`. |
-| `REACTION_SHADOW_GUILD_ID` | Numeric guild ID; required when shadow mode is enabled. Dev: `<dev guild ID>`; prod: `<production guild ID>`. |
-| `REACTION_SHADOW_MODEL` | Optional shadow evaluator model; falls back to `OPENAI_MODEL`, then the built-in default. |
-| `REACTION_SHADOW_TEST_PREFIX` | **Dev-only** deterministic acceptance prefix; unset in normal operation and production. |
-| `OPENAI_MODEL` | Main Responses model override; also used by shadow mode when its override is absent. |
-| `DISCORD_CONTEXT_LIMIT` | Recent Discord context message limit (default 30). |
-| `MEMORY_SEMANTIC_CANDIDATES` | Semantic candidate pool, default 16, range 1–50. |
-| `MEMORY_RELATIONSHIP_CANDIDATES` | Participant-filtered relationship pool, default 4, range 0–20. Zero disables relationship selection from both pools. |
-| `MEMORY_SEMANTIC_SELECTED` | Semantic selection cap, default 6, range 0–6. |
-| `MEMORY_RELATIONSHIP_SELECTED` | Relationship selection cap, default 2, range 0–2. |
-| `MEMORY_CONTEXT_MAX_CHARS` | Full rendered memory section budget, default 2400, range 0–12000. |
-| `MEMORY_MIN_SIMILARITY` | Optional finite Pinecone score floor. Unset by default, so scores do not exclude candidates. |
-| `OPENAI_INPUT_USD_PER_1M` | Optional model input price for usage estimates. |
-| `OPENAI_CACHED_INPUT_USD_PER_1M` | Optional cached input price for usage estimates. |
-| `OPENAI_OUTPUT_USD_PER_1M` | Optional output price for usage estimates. |
+| `DISCORD_SQLITE_PATH` | Persistent SQLite file; needed for archive/reaction/memory worker; dev/prod use separate PVCs |
+| `REACTION_SHADOW_ENABLED` | Opt-in shadow evaluation, default `false` |
+| `REACTION_SHADOW_GUILD_ID` | Numeric guild ID required for shadow mode; never hardcode a real value in docs |
+| `REACTION_SHADOW_MODEL` | Shadow evaluator model; defaults to `OPENAI_MODEL` |
+| `REACTION_SHADOW_TEST_PREFIX` | Dev-only deterministic test prefix; unset in production |
+| `AUTONOMOUS_MEMORY_ENABLED` | Opt-in background extraction/evaluation/publication, default `false` |
+| `AUTONOMOUS_MEMORY_GUILD_ID` | Target guild for worker; falls back to shadow guild setting |
+| `OPENAI_MODEL` | Main Responses model override |
+| `DISCORD_CONTEXT_LIMIT` | Recent Discord context limit, default 30 |
+| `MEMORY_SEMANTIC_CANDIDATES` | Retrieval pool, default 16, range 1–50 |
+| `MEMORY_RELATIONSHIP_CANDIDATES` | Participant pool, default 4, range 0–20; zero disables relationship selection |
+| `MEMORY_SEMANTIC_SELECTED` | Semantic selection cap, default 6, range 0–6 |
+| `MEMORY_RELATIONSHIP_SELECTED` | Relationship selection cap, default 2, range 0–2 |
+| `MEMORY_CONTEXT_MAX_CHARS` | Rendered memory budget, default 2400, range 0–12000 |
+| `MEMORY_MIN_SIMILARITY` | Optional finite Pinecone score floor; unset by default |
+| `OPENAI_INPUT_USD_PER_1M` | Optional estimated input token price |
+| `OPENAI_CACHED_INPUT_USD_PER_1M` | Optional estimated cached input token price |
+| `OPENAI_OUTPUT_USD_PER_1M` | Optional estimated output token price |
 
-The Pinecone index name (`discord-bot-context2`) remains hardcoded; not all configuration is environment-driven. See the [reaction shadow runbook](docs/reaction-shadow-runbook.md) and [engineering roadmap](docs/engineering-roadmap.md) for behavior, limitations, and remaining work.
+The Pinecone index name is currently hardcoded in the application. Invalid memory retrieval settings skip memory context and emit a sanitized warning. See [architecture](docs/architecture.md) for the selection behavior.
 
-**Never commit API keys or Discord tokens.** For Kubernetes, supply credentials via a Secret and `envFrom`; the manifests live in the separate GitOps repository.
+## Development and deployment
 
-Retrieval uses Pinecone ordering and the existing embedding model. Invalid retrieval settings skip memory context and emit a sanitized warning. See the [memory retrieval design](docs/memory-retrieval-enhancement-design.md) for calibration, CLI usage, and image rollout.
+PR checks run unit tests and a Docker build. Merging application `main` publishes an immutable image to `ghcr.io/bturetzky/chatgpt-discord-bot`, updates dev GitOps, and invokes read-only ARC rollout verification. Live Discord acceptance is separate. Production promotion is manual, reviewed, and uses the dev-tested digest.
 
-## Running locally
-
-Install dependencies with Poetry, provide the required environment variables securely, then run:
-
-```bash
-poetry install --only main --no-root
-poetry run python -m run
-```
-
-Or build and run the container with the same environment variables:
-
-```bash
-docker build -t chatgpt-discord-bot:local .
-docker run --rm --env-file .env chatgpt-discord-bot:local
-```
-
-These commands describe the existing application entry point; successful startup additionally depends on valid Discord/OpenAI/Pinecone credentials and an accessible Pinecone index. Do not expose the local `.env` file or use real production tokens for development.
-
-## Tests and development
-
-```bash
-make test
-```
-
-The current test suite is run as part of the Docker build and CI; failures block image publication. After a main-branch merge, an ephemeral ARC runner verifies the expected dev image digest, Argo CD health and Deployment readiness. The first full run passed on 2026-11-08. Live Discord and external-service smoke tests are still required before production promotion.
-
-## Deployment and release process
-
-Container images are published to GitHub Container Registry at `ghcr.io/bturetzky/chatgpt-discord-bot`.
-
-The Kubernetes deployments are managed separately through [homelab-gitops](https://github.com/bturetzky/homelab-gitops):
-
-- `discord-dev`: separate development Discord application, token and server; successful main builds automatically update its GitOps image digest.
-- `discord-prod`: separate production Discord application, token and server; image digest is updated only through reviewed manual promotion.
-
-Both environments are reconciled by Argo CD. Immutable-image CI/CD, automatic read-only ARC dev rollout verification (first run passed 2026-11-08), and manual production promotion are implemented and verified; see [Deployment workflow](docs/deployment-workflow.md). The operator confirmed the latest dependency-cleanup image was merged and promoted on 2026-11-07.
-
-## Current feature checkpoint (2026-11-09)
-
-- Persistent SQLite archive, FTS5 search, bounded backfill and restart reconciliation are implemented; production 30-day backfill was operator-run. Reaction add/remove/clear observation is implemented and tested in dev.
-- Reaction **shadow evaluation** is deployed in dev and production GitOps configuration. Dev live acceptance succeeded: a deterministic candidate produced a real model decision (`ignore`, `no_clear_reaction`, 303 input/41 output tokens). Production configuration PRs were merged; production runtime startup and ongoing evaluations have **not yet been independently verified**. No unsolicited reactions are posted.
-- Autonomous memory extraction and guarded Pinecone publication are implemented and enabled in dev. The operator observed successful publication (two memories, zero failures) and later DEBUG logs showing retrieved summaries from Pinecone. This verifies retrieval and context insertion, but does not by itself prove a response was based exclusively on retrieved memories. Production enablement/promotion has not yet been confirmed. Live proactive reaction posting remains unimplemented. See [memory lifecycle status](docs/memory-lifecycle-status.md).
+Deployment manifests and Secrets belong to [homelab-gitops](https://github.com/bturetzky/homelab-gitops), not this repository.
 
 ## Documentation
 
-- [Autonomous development design](docs/agent-development-design.md) — Codex permissions, verified pipeline, and remaining limitations
-- [Agent instructions](AGENTS.md) — rules for the first supervised Codex experiment
-- [Engineering roadmap and code review](docs/engineering-roadmap.md) — prioritized debt, improvements and sequencing
-- [Deployment workflow](docs/deployment-workflow.md) — implemented testing, image publishing, dev rollout and production promotion
-- [homelab-gitops](https://github.com/bturetzky/homelab-gitops) — authoritative Kubernetes and Argo CD configuration
+- [Architecture and current behavior](docs/architecture.md)
+- [Unfinished work and pending acceptance](docs/backlog.md)
+- [Deployment and promotion](docs/deployment.md)
+- [Operations, diagnostics and smoke tests](docs/operations.md)
+- [Agent and documentation rules](AGENTS.md)
 
 ## License
 
