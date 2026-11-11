@@ -60,7 +60,7 @@ class ArchiveTests(unittest.TestCase):
             with Database(path) as reopened:
                 self.assertEqual(reopened.connection.execute(
                     "SELECT count(*) FROM schema_migrations"
-                ).fetchone()[0], 11)
+                ).fetchone()[0], 12)
                 self.assertEqual(reopened.connection.execute(
                     "SELECT count(*) FROM messages"
                 ).fetchone()[0], 1)

@@ -231,6 +231,12 @@ MIGRATIONS = (
         """CREATE INDEX discovery_archive_recent
             ON messages(guild_id, channel_id, created_at DESC) WHERE deleted_at IS NULL""",
     ),
+    (
+        """ALTER TABLE discovery_runs ADD COLUMN embedding_calls INTEGER NOT NULL DEFAULT 0""",
+        """ALTER TABLE discovery_runs ADD COLUMN embedding_tokens INTEGER NOT NULL DEFAULT 0""",
+        """CREATE INDEX discovery_server_recent
+            ON messages(guild_id, created_at DESC) WHERE deleted_at IS NULL""",
+    ),
 )
 
 

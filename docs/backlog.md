@@ -36,7 +36,7 @@ Use the [dev acceptance procedure](operations.md#discovery-shadow-dev-acceptance
 **Phase 1 acceptance:**
 1. Relevant new, accessible source yields a short, source-linked candidate for an appropriate allowlisted channel; unrelated channel/source is rejected.
 2. Identical/canonicalized links and different URLs describing the same already-discussed story are rejected, including after restart; a *meaningfully new development* about that topic may qualify.
-3. A channel name alone does not override contrary discussion context; empty/weak context is handled conservatively. Recent active conversation suppresses or defers a candidate.
+3. Discovery derives a public topic from archived conversation or durable interests. Channel metadata and configured query hints do not override contrary discussion context. Empty or stale-only context is handled conservatively. Active channels defer without spending an unused discovery window.
 4. Missing/unreadable sources, misleading article claims, exhausted API budgets and provider failures fail closed without fabricated drafts or unbounded retries.
 5. SQLite survives restart without replaying accepted/rejected unchanged work; shadow never sends Discord messages. Tests cover idempotency, budget limits and negative cases.
 6. Operator can inspect enough bounded evidence to judge relevance, novelty, tone and cost before approving Phase 2. Include dev acceptance instructions; do not claim human verification from CI.

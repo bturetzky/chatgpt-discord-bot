@@ -1,8 +1,6 @@
 import discord, asyncio, logging, os
 from collections import Counter
 
-from openai import AsyncOpenAI
-
 from .. import memory_selection
 from .chatgpt_handler import ChatGPTHandler
 from .vector_handler import VectorHandler
@@ -23,7 +21,6 @@ class DiscordHandler:
         self._reconcile_task = None
         self._memory_task = None
         self._discovery_task = None
-        self._discovery_client = None
         logging.debug('Initializing discord client')
         self.client = discord.Client(intents=self.get_discord_intents())
         logging.debug('Discord client initialized')
@@ -212,15 +209,13 @@ class DiscordHandler:
                     hints[channel_id] = {"name": channel.name[:100], "topic": (channel.topic or "")[:200]}
             return hints
 
-        self._discovery_client = AsyncOpenAI(api_key=api_key, max_retries=0, timeout=25)
-        worker = DiscoveryShadow(
-            self.archive.db, guild_id, channels, self._discovery_client,
-            os.getenv("OPENAI_MODEL", "gpt-6.1-terra"), str(self.client.user.id),
-        )
         async def run_discovery():
             if self._reconcile_task is not None:
                 await asyncio.shield(self._reconcile_task)
-            await worker.run_forever(channel_hints)
+            await DiscoveryShadow.run_configured(
+                self.archive.db, guild_id, channels, api_key,
+                str(self.client.user.id), channel_hints,
+            )
 
         self._discovery_task = asyncio.create_task(run_discovery(), name="discovery-shadow")
         logging.info("Discovery shadow enabled: channels=%d", len(channels))
@@ -233,7 +228,6 @@ class DiscordHandler:
         if discovery_task is not None:
             discovery_task.cancel()
             await asyncio.gather(discovery_task, return_exceptions=True)
-            await self._discovery_client.close()
         memory_task = getattr(self, '_memory_task', None)
         if memory_task is not None:
             memory_task.cancel()

@@ -50,7 +50,7 @@ Runtime settings:
 | Variable | Purpose / default |
 | --- | --- |
 | `DISCORD_SQLITE_PATH` | Persistent SQLite file; needed for archive/reaction/memory worker; dev/prod use separate PVCs |
-| `DISCOVERY_SHADOW_CHANNELS` | Optional JSON object mapping 1–8 text channel IDs in one guild to public Brave queries of up to 200 characters. Unset to disable. Requires `DISCORD_SQLITE_PATH` and `BRAVE_SEARCH_API_KEY`. Uses `OPENAI_MODEL`. |
+| `DISCOVERY_SHADOW_CHANNELS` | Optional JSON object mapping 1–8 text channel IDs in one guild to optional public search hints of up to 200 characters. Use JSON `null` for a channel with no hint. Discovery derives the Brave query from discussion and accepted memories. Unset to disable. Requires `DISCORD_SQLITE_PATH` and `BRAVE_SEARCH_API_KEY`. Uses `OPENAI_MODEL`. |
 | `REACTION_SHADOW_ENABLED` | Opt-in shadow evaluation, default `false` |
 | `REACTION_SHADOW_GUILD_ID` | Numeric guild ID required for shadow mode; never hardcode a real value in docs |
 | `REACTION_SHADOW_MODEL` | Shadow evaluator model; defaults to `OPENAI_MODEL` |
