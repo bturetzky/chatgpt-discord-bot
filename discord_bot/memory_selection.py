@@ -183,8 +183,6 @@ def select_memories(semantic, relationship, participants, *, relationship_limit=
             if key in seen:
                 decision["reason"] = "duplicate"
                 continue
-            if group == "relationship":
-                seen.add(key)
             if count >= limit:
                 decision["reason"] = "count_limit"
             elif len(render_context(records + [record])) > budget:

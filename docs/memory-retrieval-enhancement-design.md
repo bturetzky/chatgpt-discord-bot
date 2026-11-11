@@ -27,9 +27,9 @@ retrieval quality.
 4. Process semantic facts in Pinecone's returned order, then consider eligible
    relationship candidates from both pools together in descending score order.
    Equal scores retain retrieval order and unscored candidates follow scored
-   candidates. Suppress duplicates before applying the shared relationship cap,
-   keeping the highest-ranked copy. Duplicate comparison normalizes case,
-   punctuation, whitespace, and a leading legacy timestamp. Ordinary facts
+   candidates. Skip copies of records already selected. If a record exceeds
+   the character budget, a shorter copy can still qualify. Duplicate comparison
+   normalizes case, punctuation, whitespace, and a leading legacy timestamp. Ordinary facts
    without metadata remain eligible, including shared facts about other
    participants.
 5. Select at most six semantic and two relationship records within one

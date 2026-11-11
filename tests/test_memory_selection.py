@@ -190,6 +190,28 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(decisions[5]["rank"], 2)
         self.assertEqual(decisions[5]["score"], 0.9)
 
+    def test_oversized_relationship_does_not_block_shorter_duplicate(self):
+        short = matches(
+            "Game night tradition", memory_type="relationship", participant_ids=["1"]
+        )
+        long = matches(
+            "2026-01-01 12:00:00: Game night tradition",
+            memory_type="relationship",
+            participant_ids=["1"],
+        )
+        long[0]["score"] = 0.9
+        expected, _ = select_memories(short, [], ["1"])
+        with patch.dict(os.environ, {"MEMORY_CONTEXT_MAX_CHARS": str(len(expected))}):
+            context, decisions = select_memories(short, long, ["1"])
+        self.assertEqual(context, expected)
+        self.assertEqual(
+            [row["reason"] for row in decisions], ["selected", "context_budget"]
+        )
+
+        context, decisions = select_memories(short, long, ["1"], relationship_limit=0)
+        self.assertEqual(context, "")
+        self.assertEqual([row["reason"] for row in decisions], ["count_limit"] * 2)
+
     def test_shared_legacy_facts_stay_eligible(self):
         context, _ = select_memories(
             matches("Alice enjoys chess", participant_ids=["2"]), [], ["1"]
