@@ -95,9 +95,11 @@ class ImageContextBuilder:
     async def download(self, attachment, remaining):
         is_embed = isinstance(attachment, EmbedImage)
         expected = None
+        extension_mime = None
         if not is_embed:
             declared = normalized_mime(getattr(attachment, "content_type", None))
-            expected = attachment_extension_mime(attachment) if declared in GENERIC_TYPES else declared
+            extension_mime = attachment_extension_mime(attachment)
+            expected = extension_mime if declared in GENERIC_TYPES else declared
             if expected not in MIME_FORMATS:
                 raise ImageFailure("unsupported_type")
             size = getattr(attachment, "size", None)
@@ -116,11 +118,14 @@ class ImageContextBuilder:
                         if response.status != 200:
                             raise ImageFailure("download_unavailable")
                         response_type = normalized_mime(response.headers.get("Content-Type"))
-                        if (not is_embed and response_type in GENERIC_TYPES
-                                and declared in GENERIC_TYPES):
+                        if not is_embed and response_type in GENERIC_TYPES:
                             response_type = expected
-                        if response_type not in MIME_FORMATS or (expected is not None and response_type != expected):
-                            raise ImageFailure("unsupported_type")
+                        if response_type not in MIME_FORMATS:
+                            raise ImageFailure("cdn_unsupported_type")
+                        # Discord's declared format can disagree with the original upload.
+                        # Only accept the CDN's alternate format when the extension agrees.
+                        if expected is not None and response_type not in (expected, extension_mime):
+                            raise ImageFailure("cdn_mime_mismatch")
                         if response.headers.get("Content-Encoding", "identity").lower().strip() not in ("", "identity"):
                             raise ImageFailure("unsupported_encoding")
                         data = bytearray()
@@ -130,7 +135,7 @@ class ImageContextBuilder:
                                 raise ImageFailure("size_limit")
                 if not data:
                     raise ImageFailure("invalid_image")
-                worker = asyncio.create_task(asyncio.to_thread(validate_image, bytes(data), expected or response_type, response_type))
+                worker = asyncio.create_task(asyncio.to_thread(validate_image, bytes(data), response_type, response_type))
                 try:
                     await asyncio.shield(worker)
                 except asyncio.CancelledError:
