@@ -238,6 +238,28 @@ class ImageBuilderTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("cdn.discordapp", str(logs.output))
         self.assertNotIn("base64", str(logs.output))
 
+    async def test_attachment_log_uses_only_sanitized_mime_and_extension_presence(self):
+        attachments = []
+        for mime, filename in [
+            (None, "private-clipboard.PNG"),
+            ("application/octet-stream", "private-document.pdf"),
+            ("IMAGE/JPEG; private-parameter=value", "private-photo"),
+            ("application/private-mime", "private-spoof.webp"),
+        ]:
+            item = attachment(mime=mime)
+            item.filename = filename
+            attachments.append(item)
+        self.builder.download = AsyncMock(side_effect=ImageFailure("download_unavailable"))
+        with self.assertLogs(level="INFO") as logs:
+            await self.builder.build(message(attachments))
+        log = logs.output[0]
+        self.assertIn("missing/recognized_extension=true:1", log)
+        self.assertIn("generic/recognized_extension=false:1", log)
+        self.assertIn("image/jpeg/recognized_extension=false:1", log)
+        self.assertIn("unsupported/recognized_extension=true:1", log)
+        self.assertNotIn("private", log)
+        self.assertNotIn("https://", log)
+
     async def test_unsupported_and_oversized_rejected_before_network(self):
         unsupported = attachment(mime="application/pdf")
         oversized = attachment(); oversized.size = MAX_IMAGE_BYTES + 1

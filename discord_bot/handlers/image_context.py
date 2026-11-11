@@ -4,6 +4,7 @@ import base64
 import io
 import logging
 import time
+from collections import Counter
 from dataclasses import dataclass
 from itertools import islice
 from pathlib import PurePath
@@ -39,11 +40,8 @@ def normalized_mime(value):
     return (value or "").split(";", 1)[0].lower().strip()
 
 
-def attachment_mime(attachment):
-    declared = normalized_mime(getattr(attachment, "content_type", None))
-    if declared in GENERIC_TYPES:
-        return IMAGE_EXTENSIONS.get(PurePath(getattr(attachment, "filename", "") or "").suffix.lower())
-    return declared
+def attachment_extension_mime(attachment):
+    return IMAGE_EXTENSIONS.get(PurePath(getattr(attachment, "filename", "") or "").suffix.lower())
 
 
 def attachment_url_allowed(url):
@@ -98,7 +96,8 @@ class ImageContextBuilder:
         is_embed = isinstance(attachment, EmbedImage)
         expected = None
         if not is_embed:
-            expected = attachment_mime(attachment)
+            declared = normalized_mime(getattr(attachment, "content_type", None))
+            expected = attachment_extension_mime(attachment) if declared in GENERIC_TYPES else declared
             if expected not in MIME_FORMATS:
                 raise ImageFailure("unsupported_type")
             size = getattr(attachment, "size", None)
@@ -118,7 +117,7 @@ class ImageContextBuilder:
                             raise ImageFailure("download_unavailable")
                         response_type = normalized_mime(response.headers.get("Content-Type"))
                         if (not is_embed and response_type in GENERIC_TYPES
-                                and normalized_mime(getattr(attachment, "content_type", None)) in GENERIC_TYPES):
+                                and declared in GENERIC_TYPES):
                             response_type = expected
                         if response_type not in MIME_FORMATS or (expected is not None and response_type != expected):
                             raise ImageFailure("unsupported_type")
@@ -183,6 +182,7 @@ class ImageContextBuilder:
         if len(candidates) > MAX_MEDIA_INSPECTED:
             failures.append("media_limit")
         images = []
+        attachment_metadata = Counter()
         for attachment, source in candidates[:MAX_MEDIA_INSPECTED]:
             if attachment is None:
                 continue
@@ -190,9 +190,22 @@ class ImageContextBuilder:
                 if not attachment_url_allowed(attachment.url):
                     failures.append("invalid_url")
                     continue
-            elif attachment_mime(attachment) not in MIME_FORMATS:
-                failures.append("unsupported_type")
-                continue
+            else:
+                declared = normalized_mime(getattr(attachment, "content_type", None))
+                extension_mime = attachment_extension_mime(attachment)
+                if not declared:
+                    category = "missing"
+                elif declared in GENERIC_TYPES:
+                    category = "generic"
+                elif declared in MIME_FORMATS:
+                    category = declared
+                else:
+                    category = "unsupported"
+                attachment_metadata[(category, extension_mime is not None)] += 1
+                expected = extension_mime if declared in GENERIC_TYPES else declared
+                if expected not in MIME_FORMATS:
+                    failures.append("unsupported_type")
+                    continue
             if len(images) < MAX_IMAGES:
                 images.append((attachment, source))
             elif "image_limit" not in failures:
@@ -214,6 +227,11 @@ class ImageContextBuilder:
             parts.append({"type": "input_text", "text": "Some images could not be provided. Do not claim to have seen them. Failure categories: " + ", ".join(failures) + "."})
         if not parts:
             return None
-        logging.info("Image ingestion: count=%d bytes=%d elapsed_ms=%d failures=%s", count, total,
-                     int((time.monotonic() - started) * 1000), ",".join(failures) or "none")
+        metadata = ",".join(
+            f"{category}/recognized_extension={str(recognized).lower()}:{occurrences}"
+            for (category, recognized), occurrences in sorted(attachment_metadata.items())
+        )
+        logging.info("Image ingestion: count=%d bytes=%d elapsed_ms=%d failures=%s attachment_mime=%s",
+                     count, total, int((time.monotonic() - started) * 1000),
+                     ",".join(failures) or "none", metadata or "none")
         return {"role": "user", "content": parts}
