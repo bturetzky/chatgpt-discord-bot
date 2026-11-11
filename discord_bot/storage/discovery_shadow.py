@@ -9,9 +9,10 @@ import json
 import logging
 import re
 import time
+import traceback
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from openai import AsyncOpenAI
+from openai import APIStatusError, AsyncOpenAI
 
 from ..handlers.vector_handler import EMBEDDING_MODEL
 from ..functions.get_webpage_contents import GetWebPageContents
@@ -65,6 +66,31 @@ Semantic matches are only leads. Read the archived excerpts and compare actual
 facts. Reject the same underlying event even if the URL or phrasing differs. A distinct
 new development can qualify if the source shows what actually changed.
 """
+
+
+class DiscoveryResponseError(ValueError):
+    """A response failure with a fixed diagnostic label safe for logs."""
+
+
+def log_run_failure(run, stage, error):
+    # SDK and parser exceptions (including chained causes) may echo input or
+    # credentials. Keep stack locations without exception messages or locals.
+    frames = "".join(
+        f'  File "{frame.f_code.co_filename}", line {line}, in {frame.f_code.co_name}\n'
+        for frame, line in traceback.walk_tb(error.__traceback__)
+    )
+    detail = "unspecified"
+    if isinstance(error, APIStatusError):
+        detail = f"HTTP {error.status_code}"
+        if error.code in ("model_not_found", "unsupported_parameter", "invalid_api_key"):
+            detail += f" {error.code}"
+    elif isinstance(error, DiscoveryResponseError):
+        detail = error.args[0]
+    logging.warning(
+        "Discovery shadow run failed: run=%s stage=%s exception=%s detail=%s\n"
+        "Traceback (most recent call last):\n%s",
+        run, stage, type(error).__name__, detail, frames.rstrip(),
+    )
 
 
 def canonical_url(url):
@@ -271,7 +297,7 @@ class DiscoveryShadow:
         response = await asyncio.wait_for(self.client.responses.create(
             model=self.model, instructions=instructions,
             input=json.dumps(data, ensure_ascii=False), max_output_tokens=650,
-            store=False,
+            text={"format": {"type": "json_object"}}, store=False,
         ), timeout=25)
         usage = getattr(response, "usage", None)
         self.db.execute(
@@ -279,11 +305,19 @@ class DiscoveryShadow:
                output_tokens=output_tokens+? WHERE id=?""",
             (getattr(usage, "input_tokens", 0) or 0, getattr(usage, "output_tokens", 0) or 0, run),
         )
+        if response.status == "incomplete":
+            reason = getattr(getattr(response, "incomplete_details", None), "reason", None)
+            if reason in ("max_output_tokens", "content_filter"):
+                raise DiscoveryResponseError(f"incomplete_{reason}")
+            raise DiscoveryResponseError("incomplete")
         if response.status != "completed":
-            raise ValueError("Incomplete discovery response")
-        data = json.loads(response.output_text)
+            raise DiscoveryResponseError("response_not_completed")
+        output = response.output_text
+        if not output or not output.strip():
+            raise DiscoveryResponseError("empty_output")
+        data = json.loads(output)
         if not isinstance(data, dict):
-            raise ValueError("Invalid discovery response")
+            raise DiscoveryResponseError("non_object_output")
         return data
 
     async def evaluate(self, run, guild_id, channel, eligible, hints, sample, memories, requested, identity):
@@ -367,6 +401,7 @@ class DiscoveryShadow:
             return
         run, guild_id, channel = reservation
         outcome = "provider_error"
+        stage = "context"
         try:
             hints = channel_hints[guild_id, channel]
             eligible = json.dumps([cid for gid, cid in channel_hints if gid == guild_id])
@@ -376,12 +411,14 @@ class DiscoveryShadow:
             query = None
             recent_text = [row[0] for row in recent]
             if len(set(recent_text)) >= 2 or memories:
+                stage = "topic"
                 query = await self.topic(run, hints, recent_text, older, memories)
             if self.active(guild_id, channel):
                 outcome = "deferred_after_work"
             elif not query:
                 outcome = "weak_context"
             elif self.spend(run, "searches"):
+                stage = "search"
                 result = json.loads(await self.search.execute({
                     "query": query, "max_results": MAX_RESULTS, "freshness": "pw",
                 }))
@@ -406,6 +443,7 @@ class DiscoveryShadow:
                     ).rowcount:
                         continue
                     reason, story, evidence, draft = "interrupted", None, None, None
+                    stage = "candidate"
                     try:
                         reason, story, evidence, draft = await self.evaluate(
                             run, guild_id, channel, eligible, hints, recent + older, memories, requested, identity,
@@ -427,9 +465,9 @@ class DiscoveryShadow:
         except asyncio.CancelledError:
             outcome = "interrupted"
             raise
-        except Exception:
+        except Exception as error:
             outcome = "provider_error"
-            logging.warning("Discovery shadow run failed")
+            log_run_failure(run, stage, error)
         finally:
             self.db.execute("UPDATE discovery_runs SET outcome=? WHERE id=?", (outcome, run))
 

@@ -69,6 +69,8 @@ The worker checks channel eligibility each minute and reserves at most one attem
 2. Add a standard text channel or grant the bot View Channel and Read Message History in an existing channel. Confirm it can enter rotation without restarting. Revoke either permission and confirm future runs skip it. An active channel should be skipped in favor of a quiet eligible one.
 3. In an eligible dev channel, discuss a game or project with a recent public announcement across several substantive messages, then let the channel stay quiet for 30 minutes. Inspect the channel, evidence, reason, usage and any proposed draft at its turn. Confirm Discord receives no unsolicited message or reaction.
 
+For a discovery `provider_error`, match the SQLite run ID to the application log. Logs use UTC timestamps and include the discovery stage, exception type and traceback locations. Discovery omits raw exception messages and response bodies.
+
 ## Dev Discord smoke test
 
 After ARC dev rollout verification, **actually select the bot from Discord's @-mention picker**; typing a literal `@chatgpt-dev` string is not sufficient. Test a brief calculation (17 × 23 = 391), weather lookup, Brave search for official Python docs, public webpage fetch (`https://docs.python.org/3/`), and an existing-memory question that does not write new memories. Expect an accurate result or explicit provider failure, never a fabricated read. For changed image handling, test direct and replied-to images plus unsupported/expired attachments. For memory changes, test retrieval and source attribution without inserting false permanent facts. Live image/replied-image understanding and #99 retrieval enhancement have already been operator-verified; repeat targeted tests only when behavior changes.
