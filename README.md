@@ -9,7 +9,7 @@ Self-hosted Python Discord bot for a small trusted server, with OpenAI Responses
 - Direct and replied-to Discord image understanding for supported still images.
 - SQLite message archive with FTS5 search, edit/delete handling, restart reconciliation and bounded historical import.
 - Autonomous evidence-grounded memory extraction and guarded **create-only** Pinecone publication; semantic and participant-aware retrieval. Operator-verified in production.
-- Proactive discovery shadow mode can evaluate recent public sources for configured channels and record decisions and drafts in SQLite. See [dev acceptance](docs/operations.md#discovery-shadow-dev-acceptance).
+- With a SQLite archive, proactive discovery shadow mode automatically evaluates recent public sources for eligible Discord text channels and record decisions and drafts in SQLite. See [dev acceptance](docs/operations.md#discovery-shadow-dev-acceptance).
 - Reaction observation and **shadow-only** evaluation: logs potential emoji decisions but **never posts unsolicited reactions**. Longer-term production shadow quality remains pending acceptance.
 
 Memory is shared within the bot's existing trust model; legacy Pinecone records may lack participant provenance. Do not use the bot for sensitive conversations. Memory correction/deletion and crash-safe cross-store publication remain future work; see [backlog](docs/backlog.md).
@@ -50,7 +50,6 @@ Runtime settings:
 | Variable | Purpose / default |
 | --- | --- |
 | `DISCORD_SQLITE_PATH` | Persistent SQLite file; needed for archive/reaction/memory worker; dev/prod use separate PVCs |
-| `DISCOVERY_SHADOW_CHANNELS` | Optional JSON object mapping 1–8 text channel IDs in one guild to optional public search hints of up to 200 characters. Use JSON `null` for a channel with no hint. Discovery derives the Brave query from discussion and accepted memories. Unset to disable. Requires `DISCORD_SQLITE_PATH` and `BRAVE_SEARCH_API_KEY`. Uses `OPENAI_MODEL`. |
 | `REACTION_SHADOW_ENABLED` | Opt-in shadow evaluation, default `false` |
 | `REACTION_SHADOW_GUILD_ID` | Numeric guild ID required for shadow mode; never hardcode a real value in docs |
 | `REACTION_SHADOW_MODEL` | Shadow evaluator model; defaults to `OPENAI_MODEL` |

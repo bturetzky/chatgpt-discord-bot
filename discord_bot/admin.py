@@ -71,18 +71,21 @@ def reactions(args):
 def discovery(args):
     from .storage.discovery_shadow import INTERVAL, LIMITS
 
-    gid = guild(args)
+    gid = args.guild_id
+    if gid is not None and not gid.isdecimal():
+        raise SystemExit("--guild-id must be numeric")
     with connect() as db:
         runs = db.execute(
-            """SELECT * FROM discovery_runs WHERE guild_id=? ORDER BY id DESC LIMIT ?""",
-            (gid, args.limit),
+            """SELECT * FROM discovery_runs
+               WHERE (? IS NULL OR guild_id=?) ORDER BY id DESC LIMIT ?""",
+            (gid, gid, args.limit),
         ).fetchall()
         candidates = db.execute(
-            """SELECT c.url, c.source_url, c.reason, c.story, c.evidence, c.draft,
+            """SELECT c.guild_id, c.url, c.source_url, c.reason, c.story, c.evidence, c.draft,
                       r.channel_id, r.started_at, c.run_id
                FROM discovery_candidates c JOIN discovery_runs r ON r.id=c.run_id
-               WHERE c.guild_id=? ORDER BY c.run_id DESC, c.url LIMIT ?""",
-            (gid, args.limit),
+               WHERE (? IS NULL OR c.guild_id=?) ORDER BY c.run_id DESC, c.url LIMIT ?""",
+            (gid, gid, args.limit),
         ).fetchall()
         output({"interval_seconds": INTERVAL, "limits_per_run": LIMITS,
                 "runs": [dict(row) for row in runs],
@@ -198,7 +201,7 @@ async def extract(args):
 
 def main():
     parser = argparse.ArgumentParser(description="Discord bot operator inspection and historical extraction")
-    parser.add_argument("--guild-id", help="Defaults to REACTION_SHADOW_GUILD_ID")
+    parser.add_argument("--guild-id", help="Discovery shows all guilds by default. Other guild-scoped commands default to REACTION_SHADOW_GUILD_ID.")
     parser.add_argument("--json", action="store_true", help="Structured output")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("status", help="Feature flags, SQLite integrity and row counts")

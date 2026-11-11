@@ -5,7 +5,7 @@ from .. import memory_selection
 from .chatgpt_handler import ChatGPTHandler
 from .vector_handler import VectorHandler
 from .image_context import ImageContextBuilder
-from ..storage.discovery_shadow import DiscoveryShadow, parse_channels
+from ..storage.discovery_shadow import DiscoveryShadow
 from ..storage.history import reconcile_recent
 from ..storage.reaction_observer import ReactionObserver
 from ..storage.autonomous_memory import run_forever
@@ -57,7 +57,7 @@ class DiscordHandler:
                     reconcile_recent(self.client, self.archive), name='discord-history-reconcile'
                 )
 
-            if self._discovery_task is None and os.getenv("DISCOVERY_SHADOW_CHANNELS"):
+            if self.archive is not None and self._discovery_task is None:
                 self.start_discovery(openai_key)
         
         @self.client.event
@@ -183,42 +183,37 @@ class DiscordHandler:
             # Don't send an error on a short message
         return
 
+    def discovery_channel_hints(self):
+        if not self.client.is_ready():
+            return {}
+        hints = {}
+        for guild in self.client.guilds:
+            member = guild.me
+            if guild.unavailable or member is None:
+                continue
+            for channel in guild.text_channels:
+                if channel.type != discord.ChannelType.text:
+                    continue
+                permissions = channel.permissions_for(member)
+                if permissions.view_channel and permissions.read_message_history:
+                    hints[str(guild.id), str(channel.id)] = {
+                        "name": channel.name[:100], "topic": (channel.topic or "")[:200],
+                    }
+        return hints
+
     def start_discovery(self, api_key):
-        try:
-            channels = parse_channels(os.environ["DISCOVERY_SHADOW_CHANNELS"])
-            configured = [self.client.get_channel(int(channel)) for channel in channels]
-            if (self.archive is None or not os.getenv("BRAVE_SEARCH_API_KEY")
-                    or any(not isinstance(channel, discord.TextChannel) for channel in configured)
-                    or len({channel.guild.id for channel in configured}) != 1):
-                raise ValueError("Discovery prerequisites unavailable")
-        except ValueError:
-            logging.warning("Discovery shadow disabled: invalid channels, archive or search configuration")
-            return
-
-        guild_id = str(configured[0].guild.id)
-
-        def channel_hints():
-            if not self.client.is_ready():
-                return {}
-            hints = {}
-            for channel_id in channels:
-                channel = self.client.get_channel(int(channel_id))
-                if (isinstance(channel, discord.TextChannel) and str(channel.guild.id) == guild_id
-                        and channel.guild.me is not None
-                        and channel.permissions_for(channel.guild.me).view_channel):
-                    hints[channel_id] = {"name": channel.name[:100], "topic": (channel.topic or "")[:200]}
-            return hints
-
         async def run_discovery():
             if self._reconcile_task is not None:
-                await asyncio.shield(self._reconcile_task)
+                try:
+                    await asyncio.shield(self._reconcile_task)
+                except Exception:
+                    logging.warning("Discovery shadow starting after history reconciliation failed")
             await DiscoveryShadow.run_configured(
-                self.archive.db, guild_id, channels, api_key,
-                str(self.client.user.id), channel_hints,
+                self.archive.db, api_key, str(self.client.user.id), self.discovery_channel_hints,
             )
 
         self._discovery_task = asyncio.create_task(run_discovery(), name="discovery-shadow")
-        logging.info("Discovery shadow enabled: channels=%d", len(channels))
+        logging.info("Discovery shadow enabled")
 
     async def shutdown(self):
         # Close any resources, db connections, etc.
