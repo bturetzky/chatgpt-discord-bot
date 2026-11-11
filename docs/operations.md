@@ -55,6 +55,22 @@ kubectl -n discord-dev exec deploy/chatgpt-discord-bot -- \
 
 With `REACTION_SHADOW_ENABLED=true` and a matching guild ID, the evaluator observes eligible text/reactions but **never posts emoji**. For deterministic **dev-only** testing, set `REACTION_SHADOW_TEST_PREFIX` temporarily in dev GitOps, send a fresh eligible non-reply message starting with it, wait at least 60–90 seconds, and inspect logs and persisted rows. This consumes one of the 8 evaluations/rolling 24 hours; remove the prefix afterward. Two distinct humans reacting to a recent eligible message should yield a `pile_on` evaluation; one human adding several emoji must not. This multi-human path and sustained production decision quality remain pending operator acceptance.
 
+## Discovery shadow dev acceptance
+
+After the application rolls out to dev, configure `DISCOVERY_SHADOW_CHANNELS` through dev GitOps for test text channels with SQLite archive coverage and Brave access. Use public queries for recent announcements. The bot needs to see each configured channel. From the dev bot container, inspect the persisted runs and candidates with the dev guild ID:
+
+```bash
+python -m discord_bot.admin --guild-id "$DEV_GUILD_ID" --json discovery --limit 20
+```
+
+The worker rotates one channel per six hours, including channels skipped by a gate. A restart does not reset the interval. Inspect the outcome, channel, search/fetch/model attempt counts, reported tokens, and any candidate URL, reason, evidence and draft.
+
+1. In a dev test channel, discuss a game or project with a recent public announcement for at least three messages. Leave it quiet for at least 30 minutes before its turn. Look for a selected opener whose link and public excerpt support its claims. Confirm Discord receives no unsolicited message or reaction.
+2. Before a later turn, share a result URL with a tracking query or discuss the same announcement in your own words. Expect `archived_url` or `same_story` when the source appears and the prior discussion is found. Check that a substantive later development can still qualify.
+3. Keep a test channel active during its turn or configure a game query for a channel whose archived discussion is unrelated. Expect `active_channel` without provider calls at the initial gate, or an unrelated/weak-context rejection without a draft. An unreadable source should yield `source_unavailable` without a draft.
+
+Record candidate quality and absence of unsolicited activity before accepting Phase 1. Remove the temporary dev configuration after the check.
+
 ## Dev Discord smoke test
 
 After ARC dev rollout verification, **actually select the bot from Discord's @-mention picker**; typing a literal `@chatgpt-dev` string is not sufficient. Test a brief calculation (17 × 23 = 391), weather lookup, Brave search for official Python docs, public webpage fetch (`https://docs.python.org/3/`), and an existing-memory question that does not write new memories. Expect an accurate result or explicit provider failure, never a fabricated read. For changed image handling, test direct and replied-to images plus unsupported/expired attachments. For memory changes, test retrieval and source attribution without inserting false permanent facts. Live image/replied-image understanding and #99 retrieval enhancement have already been operator-verified; repeat targeted tests only when behavior changes.

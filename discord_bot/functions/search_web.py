@@ -49,12 +49,15 @@ class SearchWeb(BaseFunction):
             logging.error("Brave search unavailable: missing API key")
             return search_error("CONFIG_ERROR", "Web search is not configured.")
 
+        params = {"q": query, "count": count}
+        if args.get("freshness") == "pw":
+            params["freshness"] = "pw"
         headers = {"Accept": "application/json", "X-Subscription-Token": key}
         try:
             timeout = aiohttp.ClientTimeout(total=TIMEOUT_SECONDS)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(SEARCH_URL, headers=headers,
-                                       params={"q": query, "count": count}) as response:
+                                       params=params) as response:
                     status = response.status
                     if status == 429:
                         logging.warning("Brave search failed: status=429")

@@ -15,9 +15,9 @@ This is the **only** list of unfinished features, actionable technical debt and 
 | P3 | Automatic historical archive/extraction catch-up | Evaluate a safe bounded schedule only if manual backfill and restart reconciliation leave meaningful gaps. Manual Discord history and SQLite memory extraction backfills are already implemented and verified. |
 | P3 | Richer reply/reference graph and media archive | Only if server context failures justify it; do not assume background image/video indexing is needed. |
 
-## Planned feature: proactive external discovery and conversation starters
+## Proactive external discovery and conversation starters
 
-**Status:** Design approved for backlog; **not implemented**. Implement in two independently reviewable phases. This is distinct from reaction shadow and autonomous memory extraction. The goal is for the bot to occasionally find a worthwhile external article, game announcement, release, news development or interesting link, and open a natural conversation in a relevant Discord channel with a brief, grounded, opinionated take. **External discovery first; internal channel history and memories inform relevance and novelty.** Unsolicited callbacks based solely on old conversations are out of scope.
+**Status:** Phase 1 code and automated coverage are ready for review. Dev deployment and operator acceptance are pending. Phase 2 remains planned and requires separate approval. This is distinct from reaction shadow and autonomous memory extraction. The goal is for the bot to occasionally find a worthwhile external article, game announcement, release, news development or interesting link, and open a natural conversation in a relevant Discord channel with a brief, grounded, opinionated take. **External discovery first; internal channel history and memories inform relevance and novelty.** Unsolicited callbacks based solely on old conversations are out of scope.
 
 ### Behavior and selection contract
 
@@ -29,9 +29,9 @@ This is the **only** list of unfinished features, actionable technical debt and 
 - **Budget:** Initial live-posting target is **at most 1–2 posts per week across the entire server**, not per channel. Make the final limit configurable and durable; use cooldowns and dedupe as separate gates. Discovery runs may occur a few times daily, but must have bounded candidate counts, search calls, model calls and embedding use. Avoid idle repeated model evaluations of unchanged candidates.
 - **Persistence and operations:** Use the existing per-environment SQLite database for discovery cursors/checkpoints, canonical source/story identity, evaluation decisions, proposed drafts and posting outcomes. Ensure idempotent retries and inspectable rejection reasons without retaining unnecessary source text or sensitive memory. No new database/service or generalized multi-guild framework. Add concise operator inspection via existing admin tooling if practical.
 
-### Phase 1 — discovery shadow mode (first Codex implementation)
+### Phase 1 — pending operator acceptance
 
-Implement a bounded periodic discovery/evaluation workflow for explicitly allowed channels, grounded source retrieval, channel-interest context, prior-discussion/previous-suggestion novelty checks, candidate scoring/decision, and a persisted draft plus reason. **No Discord messages, reactions or other unsolicited outbound posts in this phase**, even on a positive decision. Default to disabled until configured; no live posting capability or production auto-enable. Provide an operator-friendly way to inspect recent candidates, evidence URLs, channel choice, rejection/selection reasons, budgets and draft text. Mock external providers in automated tests.
+Use the [dev acceptance procedure](operations.md#discovery-shadow-dev-acceptance) to assess the shadow worker and its persisted decisions.
 
 **Phase 1 acceptance:**
 1. Relevant new, accessible source yields a short, source-linked candidate for an appropriate allowlisted channel; unrelated channel/source is rejected.
@@ -46,8 +46,6 @@ Implement a bounded periodic discovery/evaluation workflow for explicitly allowe
 Only after the operator accepts Phase 1 candidate quality: implement an **explicit opt-in** posting switch, channel allowlist, durable server-wide weekly cap (initially 1–2), per-channel and server cooldowns, story-level dedupe, source verification at posting time where appropriate, permissions/rate-limit/error handling, and an immediate kill switch. Reserve/record posting intent and reconcile ambiguous delivery outcomes rather than blindly retrying and duplicating messages. Preserve manual dev acceptance and manual production promotion; do not silently enable production posting.
 
 **Phase 2 acceptance:** demonstrate in dev that only permitted channels receive source-linked openers, active discussions are not interrupted, weekly/cooldown limits survive restart, duplicate stories are not reposted, provider/Discord failures are safe, and disabling posting stops further messages. Production enablement is a separate operator decision.
-
-**Codex handoff:** Read `AGENTS.md`, `docs/architecture.md`, this specification, and relevant current handlers/storage/functions/tests before designing the smallest integration. Implement **Phase 1 only** unless Phase 2 is separately approved. Reuse current abstractions, write focused unit/regression tests, update existing documentation to distinguish implemented from planned, open a reviewable PR, and do not merge or promote without authorization.
 
 ## Pending operator acceptance
 
@@ -68,4 +66,4 @@ No automatic production promotion, general multi-guild ACL platform, always-on d
 
 ## Verified and closed
 
-Operator confirmed: #99 memory retrieval selection; autonomous memory in production; investigation of the earlier publication-verifier discrepancy; bounded historical memory extraction backfill; #96–97 idle-cycle optimization; restoration of normal memory logging; production operator CLI inspection; direct/replied-image understanding. These are **not** pending acceptance. Production reaction shadow and multi-person recall are the only two open verification items.
+Operator confirmed: #99 memory retrieval selection; autonomous memory in production; investigation of the earlier publication-verifier discrepancy; bounded historical memory extraction backfill; #96–97 idle-cycle optimization; restoration of normal memory logging; production operator CLI inspection; direct/replied-image understanding. These are **not** pending acceptance.

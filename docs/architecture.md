@@ -41,6 +41,12 @@ The existing Pinecone store remains the retrieval source, including legacy recor
 
 Production shadow startup has been observed; longer-term decision quality and distinct-human pile-on acceptance remain pending. Live posting requires a separate implementation with durable posting budget, dedupe, cooldown, kill switch, permission/rate-limit handling and standard/custom emoji allowlisting. Do not equate shadow model output with a posted reaction.
 
+## Proactive discovery shadow
+
+An opt-in worker rotates through configured text channels in one guild. It reserves a server-wide window in SQLite before provider calls. Each six-hour window allows one Brave search for recent results, two public page reads and four tool-free model requests with SDK retries disabled. Recent activity and fewer than three archived text messages from authors other than the bot gate discovery. The worker checks activity again before saving a selection.
+
+The draft request receives public source content only. A separate reviewer verifies grounding, timeliness, novelty and channel relevance using bounded archive context, FTS matches, accepted SQLite memory summaries from that channel and up to 60 recent server-wide suggestions. Canonical URLs and exact selected story descriptions are checked durably. Paraphrased story matching depends on the bounded context and model judgment. The worker stores public evidence for selected drafts, fixed reason categories and attempted call/token counts. It does not send anything to Discord or write memories. Interrupted attempts consume their reservation, and previously attempted canonical URLs are skipped across restarts. See [operations](operations.md#discovery-shadow-dev-acceptance).
+
 ## Operational boundaries
 
 This is one small trusted production guild and a separate dev environment. No new service, database cluster or generalized tenant authorization is planned without a demonstrated need. External content and Discord messages are untrusted model input. Logs and documentation must not contain raw private memories, message bodies, tokens or real guild IDs. Use [operations](operations.md) for safe diagnostics and [deployment](deployment.md) for release gates.

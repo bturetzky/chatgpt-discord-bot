@@ -1,10 +1,13 @@
 import discord, asyncio, logging, os
 from collections import Counter
 
+from openai import AsyncOpenAI
+
 from .. import memory_selection
 from .chatgpt_handler import ChatGPTHandler
 from .vector_handler import VectorHandler
 from .image_context import ImageContextBuilder
+from ..storage.discovery_shadow import DiscoveryShadow, parse_channels
 from ..storage.history import reconcile_recent
 from ..storage.reaction_observer import ReactionObserver
 from ..storage.autonomous_memory import run_forever
@@ -19,6 +22,8 @@ class DiscordHandler:
         self.reaction_shadow = None
         self._reconcile_task = None
         self._memory_task = None
+        self._discovery_task = None
+        self._discovery_client = None
         logging.debug('Initializing discord client')
         self.client = discord.Client(intents=self.get_discord_intents())
         logging.debug('Discord client initialized')
@@ -54,6 +59,9 @@ class DiscordHandler:
                 self._reconcile_task = asyncio.create_task(
                     reconcile_recent(self.client, self.archive), name='discord-history-reconcile'
                 )
+
+            if self._discovery_task is None and os.getenv("DISCOVERY_SHADOW_CHANNELS"):
+                self.start_discovery(openai_key)
         
         @self.client.event
         async def on_message(message):
@@ -178,10 +186,54 @@ class DiscordHandler:
             # Don't send an error on a short message
         return
 
+    def start_discovery(self, api_key):
+        try:
+            channels = parse_channels(os.environ["DISCOVERY_SHADOW_CHANNELS"])
+            configured = [self.client.get_channel(int(channel)) for channel in channels]
+            if (self.archive is None or not os.getenv("BRAVE_SEARCH_API_KEY")
+                    or any(not isinstance(channel, discord.TextChannel) for channel in configured)
+                    or len({channel.guild.id for channel in configured}) != 1):
+                raise ValueError("Discovery prerequisites unavailable")
+        except ValueError:
+            logging.warning("Discovery shadow disabled: invalid channels, archive or search configuration")
+            return
+
+        guild_id = str(configured[0].guild.id)
+
+        def channel_hints():
+            if not self.client.is_ready():
+                return {}
+            hints = {}
+            for channel_id in channels:
+                channel = self.client.get_channel(int(channel_id))
+                if (isinstance(channel, discord.TextChannel) and str(channel.guild.id) == guild_id
+                        and channel.guild.me is not None
+                        and channel.permissions_for(channel.guild.me).view_channel):
+                    hints[channel_id] = {"name": channel.name[:100], "topic": (channel.topic or "")[:200]}
+            return hints
+
+        self._discovery_client = AsyncOpenAI(api_key=api_key, max_retries=0, timeout=25)
+        worker = DiscoveryShadow(
+            self.archive.db, guild_id, channels, self._discovery_client,
+            os.getenv("OPENAI_MODEL", "gpt-6.1-terra"), str(self.client.user.id),
+        )
+        async def run_discovery():
+            if self._reconcile_task is not None:
+                await asyncio.shield(self._reconcile_task)
+            await worker.run_forever(channel_hints)
+
+        self._discovery_task = asyncio.create_task(run_discovery(), name="discovery-shadow")
+        logging.info("Discovery shadow enabled: channels=%d", len(channels))
+
     async def shutdown(self):
         # Close any resources, db connections, etc.
         logging.info('Shutting down Discord client')
         self.shutdown_event.set()
+        discovery_task = getattr(self, "_discovery_task", None)
+        if discovery_task is not None:
+            discovery_task.cancel()
+            await asyncio.gather(discovery_task, return_exceptions=True)
+            await self._discovery_client.close()
         memory_task = getattr(self, '_memory_task', None)
         if memory_task is not None:
             memory_task.cancel()
