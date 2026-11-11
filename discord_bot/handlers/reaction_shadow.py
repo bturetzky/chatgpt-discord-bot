@@ -189,7 +189,16 @@ class ReactionShadow:
         )
         outcome = "ignored"
         if decision == "react":
-            outcome = await self._post(channel_id, message_id, emoji)
+            try:
+                outcome = await self._post(channel_id, message_id, emoji)
+            except Exception:
+                attempt = self.db.execute(
+                    "SELECT posting_outcome FROM shadow_evaluations WHERE message_id=?",
+                    (str(message_id),),
+                ).fetchone()[0]
+                outcome = "uncertain" if attempt == "attempting" else "failed"
+                logging.exception("Unexpected reaction posting failure: message_id=%s outcome=%s",
+                                  message_id, outcome)
             self.db.execute(
                 """UPDATE shadow_evaluations SET posting_outcome=?,
                    posted_at=CASE WHEN ?='posted' THEN CURRENT_TIMESTAMP END

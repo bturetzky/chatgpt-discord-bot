@@ -41,6 +41,8 @@ class ShadowTests(unittest.IsolatedAsyncioTestCase):
             ("unicode:🔥", "react", "deleted", "unavailable"),
             ("unicode:🔥", "react", "forbidden", "forbidden"),
             ("unicode:🔥", "react", "http", "http_error"),
+            ("unicode:🔥", "react", "before_attempt", "failed"),
+            ("unicode:🔥", "react", "during_attempt", "uncertain"),
             ("custom:42", "react", "emoji", "emoji_unavailable"),
             ("unicode:🔥", "react", "bot", "ineligible"),
             ("unicode:🔥", "react", "already", "already_reacted"),
@@ -64,6 +66,10 @@ class ShadowTests(unittest.IsolatedAsyncioTestCase):
                     message.add_reaction.side_effect = discord.Forbidden(Mock(status=403), "denied")
                 if problem == "http":
                     message.add_reaction.side_effect = discord.HTTPException(Mock(status=500), "error")
+                if problem == "before_attempt":
+                    gateway.get_channel.side_effect = RuntimeError("unexpected channel failure")
+                if problem == "during_attempt":
+                    message.add_reaction.side_effect = RuntimeError("unexpected request failure")
                 if problem == "emoji":
                     guild.get_emoji.return_value = None
                 if problem == "already":
@@ -95,7 +101,12 @@ class ShadowTests(unittest.IsolatedAsyncioTestCase):
                                             discord_client=gateway, client=model, delay=0)
                     shadow.schedule(1, 2, 5, "independent")
                     shadow.schedule(1, 2, 5, "pile_on")
-                    await shadow.pending["5"]
+                    if problem in ("before_attempt", "during_attempt"):
+                        with self.assertLogs(level="ERROR") as logs:
+                            await shadow.pending["5"]
+                        self.assertIn("Traceback (most recent call last)", logs.output[0])
+                    else:
+                        await shadow.pending["5"]
                     outcome, posted_at = db.connection.execute(
                         "SELECT posting_outcome, posted_at FROM shadow_evaluations WHERE message_id='5'"
                     ).fetchone()
@@ -103,6 +114,8 @@ class ShadowTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(posted_at is not None, expected == "posted")
                     if expected == "posted":
                         message.add_reaction.assert_awaited_once_with(custom if key.startswith("custom:") else "🔥")
+                    elif problem == "during_attempt":
+                        message.add_reaction.assert_awaited_once_with("🔥")
                     elif problem not in ("forbidden", "http"):
                         message.add_reaction.assert_not_awaited()
                     await shadow.close()
