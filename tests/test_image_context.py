@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
+from discord import Embed
 from PIL import Image
 
 from discord_bot.handlers.image_context import (
@@ -33,6 +34,21 @@ def attachment(data=None, mime="image/png", url="https://cdn.discordapp.com/atta
 def message(attachments=(), reference=None):
     return SimpleNamespace(attachments=list(attachments), reference=reference,
                            channel=SimpleNamespace(id=12, fetch_message=AsyncMock()))
+
+
+def image_session(data, mime):
+    async def stream(_size):
+        yield data
+
+    response = MagicMock(status=200, headers={"Content-Type": mime})
+    response.__aenter__ = AsyncMock(return_value=response)
+    response.__aexit__ = AsyncMock(return_value=None)
+    response.content.iter_chunked = stream
+    session = MagicMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+    session.get.return_value = response
+    return session
 
 
 class ImageValidationTests(unittest.TestCase):
@@ -105,6 +121,91 @@ class ImageBuilderTests(unittest.IsolatedAsyncioTestCase):
     async def test_no_images_preserves_text_only_path(self):
         self.assertIsNone(await self.builder.build(message()))
 
+    async def test_pasted_png_with_missing_or_generic_metadata(self):
+        png = image_bytes()
+        for declared, served in [(None, "image/png"), ("application/octet-stream", "application/octet-stream")]:
+            with self.subTest(declared=declared):
+                pasted = attachment(mime=declared)
+                pasted.filename = "Clipboard.PNG"
+                session = image_session(png, served)
+                with patch("discord_bot.handlers.image_context.aiohttp.ClientSession", return_value=session):
+                    result = await self.builder.build(message([pasted]))
+                self.assertEqual(result["content"][1]["image_url"],
+                                 "data:image/png;base64," + base64.b64encode(png).decode("ascii"))
+
+    async def test_generic_png_rejects_spoofed_bytes_and_mime_mismatch(self):
+        pasted = attachment(mime=None)
+        pasted.filename = "image.png"
+        for data, served, failure in [
+            (image_bytes("JPEG"), "application/octet-stream", "type_mismatch"),
+            (image_bytes("JPEG"), "image/jpeg", "unsupported_type"),
+            (b"not an image", "image/png", "invalid_image"),
+            (b"x" * (MAX_IMAGE_BYTES + 1), "image/png", "size_limit"),
+        ]:
+            with self.subTest(failure=failure):
+                session = image_session(data, served)
+                with patch("discord_bot.handlers.image_context.aiohttp.ClientSession", return_value=session):
+                    result = await self.builder.build(message([pasted]))
+                self.assertEqual(len(result["content"]), 1)
+                self.assertIn(failure, result["content"][0]["text"])
+
+    async def test_generic_non_image_and_explicit_non_image_mime_are_skipped(self):
+        generic_file = attachment(mime="application/octet-stream")
+        generic_file.filename = "document.pdf"
+        explicit_type = attachment(mime="text/plain")
+        explicit_type.filename = "image.png"
+        with patch("discord_bot.handlers.image_context.aiohttp.ClientSession") as session:
+            result = await self.builder.build(message([generic_file, explicit_type]))
+        self.assertIn("unsupported_type", result["content"][0]["text"])
+        session.assert_not_called()
+
+    async def test_replied_to_image_embed_uses_discord_proxy(self):
+        proxy_url = "https://media.discordapp.net/external/opaque/image.png"
+        embed = Embed.from_dict({"type": "image", "thumbnail": {
+            "url": "https://example.test/image.png", "proxy_url": proxy_url,
+        }})
+        reply = message()
+        reply.author = SimpleNamespace(display_name="Sam")
+        reply.embeds = [embed]
+        msg = message(reference=SimpleNamespace(resolved=reply, channel_id=12))
+        session = image_session(image_bytes(), "image/png")
+        with patch("discord_bot.handlers.image_context.aiohttp.ClientSession", return_value=session):
+            result = await self.builder.build(msg)
+        self.assertIn("Sam", result["content"][0]["text"])
+        self.assertEqual(result["content"][1]["type"], "input_image")
+        self.assertEqual(session.get.call_args.args, (proxy_url,))
+
+    async def test_embed_ignores_article_thumbnail_and_rejects_direct_external_image(self):
+        msg = message()
+        url = "https://example.test/image.png"
+        msg.embeds = [Embed.from_dict({"type": "link", "thumbnail": {"url": url}})]
+        with patch("discord_bot.handlers.image_context.aiohttp.ClientSession") as session:
+            self.assertIsNone(await self.builder.build(msg))
+            msg.embeds.append(Embed().set_image(url=url))
+            result = await self.builder.build(msg)
+        self.assertIn("invalid_url", result["content"][0]["text"])
+        session.assert_not_called()
+
+    async def test_embed_without_size_is_bounded_by_stream_limit(self):
+        msg = message()
+        msg.embeds = [Embed().set_image(url="https://cdn.discordapp.com/attachments/a/b/image.png")]
+        session = image_session(b"x" * (MAX_IMAGE_BYTES + 1), "image/png")
+        with patch("discord_bot.handlers.image_context.aiohttp.ClientSession", return_value=session):
+            result = await self.builder.build(msg)
+        self.assertIn("size_limit", result["content"][0]["text"])
+
+    async def test_attachments_and_embeds_share_image_limit(self):
+        msg = message([attachment()])
+        msg.embeds = [
+            Embed().set_image(url=f"https://cdn.discordapp.com/attachments/a/b/image-{index}.png")
+            for index in range(2)
+        ]
+        self.builder.download = AsyncMock(return_value=(image_bytes(), "image/png"))
+        result = await self.builder.build(msg)
+        self.assertEqual(self.builder.download.await_count, 2)
+        self.assertEqual(sum(part["type"] == "input_image" for part in result["content"]), 2)
+        self.assertIn("image_limit", result["content"][-1]["text"])
+
     async def test_more_than_two_is_bounded_and_disclosed(self):
         self.builder.download = AsyncMock(return_value=(image_bytes(), "image/png"))
         result = await self.builder.build(message([attachment(), attachment(), attachment()]))
@@ -136,6 +237,28 @@ class ImageBuilderTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("secret", str(logs.output))
         self.assertNotIn("cdn.discordapp", str(logs.output))
         self.assertNotIn("base64", str(logs.output))
+
+    async def test_attachment_log_uses_only_sanitized_mime_and_extension_presence(self):
+        attachments = []
+        for mime, filename in [
+            (None, "private-clipboard.PNG"),
+            ("application/octet-stream", "private-document.pdf"),
+            ("IMAGE/JPEG; private-parameter=value", "private-photo"),
+            ("application/private-mime", "private-spoof.webp"),
+        ]:
+            item = attachment(mime=mime)
+            item.filename = filename
+            attachments.append(item)
+        self.builder.download = AsyncMock(side_effect=ImageFailure("download_unavailable"))
+        with self.assertLogs(level="INFO") as logs:
+            await self.builder.build(message(attachments))
+        log = logs.output[0]
+        self.assertIn("missing/recognized_extension=true:1", log)
+        self.assertIn("generic/recognized_extension=false:1", log)
+        self.assertIn("image/jpeg/recognized_extension=false:1", log)
+        self.assertIn("unsupported/recognized_extension=true:1", log)
+        self.assertNotIn("private", log)
+        self.assertNotIn("https://", log)
 
     async def test_unsupported_and_oversized_rejected_before_network(self):
         unsupported = attachment(mime="application/pdf")
@@ -307,6 +430,17 @@ class ImageBuilderTests(unittest.IsolatedAsyncioTestCase):
 
 
 class DiscordImageRoutingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_mentioned_message_with_only_embed_sends_image_context(self):
+        handler, msg = make_handler(), make_message()
+        handler.image_context_builder = ImageContextBuilder()
+        msg.embeds = [Embed().set_image(url="https://cdn.discordapp.com/attachments/a/b/image.png")]
+        session = image_session(image_bytes(), "image/png")
+        with patch("discord_bot.handlers.image_context.aiohttp.ClientSession", return_value=session), \
+             patch("discord_bot.handlers.discord_handler.asyncio.sleep", new_callable=AsyncMock):
+            await handler.process_message(msg)
+        context = handler.chatgpt_handler.get_response.await_args.args[0][-1]
+        self.assertEqual(context["content"][1]["type"], "input_image")
+
     async def test_unmentioned_messages_do_not_ingest_images(self):
         handler, msg = make_handler(), make_message()
         handler.client.user.mentioned_in.return_value = False
