@@ -1,30 +1,40 @@
 # Agent instructions
 
-This is a Python 3.12 / Poetry 1.8.3 Discord bot with separate dev and production deployments. Read [docs/agent-development-design.md](docs/agent-development-design.md) and the relevant feature design before changing behavior.
+This is a Python 3.12 / Poetry 1.8.3 Discord bot with isolated dev and production deployments. Before changing behavior, read [architecture](docs/architecture.md), the relevant [backlog](docs/backlog.md) item, and current code/tests. GitHub PR history is the record of previous implementation decisions; do not mistake old proposals for current behavior.
 
-## Approved first Codex feature experiment
+## Development and approval boundaries
 
-- For an **operator-approved, contained feature**, Codex may implement changes on a feature branch, add/update regression tests and docs, open a PR, inspect CI failures, repair them with bounded retries, and merge its **own application PR** to `main` once required checks pass, subject to the agent's actual GitHub permissions. Do not bypass branch protections or checks.
-- Run `make test` (or `poetry run python -m unittest discover -s tests -t .`) and relevant targeted tests; inspect the real workflow and dependencies before selecting commands. Report evidence, not assumptions.
-- A merge to application `main` **automatically publishes an image and deploys to dev**. The post-deploy GitHub Actions `verify-dev` job runs on ARC and checks the expected digest, Argo CD sync/health, Deployment readiness, Discord gateway startup, and a stable pod with zero restarts. Inspect that job's actual outcome before claiming dev rollout success. A passing rollout check is **not** a live Discord behavior test.
-- If checks or deployment verification fail, inspect available logs, fix the root cause, and retry a reasonable bounded number of times; stop and report persistent failures. Never claim Codex can automatically resume on a CI event without an explicitly configured mechanism.
-- Keep one feature agent at a time while using the shared dev environment. Do not conflate a successful CI build, verified Kubernetes rollout, and verified Discord interaction.
+- For an operator-approved, contained feature, an agent may implement on a branch, add regression tests, open a PR, inspect CI, fix bounded failures, and merge its own **application** PR after required checks pass if authorized. Never bypass branch protections.
+- Run `make test` (or `poetry run python -m unittest discover -s tests -t .`) and relevant targeted tests. Report observed evidence, not assumptions.
+- Merging application `main` publishes an image and automatically deploys to **dev**. The ARC `verify-dev` job checks digest, Argo sync/health, Deployment readiness and gateway startup. It does **not** prove a Discord feature works.
+- Use one feature agent at a time against shared dev. A CI pass, Kubernetes rollout and human Discord acceptance are three distinct milestones.
+- **Production promotion always requires operator review/action.** Do not trigger or merge production GitOps changes.
+- `bturetzky/homelab-gitops` owns Kubernetes, Argo CD, Secrets and runtime deployment settings. Do not mutate live deployments imperatively.
+- Obtain approval for major architecture/infrastructure changes, credentials, destructive operations, historical backfills and enabling persistent memory writes.
+- Never commit secrets, real guild IDs, Discord messages, private memories or sensitive logs. Mock external services in tests; do not use production credentials for dev.
+- ARC runner Kubernetes access is deliberately read-only and scoped; do not broaden it.
 
-## Approval and security boundaries
+## Feature handoff
 
-- **Production promotion always requires operator action and review.** Do not trigger or merge production GitOps changes.
-- `bturetzky/homelab-gitops` is authoritative for Kubernetes and Argo CD manifests. No imperative deployment mutations.
-- Ask approval for significant architecture changes, new infrastructure/credentials, destructive operations, historical data backfills, or enabling persistent memory writes.
-- Never commit or expose credentials, Discord message bodies, private memories, or sensitive logs. Mock external APIs in unit tests. Do not use production credentials for dev tests.
-- The ARC runner has read-only, named-resource Kubernetes access to the dev bot Deployment and its Argo CD Application. Do not expand RBAC or use the runner to execute arbitrary cluster operations.
+For user-visible changes, supply 2–4 concrete manual dev Discord prompts/actions, expected results, one negative/fallback case, prerequisites, and the PR/workflow/digest when known. Only claim human acceptance after the operator reports it. Do not silently promote to prod.
 
-## Manual feature-test handoff
+## Documentation maintenance rules
 
-- For any user-visible feature, the final PR comment or handoff must give the operator **2–4 concrete Discord prompts/actions** to try in the dev server, expected observable results, at least one negative/fallback case, and any prerequisite configuration. Do not claim these were tested unless a human actually tested them.
-- After CI and dev verification pass, clearly report **ready for manual dev testing**, not feature acceptance or production readiness. Include the image digest and workflow link when available. Do not trigger production promotion.
+**Keep documentation small, current and nonduplicative.** The permanent Markdown inventory is:
+- `README.md`: capabilities, quickstart and authoritative application environment-variable reference.
+- `AGENTS.md`: agent behavior, approval gates and documentation rules.
+- `docs/architecture.md`: **implemented** components, invariants, important tradeoffs and limitations.
+- `docs/backlog.md`: **unfinished** features, actionable debt and explicitly pending operator verification.
+- `docs/deployment.md`: CI/CD, promotion, rollback and verification boundaries.
+- `docs/operations.md`: commands, diagnostics, backfills and concise manual acceptance procedures.
 
-## Documentation
+- Update the **existing owner document** when behavior changes. Do not create a new roadmap, status checkpoint, feature design, runbook or dated implementation diary by default. If a substantial new design genuinely needs a temporary document, get operator agreement and fold its durable decisions into the permanent docs when shipped.
+- Describe **current code** as implemented only after checking it; label unmerged plans, CI-tested behavior, deployed behavior and operator-verified behavior separately. A green build is not live acceptance.
+- Once work is shipped and accepted, **remove it from the backlog** and delete superseded verification instructions. Keep only important design rationale and current operating commands, not PR timelines, sample logs, token counts or historical checklists.
+- Document pending verification only when genuinely outstanding. Do not reopen operator-confirmed acceptance without new evidence. Keep unfinished work in one backlog, not scattered across feature pages.
+- Link to code, workflows and GitOps instead of duplicating configuration, infrastructure manifests or implementation details. Application env vars belong in README; GitOps is authoritative for deployed values.
+- Fix links and stale statements in the same PR as a feature change. Before adding a Markdown file, first explain why none of the six existing files is suitable.
+- Do not put real guild IDs, credentials, message contents, private memory summaries or sensitive operational output into documentation.
+- Documentation-only maintenance may go directly through an ordinary reviewed PR; do not introduce runtime changes as part of cleanup.
 
-- Preserve approved feature design decisions and update feature docs with what was actually implemented/tested.
-- Use [docs/deployment-workflow.md](docs/deployment-workflow.md) for CI/CD mechanics and [docs/engineering-roadmap.md](docs/engineering-roadmap.md) for broader engineering context. Avoid session diaries and duplicate GitOps infrastructure docs.
-- PR summary: scope, tests, CI result, deployment verification result if available, and any remaining manual Discord smoke tests.
+PR handoff: scope, tests, CI result, dev deployment verification if available, and any remaining human Discord checks.
