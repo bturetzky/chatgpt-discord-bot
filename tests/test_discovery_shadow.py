@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from argparse import Namespace
 import json
+import sqlite3
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -197,6 +198,34 @@ class ShadowTests(IsolatedAsyncioTestCase):
         self.assertEqual(self.db.execute(
             "SELECT outcome, model_calls FROM discovery_runs ORDER BY id",
         ).fetchall(), [("provider_error", 2), ("complete", 1)])
+
+    async def test_sqlite_rows_serialize_in_topic_and_review(self):
+        old_message = "Lunar Colony has been a regular co-op game for months."
+        self.message(8, old_message, self.now - 80 * 86400)
+        prior_url = URL + "-earlier"
+        prior_story = "Lunar Colony received a new soundtrack."
+        run = self.db.execute(
+            "INSERT INTO discovery_runs(guild_id, channel_id, started_at) VALUES ('1', '2', ?)",
+            (self.now - INTERVAL,),
+        ).lastrowid
+        self.db.execute(
+            """INSERT INTO discovery_candidates (guild_id, url, source_url, run_id, reason, story)
+               VALUES ('1', ?, ?, ?, 'selected', ?)""",
+            (prior_url, prior_url, run, prior_story),
+        )
+        self.db.row_factory = sqlite3.Row
+        self.responses({"story": STORY, "quote": QUOTE, "draft": DRAFT}, {"reason": "selected"})
+
+        await self.worker().run_once(self.hints)
+
+        self.assertEqual(self.model.await_count, 3)
+        topic, _, review = [json.loads(call.kwargs["input"]) for call in self.model.call_args_list]
+        self.assertEqual(topic["older"][0][0], old_message)
+        self.assertEqual(review["prior_suggestions"], [[prior_story, prior_url]])
+        self.assertEqual(tuple(self.db.execute(
+            "SELECT reason, draft FROM discovery_candidates WHERE url=?", (URL,),
+        ).fetchone()), ("selected", f"{DRAFT}\n<{URL}>"))
+        self.assertIs(self.db.row_factory, sqlite3.Row)
 
     async def test_topic_http_rejection_logs_safe_traceback_with_no_usage(self):
         private_marker = "synthetic private payload"
