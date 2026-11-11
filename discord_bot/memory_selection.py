@@ -4,7 +4,6 @@ import json
 import math
 import os
 import re
-from collections import Counter
 
 _TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}:\s*")
 _HEADER = (
@@ -122,9 +121,8 @@ def select_memories(semantic, relationship, participants, *, relationship_limit=
         if not math.isfinite(minimum_score):
             raise ValueError("MEMORY_MIN_SIMILARITY must be a finite number")
     people = {str(person) for person in participants}
-    seen = set()
     records, decisions = [], []
-    counts = Counter()
+    eligible = {"semantic": [], "relationship": []}
     for source, matches in (("semantic", semantic), ("relationship", relationship)):
         for item in matches:
             summary = item["summary"]
@@ -149,30 +147,51 @@ def select_memories(semantic, relationship, participants, *, relationship_limit=
                 record["scope"] = metadata["scope"]
             if attributed:
                 record["participant_ids"] = attributed
-            group = "relationship" if is_relationship else "semantic"
-            limit = relationship_limit if is_relationship else semantic_limit
+            decision = {
+                "source": source,
+                "rank": item["rank"],
+                "score": score,
+                "type": record["type"],
+            }
+            decisions.append(decision)
             if is_relationship and not people.intersection(attributed):
-                reason = "participant_mismatch"
+                decision["reason"] = "participant_mismatch"
             elif minimum_score is not None and (score is None or score < minimum_score):
-                reason = "missing_score" if score is None else "below_score_floor"
-            elif key in seen:
-                reason = "duplicate"
-            elif counts[group] >= limit:
-                reason = "count_limit"
-            elif len(render_context(records + [record])) > budget:
-                reason = "context_budget"
+                decision["reason"] = (
+                    "missing_score" if score is None else "below_score_floor"
+                )
             else:
-                reason = "selected"
+                eligible["relationship" if is_relationship else "semantic"].append(
+                    (key, record, decision)
+                )
+
+    # A stable sort retains retrieval order for ties and puts unscored matches last.
+    eligible["relationship"].sort(
+        key=lambda candidate: (
+            candidate[2]["score"] is not None,
+            candidate[2]["score"] or 0,
+        ),
+        reverse=True,
+    )
+    seen = set()
+    for group, limit in (
+        ("semantic", semantic_limit),
+        ("relationship", relationship_limit),
+    ):
+        count = 0
+        for key, record, decision in eligible[group]:
+            if key in seen:
+                decision["reason"] = "duplicate"
+                continue
+            if group == "relationship":
+                seen.add(key)
+            if count >= limit:
+                decision["reason"] = "count_limit"
+            elif len(render_context(records + [record])) > budget:
+                decision["reason"] = "context_budget"
+            else:
+                decision["reason"] = "selected"
                 records.append(record)
                 seen.add(key)
-                counts[group] += 1
-            decisions.append(
-                {
-                    "source": source,
-                    "rank": item["rank"],
-                    "score": score,
-                    "type": record["type"],
-                    "reason": reason,
-                }
-            )
+                count += 1
     return render_context(records), decisions

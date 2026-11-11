@@ -24,11 +24,13 @@ retrieval quality.
    summary. When configured, apply the same minimum score to both pools.
    A candidate at the floor qualifies. A missing, malformed, or nonfinite
    score is ineligible with a floor and remains eligible without one.
-4. Process the general pool and then the participant-filtered pool in their
-   returned order. A relationship match in either pool counts toward the same
-   relationship cap. Suppress duplicates across pools, normalizing case,
-   punctuation, whitespace, and a leading legacy timestamp. Ordinary
-   facts without metadata remain eligible, including shared facts about other
+4. Process semantic facts in Pinecone's returned order, then consider eligible
+   relationship candidates from both pools together in descending score order.
+   Equal scores retain retrieval order and unscored candidates follow scored
+   candidates. Suppress duplicates before applying the shared relationship cap,
+   keeping the highest-ranked copy. Duplicate comparison normalizes case,
+   punctuation, whitespace, and a leading legacy timestamp. Ordinary facts
+   without metadata remain eligible, including shared facts about other
    participants.
 5. Select at most six semantic and two relationship records within one
    2,400-character budget, including framing and JSON escaping. Skip oversized

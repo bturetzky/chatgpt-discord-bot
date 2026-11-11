@@ -139,6 +139,57 @@ class SelectionTests(unittest.TestCase):
         )
         self.assertEqual(decisions[0]["reason"], "participant_mismatch")
 
+    def test_relationship_budget_uses_highest_scores_across_both_pools(self):
+        semantic = (
+            matches("First fact")
+            + matches(
+                "Low-scoring relationship",
+                "Game night tradition",
+                memory_type="relationship",
+                participant_ids=["1"],
+            )
+            + matches("Second fact")
+        )
+        dedicated = matches(
+            "Unrelated participants",
+            "GAME NIGHT TRADITION!",
+            "Favorite team ritual",
+            "Unscored relationship",
+            memory_type="relationship",
+            participant_ids=["1"],
+        )
+        for row, score in zip(dedicated, (0.99, 0.9, 0.8, None)):
+            row["score"] = score
+        dedicated[0]["metadata"]["participant_ids"] = ["2"]
+
+        context, decisions = select_memories(semantic, dedicated, ["1"])
+
+        self.assertEqual(
+            [row["summary"] for row in json.loads(context.splitlines()[-2])],
+            [
+                "First fact",
+                "Second fact",
+                "GAME NIGHT TRADITION!",
+                "Favorite team ritual",
+            ],
+        )
+        self.assertEqual(
+            [row["reason"] for row in decisions],
+            [
+                "selected",
+                "count_limit",
+                "duplicate",
+                "selected",
+                "participant_mismatch",
+                "selected",
+                "selected",
+                "count_limit",
+            ],
+        )
+        self.assertEqual(decisions[5]["source"], "relationship")
+        self.assertEqual(decisions[5]["rank"], 2)
+        self.assertEqual(decisions[5]["score"], 0.9)
+
     def test_shared_legacy_facts_stay_eligible(self):
         context, _ = select_memories(
             matches("Alice enjoys chess", participant_ids=["2"]), [], ["1"]
