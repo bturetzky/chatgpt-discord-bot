@@ -9,7 +9,6 @@ This is the **only** list of unfinished features, actionable technical debt and 
 | P1 | Memory correction, forget and invalidation | Provide a narrow explicit correction/deletion path and retire or revise memories when archived source evidence changes/deletes. No general distributed transaction framework. |
 | P1 | Crash-safe Pinecone publication/retry | Persist and reconcile intent, deterministic vector identity and remote outcome across SQLite/Pinecone; test interruption after remote success. Existing ledger helpers are foundations, **not** a wired worker. |
 | P2 | Memory quality and deduplication | Improve repeated/low-value candidate handling when observed; retain grounding and durability. #96–97 idle evaluation optimization is already verified, not pending. |
-| P2 | Live proactive emoji reactions | After shadow acceptance, implement opt-in posting with durable daily/burst budget, per-message dedupe, cooldown, kill switch, permissions/rate-limit handling and standard/custom emoji validation. |
 | P2 | Proactive external discovery and conversation starters | Two gated phases: durable, inspectable discovery shadow mode first; only after operator acceptance, opt-in guarded posting. See specification below. |
 | P2 | Desktop-pasted PNG and image embed acceptance | The original fix was deployed, but desktop paste still failed with Discord declaring WebP and a recognized filename extension. The CDN response MIME was unavailable. Verify the follow-up with the same desktop paste, a replied-to embed, and the unsupported-image fallback in dev before promotion. |
 | P3 | Automatic historical archive/extraction catch-up | Evaluate a safe bounded schedule only if manual backfill and restart reconciliation leave meaningful gaps. Manual Discord history and SQLite memory extraction backfills are already implemented and verified. |
@@ -17,7 +16,7 @@ This is the **only** list of unfinished features, actionable technical debt and 
 
 ## Proactive external discovery and conversation starters
 
-**Status:** Phase 1 shadow mode was deployed. The automatic channel selection and shared schedule update awaits dev rollout and operator acceptance. Phase 2 remains planned and requires separate approval. This is distinct from reaction shadow and autonomous memory extraction. The goal is for the bot to occasionally find a worthwhile external article, game announcement, release, news development or interesting link, and open a natural conversation in a relevant Discord channel with a brief, grounded, opinionated take. **External discovery first; internal channel history and memories inform relevance and novelty.** Unsolicited callbacks based solely on old conversations are out of scope.
+**Status:** Phase 1 shadow mode was deployed. The automatic channel selection and shared schedule update awaits dev rollout and operator acceptance. Phase 2 remains planned and requires separate approval. This is distinct from live emoji reactions and autonomous memory extraction. The goal is for the bot to occasionally find a worthwhile external article, game announcement, release, news development or interesting link, and open a natural conversation in a relevant Discord channel with a brief, grounded, opinionated take. **External discovery first; internal channel history and memories inform relevance and novelty.** Unsolicited callbacks based solely on old conversations are out of scope.
 
 ### Behavior and selection contract
 
@@ -49,7 +48,7 @@ Only after the operator accepts Phase 1 candidate quality: implement an **explic
 
 ## Pending operator acceptance
 
-1. **Production reaction shadow:** observe representative decisions over time, verify two distinct human reactors trigger a pile-on (one human adding multiple emoji must not), confirm budget/restart behavior and no unsolicited posts. Production startup alone is not full acceptance.
+1. **Live emoji reactions:** verify successful posts and distinct-human pile-ons in dev Discord, then observe reaction frequency after operator-approved production promotion. See [operations](operations.md#verify-live-emoji-reactions).
 2. **Multi-person/relationship memory recall:** test shared lore or running jokes with two people, later recall, and accurate attribution without relying solely on recent channel history. Improve only failures demonstrated in testing.
 
 ## Contained technical debt

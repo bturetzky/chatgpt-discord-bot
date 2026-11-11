@@ -13,10 +13,10 @@ class DatabaseTests(unittest.TestCase):
             with Database(path) as database:
                 self.assertEqual(database.connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
                 self.assertEqual(database.connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
-                self.assertEqual(database.connection.execute("SELECT version FROM schema_migrations").fetchall(), [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,), (9,), (10,), (11,), (12,)])
+                self.assertEqual(database.connection.execute("SELECT version FROM schema_migrations").fetchall(), [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,), (9,), (10,), (11,), (12,), (13,)])
                 self.assertTrue(database.integrity_check())
             with Database(path) as database:
-                self.assertEqual(database.connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0], 12)
+                self.assertEqual(database.connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0], 13)
 
     def test_refuses_memory_database_and_missing_parent(self):
         with self.assertRaises(ValueError):

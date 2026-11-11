@@ -35,11 +35,13 @@ The existing Pinecone store remains the retrieval source, including legacy recor
 
 **Important limitations:** The running worker does not implement autonomous memory corrections, merges, deletes or source-deletion invalidation. SQLite publication ledger/revision helpers and read-only Pinecone reconciliation exist, but are not a wired end-to-end transactional publication system. A Pinecone upsert and SQLite acceptance update are separate operations; a crash between them can leave ambiguous state. A previously observed verifier `not_found` discrepancy was investigated/verified by the operator; do not turn that old checkpoint into a pending incident, but preserve the broader crash/reconciliation limitation. Legacy Pinecone vectors may lack newer guild/scope metadata. Do not infer multi-tenant privacy isolation.
 
-## Reaction shadow and future personality
+## Live emoji reactions
 
-`discord_bot/handlers/reaction_shadow.py` observes human reactions and independently sampled messages, delays evaluation and asks a tool-free model whether an emoji would be appropriate. **Shadow mode never calls Discord to add an emoji.** Candidate gates include a recent eligible text message, 1-in-12 independent sampling, two distinct observed human reactors for pile-ons, 60-second debounce, at most 16 delayed candidates and a persisted cap of 8 model evaluations in a rolling 24 hours. These are evaluation limits, **not** a future posting budget. The dev-only prefix can force eligible sampling but cannot bypass other gates or the budget.
+`discord_bot/handlers/reaction_shadow.py` evaluates recent eligible messages after a 60-second delay. It samples 1 in 12 independent messages and also considers pile-ons with at least two distinct observed human reactors. Both paths share a persisted rolling limit of 48 model evaluations in 24 hours and a queue of at most 16 delayed candidates. The dev test prefix can force independent sampling while leaving eligibility and limits in effect.
 
-Production shadow startup has been observed; longer-term decision quality and distinct-human pile-on acceptance remain pending. Live posting requires a separate implementation with durable posting budget, dedupe, cooldown, kill switch, permission/rate-limit handling and standard/custom emoji allowlisting. Do not equate shadow model output with a posted reaction.
+A positive model decision can post a standard emoji from the evaluator allowlist or an observed custom emoji usable in the configured guild. The bot fetches the current message before posting. Successful posts cool down the channel for five minutes and the author for 30 minutes. After 12 successes in a rolling 24 hours, roughly one in four otherwise eligible positive decisions can post. These limits apply at all hours.
+
+SQLite reserves each message before evaluation and records the posting outcome separately from the model decision. An interrupted Discord request can leave an uncertain attempt. Previously evaluated messages are never retried, including after a restart.
 
 ## Proactive discovery shadow
 

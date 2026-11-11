@@ -44,7 +44,7 @@ def status(args):
                   for table in tables}
         counts["sqlite_quick_check"] = db.execute("PRAGMA quick_check").fetchone()[0]
         counts["autonomous_memory_enabled"] = os.getenv("AUTONOMOUS_MEMORY_ENABLED", "").lower() == "true"
-        counts["reaction_shadow_configured"] = bool(os.getenv("REACTION_SHADOW_GUILD_ID"))
+        counts["reactions_configured"] = bool(os.getenv("REACTION_SHADOW_GUILD_ID"))
         counts["sqlite_path"] = os.getenv("DISCORD_SQLITE_PATH")
         output(counts, args)
 
@@ -52,12 +52,16 @@ def reactions(args):
     gid = guild(args)
     with connect() as db:
         totals = [dict(r) for r in db.execute(
-            """SELECT status, COALESCE(decision,'pending') AS decision, COUNT(*) AS count
-               FROM shadow_evaluations WHERE guild_id=? GROUP BY status, decision""", (gid,))]
+            """SELECT status, COALESCE(decision,'pending') AS decision,
+                      posting_outcome, COUNT(*) AS count
+               FROM shadow_evaluations WHERE guild_id=? GROUP BY status, decision, posting_outcome""", (gid,))]
         where = "AND decision='react'" if args.react_only else ""
+        if getattr(args, "posted_only", False):
+            where = "AND posting_outcome='posted'"
         rows = [dict(r) for r in db.execute(
             f"""SELECT evaluated_at, status, trigger, decision, emoji_key, reason_category,
-                       guild_id, channel_id, message_id, input_tokens, output_tokens
+                       guild_id, channel_id, message_id, input_tokens, output_tokens,
+                       posting_outcome, posted_at
                 FROM shadow_evaluations WHERE guild_id=? {where}
                 ORDER BY evaluated_at DESC LIMIT ?""", (gid, args.limit))]
     for r in rows:
@@ -65,7 +69,7 @@ def reactions(args):
     if args.json:
         output({"totals": totals, "evaluations": rows}, args)
     else:
-        print("Shadow evaluation totals:", totals or "none recorded")
+        print("Reaction evaluation totals:", totals or "none recorded")
         output(rows, args)
 
 def discovery(args):
@@ -205,8 +209,10 @@ def main():
     parser.add_argument("--json", action="store_true", help="Structured output")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("status", help="Feature flags, SQLite integrity and row counts")
-    reaction = commands.add_parser("reactions", help="Shadow decisions and message links")
-    reaction.add_argument("--react-only", action="store_true")
+    reaction = commands.add_parser("reactions", help="Reaction decisions, posting outcomes and message links")
+    filters = reaction.add_mutually_exclusive_group()
+    filters.add_argument("--react-only", action="store_true")
+    filters.add_argument("--posted-only", action="store_true")
     reaction.add_argument("--limit", type=int, default=30)
     discovery_parser = commands.add_parser("discovery", help="Discovery budgets, decisions and shadow drafts")
     discovery_parser.add_argument("--limit", type=int, default=20)

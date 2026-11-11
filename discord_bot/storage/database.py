@@ -237,6 +237,10 @@ MIGRATIONS = (
         """CREATE INDEX discovery_server_recent
             ON messages(guild_id, created_at DESC) WHERE deleted_at IS NULL""",
     ),
+    (
+        "ALTER TABLE shadow_evaluations ADD COLUMN posting_outcome TEXT",
+        "ALTER TABLE shadow_evaluations ADD COLUMN posted_at TEXT",
+    ),
 )
 
 

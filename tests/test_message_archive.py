@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from discord_bot.storage import Database
+from discord_bot.storage.database import MIGRATIONS
 from discord_bot.storage.message_archive import MessageArchive
 
 
@@ -60,7 +61,7 @@ class ArchiveTests(unittest.TestCase):
             with Database(path) as reopened:
                 self.assertEqual(reopened.connection.execute(
                     "SELECT count(*) FROM schema_migrations"
-                ).fetchone()[0], 12)
+                ).fetchone()[0], len(MIGRATIONS))
                 self.assertEqual(reopened.connection.execute(
                     "SELECT count(*) FROM messages"
                 ).fetchone()[0], 1)

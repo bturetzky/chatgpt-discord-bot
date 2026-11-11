@@ -27,13 +27,14 @@ async def _main():
             database.integrity_check()
             logging.info("SQLite storage initialized")
             discord_bot.archive = MessageArchive(database)
-            if os.getenv('REACTION_SHADOW_ENABLED', 'false').lower() == 'true':
-                guild_id = os.getenv('REACTION_SHADOW_GUILD_ID')
-                if not guild_id or not guild_id.isdecimal():
-                    raise ValueError('REACTION_SHADOW_GUILD_ID must be configured when shadow mode is enabled')
+            guild_id = os.getenv('REACTION_SHADOW_GUILD_ID')
+            if guild_id:
+                if not guild_id.isdecimal():
+                    raise ValueError('REACTION_SHADOW_GUILD_ID must be numeric')
                 discord_bot.reaction_shadow = ReactionShadow(
-                    database.connection, guild_id=guild_id, api_key=OPENAI_API_KEY)
-                logging.info('Reaction shadow mode enabled: guild=%s, posting=false', guild_id)
+                    database.connection, guild_id=guild_id, api_key=OPENAI_API_KEY,
+                    discord_client=discord_bot.client)
+                logging.info('Live reactions configured')
         await discord_bot.start()
     finally:
         try:
