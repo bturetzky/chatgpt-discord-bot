@@ -52,17 +52,16 @@ def image_session(data, mime):
 
 
 class ImageValidationTests(unittest.TestCase):
-    def test_formats_decode_and_declared_type_must_match(self):
+    def test_only_supported_formats_decode(self):
         for fmt, mime in [("PNG", "image/png"), ("JPEG", "image/jpeg"), ("WEBP", "image/webp")]:
             with self.subTest(fmt=fmt):
-                validate_image(image_bytes(fmt), mime, mime)
-        with self.assertRaises(ImageFailure) as raised:
-            validate_image(image_bytes("JPEG"), "image/png", "image/png")
-        self.assertEqual(raised.exception.category, "type_mismatch")
+                self.assertEqual(validate_image(image_bytes(fmt)), mime)
+        with self.assertRaises(ImageFailure):
+            validate_image(image_bytes("GIF"))
 
     def test_truncated_or_forged_image_is_rejected(self):
         with self.assertRaises(ImageFailure):
-            validate_image(b"\x89PNG\r\n\x1a\nnot an image", "image/png", "image/png")
+            validate_image(b"\x89PNG\r\n\x1a\nnot an image")
 
     def test_only_https_discord_cdn_without_userinfo_is_allowed(self):
         self.assertTrue(attachment_url_allowed("https://cdn.discordapp.com/attachments/a/b/c?secret=1"))
@@ -126,19 +125,17 @@ class ImageBuilderTests(unittest.IsolatedAsyncioTestCase):
         for declared, served in [(None, "image/png"), ("application/octet-stream", "application/octet-stream")]:
             with self.subTest(declared=declared):
                 pasted = attachment(mime=declared)
-                pasted.filename = "Clipboard.PNG"
+                pasted.filename = "clipboard"
                 session = image_session(png, served)
                 with patch("discord_bot.handlers.image_context.aiohttp.ClientSession", return_value=session):
                     result = await self.builder.build(message([pasted]))
                 self.assertEqual(result["content"][1]["image_url"],
                                  "data:image/png;base64," + base64.b64encode(png).decode("ascii"))
 
-    async def test_generic_png_rejects_spoofed_bytes_and_mime_mismatch(self):
+    async def test_generic_png_rejects_invalid_and_oversized_bytes(self):
         pasted = attachment(mime=None)
         pasted.filename = "image.png"
         for data, served, failure in [
-            (image_bytes("JPEG"), "application/octet-stream", "type_mismatch"),
-            (image_bytes("JPEG"), "image/jpeg", "cdn_mime_mismatch"),
             (b"not an image", "image/png", "invalid_image"),
             (b"x" * (MAX_IMAGE_BYTES + 1), "image/png", "size_limit"),
         ]:
@@ -149,46 +146,25 @@ class ImageBuilderTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len(result["content"]), 1)
                 self.assertIn(failure, result["content"][0]["text"])
 
-    async def test_webp_metadata_accepts_verified_png_from_cdn(self):
+    async def test_decoded_format_wins_when_all_metadata_disagrees(self):
         png = image_bytes()
         pasted = attachment(mime="image/webp")
-        pasted.filename = "clipboard.png"
-        session = image_session(png, "image/png")
+        pasted.filename = "private-clipboard.jpeg"
+        session = image_session(png, "application/private-mime")
         with patch("discord_bot.handlers.image_context.aiohttp.ClientSession", return_value=session):
-            result = await self.builder.build(message([pasted]))
+            with self.assertLogs(level="INFO") as logs:
+                result = await self.builder.build(message([pasted]))
         self.assertEqual(result["content"][1]["image_url"],
                          "data:image/png;base64," + base64.b64encode(png).decode("ascii"))
+        self.assertIn("decoded=image/png attachment_mismatch=True cdn_mismatch=True", logs.output[0])
+        self.assertNotIn("private", str(logs.output))
+        self.assertNotIn("https://", str(logs.output))
 
-    async def test_webp_metadata_rejects_unverified_cdn_alternatives(self):
-        pasted = attachment(mime="image/webp")
-        pasted.filename = "clipboard.png"
-        for data, served, failure in [
-            (image_bytes("WEBP"), "image/png", "type_mismatch"),
-            (image_bytes("JPEG"), "image/jpeg", "cdn_mime_mismatch"),
-            (image_bytes(), "text/html", "cdn_unsupported_type"),
-        ]:
-            with self.subTest(served=served):
-                session = image_session(data, served)
-                with patch("discord_bot.handlers.image_context.aiohttp.ClientSession", return_value=session):
-                    result = await self.builder.build(message([pasted]))
-                self.assertEqual(len(result["content"]), 1)
-                self.assertIn(failure, result["content"][0]["text"])
-
-    async def test_supported_attachment_accepts_generic_cdn_header_with_matching_bytes(self):
-        pasted = attachment(image_bytes("WEBP"), "image/webp")
-        pasted.filename = "clipboard.png"
-        session = image_session(image_bytes("WEBP"), "application/octet-stream")
-        with patch("discord_bot.handlers.image_context.aiohttp.ClientSession", return_value=session):
-            result = await self.builder.build(message([pasted]))
-        self.assertTrue(result["content"][1]["image_url"].startswith("data:image/webp;base64,"))
-
-    async def test_generic_non_image_and_explicit_non_image_mime_are_skipped(self):
-        generic_file = attachment(mime="application/octet-stream")
-        generic_file.filename = "document.pdf"
+    async def test_explicit_non_image_mime_is_skipped_before_download(self):
         explicit_type = attachment(mime="text/plain")
         explicit_type.filename = "image.png"
         with patch("discord_bot.handlers.image_context.aiohttp.ClientSession") as session:
-            result = await self.builder.build(message([generic_file, explicit_type]))
+            result = await self.builder.build(message([explicit_type]))
         self.assertIn("unsupported_type", result["content"][0]["text"])
         session.assert_not_called()
 
