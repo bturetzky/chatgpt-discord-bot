@@ -257,14 +257,15 @@ class DiscordHandler:
                 for item in decisions:
                     logging.debug("Memory selection: %s", item)
 
-            if getattr(message, "attachments", None) or getattr(message, "reference", None):
+            if (getattr(message, "attachments", None) or getattr(message, "embeds", None)
+                    or getattr(message, "reference", None)):
                 try:
                     image_context = await self.image_context_builder.build(message)
                     if image_context:
                         messages.append(image_context)
                 except Exception as exc:
                     logging.warning("Image ingestion failed: category=internal_error error_type=%s", type(exc).__name__)
-                    messages.append({"role": "user", "content": [{"type": "input_text", "text": "Attached image processing failed. Do not claim to have seen the images."}]})
+                    messages.append({"role": "user", "content": [{"type": "input_text", "text": "Image processing failed. Do not claim to have seen the images."}]})
 
             try:
                 response = await self.chatgpt_handler.get_response(

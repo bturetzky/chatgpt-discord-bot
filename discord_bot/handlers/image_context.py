@@ -1,28 +1,49 @@
-"""Bounded, in-memory Discord attachment ingestion for one response."""
+"""Bounded, in-memory Discord image ingestion for one response."""
 import asyncio
 import base64
 import io
 import logging
 import time
+from dataclasses import dataclass
+from itertools import islice
+from pathlib import PurePath
 from urllib.parse import urlsplit
 
 import aiohttp
 from PIL import Image, UnidentifiedImageError
 
 MAX_IMAGES = 2
-MAX_ATTACHMENTS_INSPECTED = 20
+MAX_MEDIA_INSPECTED = 20
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
 MAX_TOTAL_BYTES = 8 * 1024 * 1024
 MAX_PIXELS = 20_000_000
 DOWNLOAD_TIMEOUT = 10
 REPLY_TIMEOUT = 5
 MIME_FORMATS = {"image/png": "PNG", "image/jpeg": "JPEG", "image/webp": "WEBP"}
+IMAGE_EXTENSIONS = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+GENERIC_TYPES = {"", "application/octet-stream", "binary/octet-stream"}
 CDN_HOSTS = {"cdn.discordapp.com", "media.discordapp.net"}
 
 
 class ImageFailure(Exception):
     def __init__(self, category):
         self.category = category
+
+
+@dataclass(frozen=True)
+class EmbedImage:
+    url: str
+
+
+def normalized_mime(value):
+    return (value or "").split(";", 1)[0].lower().strip()
+
+
+def attachment_mime(attachment):
+    declared = normalized_mime(getattr(attachment, "content_type", None))
+    if declared in GENERIC_TYPES:
+        return IMAGE_EXTENSIONS.get(PurePath(getattr(attachment, "filename", "") or "").suffix.lower())
+    return declared
 
 
 def attachment_url_allowed(url):
@@ -33,6 +54,21 @@ def attachment_url_allowed(url):
                 and parsed.port in (None, 443))
     except (TypeError, ValueError):
         return False
+
+
+def message_media(message, source):
+    for attachment in getattr(message, "attachments", None) or ():
+        yield attachment, source
+    for embed in getattr(message, "embeds", None) or ():
+        image = getattr(embed, "image", None)
+        direct_url = getattr(image, "url", None)
+        proxy_url = getattr(image, "proxy_url", None)
+        if not (direct_url or proxy_url) and getattr(embed, "type", None) == "image":
+            thumbnail = getattr(embed, "thumbnail", None)
+            direct_url = getattr(thumbnail, "url", None) or getattr(embed, "url", None)
+            proxy_url = getattr(thumbnail, "proxy_url", None)
+        url = proxy_url if attachment_url_allowed(proxy_url) else direct_url or proxy_url
+        yield EmbedImage(url) if url else None, source
 
 
 def validate_image(data, declared_type, response_type):
@@ -59,12 +95,15 @@ class ImageContextBuilder:
         self.semaphore = asyncio.Semaphore(2)
 
     async def download(self, attachment, remaining):
-        declared = (getattr(attachment, "content_type", None) or "").split(";", 1)[0].lower().strip()
-        size = getattr(attachment, "size", None)
-        if declared not in MIME_FORMATS:
-            raise ImageFailure("unsupported_type")
-        if not isinstance(size, int) or size <= 0 or size > MAX_IMAGE_BYTES or size > remaining:
-            raise ImageFailure("size_limit")
+        is_embed = isinstance(attachment, EmbedImage)
+        expected = None
+        if not is_embed:
+            expected = attachment_mime(attachment)
+            if expected not in MIME_FORMATS:
+                raise ImageFailure("unsupported_type")
+            size = getattr(attachment, "size", None)
+            if not isinstance(size, int) or size <= 0 or size > MAX_IMAGE_BYTES or size > remaining:
+                raise ImageFailure("size_limit")
         url = getattr(attachment, "url", None)
         if not attachment_url_allowed(url):
             raise ImageFailure("invalid_url")
@@ -77,8 +116,11 @@ class ImageContextBuilder:
                     async with session.get(url, allow_redirects=False, headers={"Accept-Encoding": "identity"}) as response:
                         if response.status != 200:
                             raise ImageFailure("download_unavailable")
-                        response_type = response.headers.get("Content-Type", "").split(";", 1)[0].lower().strip()
-                        if response_type != declared:
+                        response_type = normalized_mime(response.headers.get("Content-Type"))
+                        if (not is_embed and response_type in GENERIC_TYPES
+                                and normalized_mime(getattr(attachment, "content_type", None)) in GENERIC_TYPES):
+                            response_type = expected
+                        if response_type not in MIME_FORMATS or (expected is not None and response_type != expected):
                             raise ImageFailure("unsupported_type")
                         if response.headers.get("Content-Encoding", "identity").lower().strip() not in ("", "identity"):
                             raise ImageFailure("unsupported_encoding")
@@ -89,7 +131,7 @@ class ImageContextBuilder:
                                 raise ImageFailure("size_limit")
                 if not data:
                     raise ImageFailure("invalid_image")
-                worker = asyncio.create_task(asyncio.to_thread(validate_image, bytes(data), declared, response_type))
+                worker = asyncio.create_task(asyncio.to_thread(validate_image, bytes(data), expected or response_type, response_type))
                 try:
                     await asyncio.shield(worker)
                 except asyncio.CancelledError:
@@ -104,7 +146,7 @@ class ImageContextBuilder:
                             self.semaphore.release()
                     worker.add_done_callback(release_after_decode)
                     raise
-                return bytes(data), declared
+                return bytes(data), response_type
             finally:
                 if not release_deferred:
                     self.semaphore.release()
@@ -119,7 +161,7 @@ class ImageContextBuilder:
         """Only inspect this message and its direct reply; return Responses content."""
         started = time.monotonic()
         failures = []
-        candidates = [(a, "the current message") for a in (getattr(message, "attachments", None) or [])]
+        candidates = list(islice(message_media(message, "the current message"), MAX_MEDIA_INSPECTED + 1))
         reference = getattr(message, "reference", None)
         if reference is not None:
             resolved = getattr(reference, "resolved", None)
@@ -134,19 +176,24 @@ class ImageContextBuilder:
                         failures.append("reply_unavailable")
                 if resolved is not None and hasattr(resolved, "attachments"):
                     author = getattr(getattr(resolved, "author", None), "display_name", "another user")
-                    candidates.extend((a, f"the replied-to message from {author}") for a in (resolved.attachments or []))
+                    candidates.extend(islice(message_media(resolved, f"the replied-to message from {author}"),
+                                             MAX_MEDIA_INSPECTED + 1 - len(candidates)))
                 elif resolved is not None:
                     failures.append("reply_unavailable")
-        if not candidates and not failures:
-            return None
-        if len(candidates) > MAX_ATTACHMENTS_INSPECTED:
-            failures.append("attachment_limit")
+        if len(candidates) > MAX_MEDIA_INSPECTED:
+            failures.append("media_limit")
         images = []
-        for attachment, source in candidates[:MAX_ATTACHMENTS_INSPECTED]:
-            mime = (getattr(attachment, "content_type", None) or "").split(";", 1)[0].lower().strip()
-            if mime not in MIME_FORMATS:
+        for attachment, source in candidates[:MAX_MEDIA_INSPECTED]:
+            if attachment is None:
+                continue
+            if isinstance(attachment, EmbedImage):
+                if not attachment_url_allowed(attachment.url):
+                    failures.append("invalid_url")
+                    continue
+            elif attachment_mime(attachment) not in MIME_FORMATS:
                 failures.append("unsupported_type")
-            elif len(images) < MAX_IMAGES:
+                continue
+            if len(images) < MAX_IMAGES:
                 images.append((attachment, source))
             elif "image_limit" not in failures:
                 failures.append("image_limit")
@@ -159,12 +206,14 @@ class ImageContextBuilder:
                 total += len(data)
                 count += 1
                 encoded = base64.b64encode(data).decode("ascii")
-                parts.extend([{"type": "input_text", "text": f"Image attached to {source}."},
+                parts.extend([{"type": "input_text", "text": f"Image from {source}."},
                               {"type": "input_image", "image_url": f"data:{mime};base64,{encoded}", "detail": "auto"}])
             except ImageFailure as exc:
                 failures.append(exc.category)
         if failures:
-            parts.append({"type": "input_text", "text": "Some attached or referenced images could not be provided. Do not claim to have seen them. Failure categories: " + ", ".join(failures) + "."})
+            parts.append({"type": "input_text", "text": "Some images could not be provided. Do not claim to have seen them. Failure categories: " + ", ".join(failures) + "."})
+        if not parts:
+            return None
         logging.info("Image ingestion: count=%d bytes=%d elapsed_ms=%d failures=%s", count, total,
                      int((time.monotonic() - started) * 1000), ",".join(failures) or "none")
         return {"role": "user", "content": parts}
