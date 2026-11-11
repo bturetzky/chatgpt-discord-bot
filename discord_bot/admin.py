@@ -68,6 +68,27 @@ def reactions(args):
         print("Shadow evaluation totals:", totals or "none recorded")
         output(rows, args)
 
+def discovery(args):
+    from .storage.discovery_shadow import INTERVAL, LIMITS
+
+    gid = guild(args)
+    with connect() as db:
+        runs = db.execute(
+            """SELECT * FROM discovery_runs WHERE guild_id=? ORDER BY id DESC LIMIT ?""",
+            (gid, args.limit),
+        ).fetchall()
+        candidates = db.execute(
+            """SELECT c.url, c.source_url, c.reason, c.story, c.evidence, c.draft,
+                      r.channel_id, r.started_at, c.run_id
+               FROM discovery_candidates c JOIN discovery_runs r ON r.id=c.run_id
+               WHERE c.guild_id=? ORDER BY c.run_id DESC, c.url LIMIT ?""",
+            (gid, args.limit),
+        ).fetchall()
+        output({"interval_seconds": INTERVAL, "limits_per_run": LIMITS,
+                "runs": [dict(row) for row in runs],
+                "candidates": [dict(row) for row in candidates]}, args)
+
+
 def archive(args):
     gid = guild(args)
     with connect() as db:
@@ -184,6 +205,8 @@ def main():
     reaction = commands.add_parser("reactions", help="Shadow decisions and message links")
     reaction.add_argument("--react-only", action="store_true")
     reaction.add_argument("--limit", type=int, default=30)
+    discovery_parser = commands.add_parser("discovery", help="Discovery budgets, decisions and shadow drafts")
+    discovery_parser.add_argument("--limit", type=int, default=20)
     archive_parser = commands.add_parser("archive", help="Archive coverage and backfill counts")
     memory = commands.add_parser("memories", help="Candidate inspection and statistics")
     memory.add_argument("--stats", action="store_true")
@@ -210,6 +233,8 @@ def main():
         status(args)
     elif args.command == "reactions":
         reactions(args)
+    elif args.command == "discovery":
+        discovery(args)
     elif args.command == "archive":
         archive(args)
     elif args.stats:

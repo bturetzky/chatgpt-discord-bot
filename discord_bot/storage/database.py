@@ -200,6 +200,43 @@ MIGRATIONS = (
         """CREATE INDEX memory_publication_attempts_unresolved
             ON memory_publication_attempts(status, started_at)""",
     ),
+    (
+        """CREATE TABLE discovery_runs (
+            id INTEGER PRIMARY KEY,
+            guild_id TEXT NOT NULL,
+            channel_id TEXT NOT NULL,
+            started_at INTEGER NOT NULL,
+            outcome TEXT NOT NULL DEFAULT 'interrupted',
+            searches INTEGER NOT NULL DEFAULT 0,
+            fetches INTEGER NOT NULL DEFAULT 0,
+            model_calls INTEGER NOT NULL DEFAULT 0,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0
+        )""",
+        """CREATE TABLE discovery_candidates (
+            guild_id TEXT NOT NULL,
+            url TEXT NOT NULL,
+            run_id INTEGER NOT NULL REFERENCES discovery_runs(id),
+            source_url TEXT,
+            reason TEXT NOT NULL DEFAULT 'interrupted',
+            story TEXT,
+            evidence TEXT,
+            draft TEXT,
+            PRIMARY KEY (guild_id, url)
+        )""",
+        """CREATE INDEX discovery_source ON discovery_candidates(guild_id, source_url)""",
+        """CREATE INDEX discovery_story ON discovery_candidates(guild_id, story COLLATE NOCASE)
+            WHERE reason='selected'""",
+        """CREATE INDEX discovery_recent ON discovery_candidates(guild_id, reason, run_id DESC)""",
+        """CREATE INDEX discovery_archive_recent
+            ON messages(guild_id, channel_id, created_at DESC) WHERE deleted_at IS NULL""",
+    ),
+    (
+        """ALTER TABLE discovery_runs ADD COLUMN embedding_calls INTEGER NOT NULL DEFAULT 0""",
+        """ALTER TABLE discovery_runs ADD COLUMN embedding_tokens INTEGER NOT NULL DEFAULT 0""",
+        """CREATE INDEX discovery_server_recent
+            ON messages(guild_id, created_at DESC) WHERE deleted_at IS NULL""",
+    ),
 )
 
 

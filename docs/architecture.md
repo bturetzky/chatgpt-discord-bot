@@ -41,6 +41,16 @@ The existing Pinecone store remains the retrieval source, including legacy recor
 
 Production shadow startup has been observed; longer-term decision quality and distinct-human pile-on acceptance remain pending. Live posting requires a separate implementation with durable posting budget, dedupe, cooldown, kill switch, permission/rate-limit handling and standard/custom emoji allowlisting. Do not equate shadow model output with a posted reaction.
 
+## Proactive discovery shadow
+
+An opt-in worker rotates through allowlisted text channels in one guild. Activity detected before reservation defers the channel without consuming the six-hour interval. If all available channels are active, the worker records a deferral. Activity detected after discovery work begins can consume the interval because the reservation is already persisted. The worker suppresses selection when that happens.
+
+Topic selection samples up to 44 archived messages across four age bands covering the previous year, plus eight accepted SQLite memory summaries from the channel. It looks for a public topic supported by recurring discussion in the last 30 days or evidence of a durable shared interest in accepted memory. Configured search strings and channel metadata are hints. The topic request instructs the model to omit private details, and the worker validates the query format before sending it to Brave. Search queries and private context are not persisted in discovery rows.
+
+Each reserved six-hour window permits one Brave search, two page reads, four tool-free model calls including topic selection, and one embedding batch. The worker can fully review one candidate per window, with a second result available if the first fails an early gate. SDK retries are disabled. Drafting receives only the fetched public source. A separate reviewer compares the draft with source evidence, FTS results, up to eight semantically ranked archive excerpts, and up to 60 prior suggestions. Phase 1 semantic novelty detection embeds a bounded sample of channel and server messages per review. This accepted Phase 1 limit can miss paraphrases outside the sample. Comprehensive historical vector search is outside Phase 1 scope. Similarity shortlists evidence for review and cannot reject a candidate on its own.
+
+SQLite stores canonical URL and exact selected story identities, categorical decisions, selected public evidence, drafts and attempted provider usage. The worker sends nothing to Discord and writes no memories. Interrupted attempts consume their reservation, and previously attempted canonical URLs are skipped across restarts. See [operations](operations.md#discovery-shadow-dev-acceptance).
+
 ## Operational boundaries
 
 This is one small trusted production guild and a separate dev environment. No new service, database cluster or generalized tenant authorization is planned without a demonstrated need. External content and Discord messages are untrusted model input. Logs and documentation must not contain raw private memories, message bodies, tokens or real guild IDs. Use [operations](operations.md) for safe diagnostics and [deployment](deployment.md) for release gates.
