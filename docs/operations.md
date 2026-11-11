@@ -5,14 +5,14 @@ Use the existing bot container and persistent SQLite database; there is no separ
 ## Operator CLI
 
 ```bash
-kubectl -n exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin --help
-kubectl -n exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin status
-kubectl -n exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin reactions
-kubectl -n exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin reactions --react-only
-kubectl -n exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin archive
-kubectl -n exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin memories --stats
-kubectl -n exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin memories --limit 20
-kubectl -n exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin memories --verify-pinecone
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin --help
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin status
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin reactions
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin reactions --react-only
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin archive
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin memories --stats
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin memories --limit 20
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin memories --verify-pinecone
 ```
 
 Global `--json` and `--guild-id` options precede the subcommand. Inspection commands are read-only; `--verify-pinecone` makes read-only remote fetches. SQLite `accepted` does not by itself prove the vector still exists; a `not_found` result requires investigation of vector identity, namespace and deduplication, not automatic deletion. The previously observed discrepancy was operator-verified and is not an open acceptance item.
