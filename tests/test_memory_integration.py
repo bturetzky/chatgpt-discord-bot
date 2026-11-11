@@ -1,11 +1,11 @@
 """Memory integration regressions using mocked OpenAI/Pinecone clients."""
-import asyncio
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from discord_bot.functions.memory_function import WeatherLookup as StoreMemory
 from discord_bot.handlers.vector_handler import VectorHandler
 from discord_bot.handlers.vectore_store import VectorStore
+from discord_bot.memory_selection import retrieve_and_select
 from tests.test_reliability import make_handler, make_message
 
 
@@ -15,12 +15,11 @@ class VectorMemoryTests(unittest.TestCase):
         handler.client = MagicMock()
         handler.client.embeddings.create.return_value.data = [MagicMock(embedding=[0.1, 0.2])]
         handler.vector_store = MagicMock()
-        handler.vector_store.fetch_context.return_value = [{"summary": "likes gardening"}]
-        self.assertEqual(handler.get_relevant_contexts("question"), [{"summary": "likes gardening"}])
+        retrieve_and_select(handler, "question", [])
         handler.client.embeddings.create.assert_called_once_with(
             input=["question"], model="text-embedding-ada-002"
         )
-        handler.vector_store.fetch_context.assert_called_once_with([0.1, 0.2], limit=None)
+        handler.vector_store.fetch_context.assert_called_once_with([0.1, 0.2], limit=16, diagnostics=[])
 
     def test_store_embeds_and_upserts_summary(self):
         handler = object.__new__(VectorHandler)
@@ -65,41 +64,60 @@ class MemoryToolTests(unittest.IsolatedAsyncioTestCase):
 
 
 class DiscordMemoryIntegrationTests(unittest.IsolatedAsyncioTestCase):
-    async def test_retrieved_memory_precedes_history_in_model_input(self):
+    def configure_matches(self, handler, semantic, relationship=()):
+        store = VectorStore("fake-key")
+        store.index = MagicMock()
+        handler.vector_handler.vector_store = store
+        store.index.query.side_effect = [{"matches": semantic}, {"matches": relationship}]
+        return store
+
+    async def test_retrieved_memory_precedes_history_in_single_section(self):
         handler, message = make_handler(), make_message()
-        handler.vector_handler.get_relevant_contexts.return_value = [
-            "likes gardening", "likes sci-fi"
-        ]
-        handler.vector_handler.get_relationship_contexts.return_value = []
+        self.configure_matches(handler, [
+            {"metadata": {"summary": "likes gardening"}},
+            {"metadata": {"summary": "likes sci-fi"}},
+        ])
         with patch("discord_bot.handlers.discord_handler.asyncio.sleep", new_callable=AsyncMock):
             await handler.process_message(message)
         history = handler.chatgpt_handler.get_response.await_args.args[0]
-        self.assertEqual(len(history), 3)
-        self.assertTrue(all(item["role"] == "system" for item in history[:2]))
-        self.assertIn("likes gardening", str(history[:2]))
-        self.assertIn("likes sci-fi", str(history[:2]))
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[0]["role"], "system")
+        self.assertIn("likes gardening", history[0]["content"])
+        self.assertIn("likes sci-fi", history[0]["content"])
         self.assertEqual(history[-1], {"role": "user", "content": "hi"})
 
-    async def test_relationship_memories_are_prioritized_and_deduplicated(self):
+    async def test_relationship_memories_are_participant_filtered_and_deduplicated(self):
         handler, message = make_handler(), make_message()
-        handler.vector_handler.get_relevant_contexts.return_value = ["shared joke", "likes gardening"]
-        handler.vector_handler.get_relationship_contexts.return_value = ["shared joke"]
+        message.content = "What happened at the last game night?"
+        relationship = {"metadata": {
+            "summary": "shared joke", "memory_type": "relationship", "participant_ids": ["123"],
+        }}
+        other = {"metadata": {
+            "summary": "other participants' tradition", "memory_type": "relationship",
+            "participant_ids": ["456"],
+        }}
+        handler.get_message_history.return_value = [
+            {"role": "user", "content": "friend (Discord ID 123): Discord ID 456"},
+        ]
+        store = self.configure_matches(handler, [relationship, other], [relationship])
         with patch("discord_bot.handlers.discord_handler.asyncio.sleep", new_callable=AsyncMock):
             await handler.process_message(message)
         history = handler.chatgpt_handler.get_response.await_args.args[0]
-        self.assertEqual(len(history), 3)
-        self.assertEqual(sum("shared joke" in item["content"] for item in history), 1)
-        self.assertIn("shared joke", history[0]["content"])
-        handler.vector_handler.get_relationship_contexts.assert_called_once_with(["123"], 4)
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[0]["content"].count("shared joke"), 1)
+        self.assertNotIn("other participants", history[0]["content"])
+        query = store.index.query.call_args.kwargs
+        self.assertEqual(query["top_k"], 4)
+        self.assertEqual(query["filter"]["$and"][1]["participant_ids"]["$in"], ["123"])
 
     async def test_empty_memory_keeps_history_intact(self):
         handler, message = make_handler(), make_message()
-        handler.vector_handler.get_relevant_contexts.return_value = []
-        handler.vector_handler.get_relationship_contexts.return_value = []
+        self.configure_matches(handler, [])
         with patch("discord_bot.handlers.discord_handler.asyncio.sleep", new_callable=AsyncMock):
             await handler.process_message(message)
         history = handler.chatgpt_handler.get_response.await_args.args[0]
         self.assertEqual(history, [{"role": "user", "content": "hi"}])
+        handler.vector_handler.client.responses.create.assert_not_called()
 
 
 if __name__ == "__main__":

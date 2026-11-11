@@ -70,8 +70,12 @@ Additional runtime configuration (all optional unless noted):
 | `REACTION_SHADOW_TEST_PREFIX` | **Dev-only** deterministic acceptance prefix; unset in normal operation and production. |
 | `OPENAI_MODEL` | Main Responses model override; also used by shadow mode when its override is absent. |
 | `DISCORD_CONTEXT_LIMIT` | Recent Discord context message limit (default 30). |
-| `SEMANTIC_MEMORY_LIMIT` | Semantic memory retrieval limit (default 8). |
-| `RELATIONSHIP_MEMORY_LIMIT` | Relationship memory retrieval limit (default 4). |
+| `MEMORY_SEMANTIC_CANDIDATES` | Semantic candidate pool, default 16, range 1–50. |
+| `MEMORY_RELATIONSHIP_CANDIDATES` | Participant-filtered relationship pool, default 4, range 0–20. Zero disables relationship selection from both pools. |
+| `MEMORY_SEMANTIC_SELECTED` | Semantic selection cap, default 6, range 0–6. |
+| `MEMORY_RELATIONSHIP_SELECTED` | Relationship selection cap, default 2, range 0–2. |
+| `MEMORY_CONTEXT_MAX_CHARS` | Full rendered memory section budget, default 2400, range 0–12000. |
+| `MEMORY_MIN_SIMILARITY` | Optional finite Pinecone score floor. Unset by default, so scores do not exclude candidates. |
 | `OPENAI_INPUT_USD_PER_1M` | Optional model input price for usage estimates. |
 | `OPENAI_CACHED_INPUT_USD_PER_1M` | Optional cached input price for usage estimates. |
 | `OPENAI_OUTPUT_USD_PER_1M` | Optional output price for usage estimates. |
@@ -79,6 +83,8 @@ Additional runtime configuration (all optional unless noted):
 The Pinecone index name (`discord-bot-context2`) remains hardcoded; not all configuration is environment-driven. See the [reaction shadow runbook](docs/reaction-shadow-runbook.md) and [engineering roadmap](docs/engineering-roadmap.md) for behavior, limitations, and remaining work.
 
 **Never commit API keys or Discord tokens.** For Kubernetes, supply credentials via a Secret and `envFrom`; the manifests live in the separate GitOps repository.
+
+Retrieval uses Pinecone ordering and the existing embedding model. Invalid retrieval settings skip memory context and emit a sanitized warning. See the [memory retrieval design](docs/memory-retrieval-enhancement-design.md) for calibration, CLI usage, and image rollout.
 
 ## Running locally
 

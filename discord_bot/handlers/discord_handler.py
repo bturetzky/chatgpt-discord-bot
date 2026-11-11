@@ -1,4 +1,7 @@
-import discord, asyncio, logging, os, re
+import discord, asyncio, logging, os
+from collections import Counter
+
+from .. import memory_selection
 from .chatgpt_handler import ChatGPTHandler
 from .vector_handler import VectorHandler
 from .image_context import ImageContextBuilder
@@ -8,7 +11,6 @@ from ..storage.autonomous_memory import run_forever
 from .reaction_shadow import ReactionShadow
 
 CONTEXT_LIMIT = int(os.getenv("DISCORD_CONTEXT_LIMIT", "30"))
-RELATIONSHIP_MEMORY_LIMIT = int(os.getenv("RELATIONSHIP_MEMORY_LIMIT", "4"))
 
 class DiscordHandler:
     def __init__(self, discord_token, openai_key, pinecone_apikey, archive=None):
@@ -222,58 +224,38 @@ class DiscordHandler:
         if self.client.user.mentioned_in(message) and message.mention_everyone is False or message.guild is None:
             # Do all the work here
             logging.info('Processing Discord message: guild=%s author_id=%s', getattr(message.guild, 'id', None), message.author.id)
-            author_id = str(message.author.id)  # Get the author's ID
+            author_id = str(message.author.id)
+            participant_ids = [author_id]
             # Tweak the limit here to get more or less context
             try:
-                messages = await self.get_message_history(channel, limit=CONTEXT_LIMIT)
+                messages = await self.get_message_history(
+                    channel, limit=CONTEXT_LIMIT, participant_ids=participant_ids,
+                )
             except Exception:
                 logging.exception("Unable to retrieve Discord history; using current message")
+                participant_ids = [author_id]
                 messages = [{"role": "user", "content": f"{message.author.display_name} (Discord ID {message.author.id}): {message.content}"}]
 
             logging.debug('Retrieving memories')
-            memory_query = self.build_memory_query(messages)
-            participant_ids = [author_id]
-            for item in reversed(messages):
-                if item.get("role") != "user":
-                    continue
-                for match in re.findall(r"Discord ID (\d+)", item.get("content", "")):
-                    if match not in participant_ids and len(participant_ids) < 3:
-                        participant_ids.append(match)
-            semantic_diagnostics = [] if logging.getLogger().isEnabledFor(logging.DEBUG) else None
-            relationship_diagnostics = [] if logging.getLogger().isEnabledFor(logging.DEBUG) else None
+            memory_query = self.build_memory_query(messages) if message.content.strip() else ""
             try:
-                memories = await asyncio.to_thread(
-                    self.vector_handler.get_relevant_contexts, memory_query, **({'diagnostics': semantic_diagnostics} if semantic_diagnostics is not None else {})
-                ) or []
-            except Exception:
-                logging.exception("Semantic memory lookup failed; continuing")
-                memories = []
-            try:
-                relationships = await asyncio.to_thread(
-                    self.vector_handler.get_relationship_contexts,
-                    participant_ids, RELATIONSHIP_MEMORY_LIMIT, **({'diagnostics': relationship_diagnostics} if relationship_diagnostics is not None else {})
-                ) or []
-            except Exception:
-                logging.exception("Relationship memory lookup failed; continuing")
-                relationships = []
-            # A retrieval adapter must return a concrete list of memory text.
-            # Ignore malformed responses rather than corrupting the chat context.
-            memories = memories if isinstance(memories, list) else []
-            relationships = relationships if isinstance(relationships, list) else []
-            unique_memories = list(dict.fromkeys(
-                item for item in relationships + memories if isinstance(item, str) and item.strip()
-            ))
-            for source, matches in (("semantic", semantic_diagnostics), ("relationship", relationship_diagnostics)):
-                if matches is not None:
-                    for rank, match in enumerate(matches, 1):
-                        logging.debug("Memory match: source=%s rank=%d score=%s type=%s",
-                                      source, rank, match["score"], match["memory_type"])
-            for memory in reversed(unique_memories):
-                messages.insert(0, {"role": "system", "content": f"Memory (possibly outdated): {memory}"})
-            logging.info(
-                'Memory retrieval completed: semantic=%d relationship=%d injected=%d injected_chars=%d',
-                len(memories), len(relationships), len(unique_memories), sum(len(s) for s in unique_memories)
-            )
+                context, decisions = await asyncio.to_thread(
+                    memory_selection.retrieve_and_select, self.vector_handler,
+                    memory_query, participant_ids,
+                )
+            except Exception as exc:
+                logging.warning("Memory retrieval failed: error_type=%s", type(exc).__name__)
+            else:
+                if context:
+                    messages.insert(0, {"role": "system", "content": context})
+                counts = Counter(item["reason"] for item in decisions)
+                selected = counts.pop("selected", 0)
+                logging.info(
+                    "Memory retrieval: retrieved=%d selected=%d rejected=%d reasons=%s context_chars=%d",
+                    len(decisions), selected, len(decisions) - selected, dict(counts), len(context),
+                )
+                for item in decisions:
+                    logging.debug("Memory selection: %s", item)
 
             if getattr(message, "attachments", None) or getattr(message, "reference", None):
                 try:
@@ -337,7 +319,7 @@ class DiscordHandler:
             remaining -= len(excerpt)
         return "\n".join(reversed(selected))
 
-    async def get_message_history(self, channel, limit=3):
+    async def get_message_history(self, channel, limit=3, *, participant_ids=None):
         message_history = []
         i = 0
         logging.debug('Retrieving Discord message history')
@@ -349,6 +331,10 @@ class DiscordHandler:
                 "content": (f"{message.author.display_name} (Discord ID {message.author.id}): {message.content}"
                             if message.author != self.client.user else f"{message.author.mention}: {message.content}")
             }
+            if participant_ids is not None and len(participant_ids) < 3 and not message.author.bot:
+                participant_id = str(message.author.id)
+                if participant_id not in participant_ids:
+                    participant_ids.append(participant_id)
             message_history.append(message_obj)
             i += 1
 
