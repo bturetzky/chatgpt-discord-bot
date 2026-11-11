@@ -57,19 +57,17 @@ With `REACTION_SHADOW_ENABLED=true` and a matching guild ID, the evaluator obser
 
 ## Discovery shadow dev acceptance
 
-After the application rolls out to dev, configure `DISCOVERY_SHADOW_CHANNELS` through dev GitOps for test text channels with SQLite archive coverage and Brave access. Start with JSON `null` for channel hints so topic selection relies on archived discussion and accepted memories. The bot needs to see each configured channel. From the dev bot container, inspect the persisted runs and candidates with the dev guild ID:
+After the application rolls out to dev, set `DISCOVERY_SHADOW_ENABLED=true` in dev GitOps. The bot uses the existing SQLite archive and Brave credentials. From the dev bot container, inspect runs and candidates across all guilds. Add `--guild-id` before the subcommand to filter to one guild.
 
 ```bash
-python -m discord_bot.admin --guild-id "$DEV_GUILD_ID" --json discovery --limit 20
+python -m discord_bot.admin --json discovery --limit 20
 ```
 
-The worker rotates among quiet channels, reserving one attempt every six hours. When every available channel is active before reservation, the run outcome is `deferred_active`. This consumes none of the six-hour interval, and the worker checks again within a minute. A run outcome of `deferred_after_work` means activity was detected after discovery work began. The existing reservation still counts toward the six-hour interval. A restart does not reset a spent window. Inspect the outcome, channel, search, fetch, model and embedding attempt counts, reported tokens, and any candidate URL, reason, evidence and draft.
+The worker checks channel eligibility each minute and reserves at most one attempt per six hours across the bot. If all available channels are active before reservation, `deferred_active` consumes no interval. A `deferred_after_work` run still counts toward the interval. Restarting preserves the reservation and rotation cursor.
 
-1. In a dev test channel, discuss a game or project with a recent public announcement across several substantive messages. Leave it quiet for at least 30 minutes before its turn. Look for a selected opener whose link and public excerpt support its claims. Confirm Discord receives no unsolicited message or reaction.
-2. Before a later turn, share a result URL with a tracking query or discuss the same announcement in your own words. Expect `archived_url` or `same_story` when the source appears and the prior discussion is found. Check that a substantive later development can still qualify.
-3. Keep a test channel active during its turn or configure a game query for a channel whose archived discussion is unrelated. Expect a preflight deferral with zero provider calls if every channel is active. When a channel becomes quiet, expect a run without waiting for a new six-hour window. Weak archive context or an unrelated candidate should produce no draft. An unreadable source should yield `source_unavailable` without a draft.
-
-Record candidate quality and absence of unsolicited activity before accepting Phase 1. Remove the temporary dev configuration after the check.
+1. Start dev with the flag and an eligible quiet text channel. On an empty archive, expect `weak_context` and zero provider calls. Restart within six hours and check that there is no new reservation, including for other guilds.
+2. Add a standard text channel or grant the bot View Channel and Read Message History in an existing channel. Confirm it can enter rotation without restarting. Revoke either permission and confirm future runs skip it. An active channel should be skipped in favor of a quiet eligible one.
+3. In an eligible dev channel, discuss a game or project with a recent public announcement across several substantive messages, then let the channel stay quiet for 30 minutes. Inspect the channel, evidence, reason, usage and any proposed draft at its turn. Confirm Discord receives no unsolicited message or reaction.
 
 ## Dev Discord smoke test
 

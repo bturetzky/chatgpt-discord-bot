@@ -1,14 +1,20 @@
 from datetime import datetime, timezone
+from argparse import Namespace
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import discord
+
+from discord_bot import admin
+from discord_bot.handlers.discord_handler import DiscordHandler
 
 from discord_bot.storage.database import Database
 from discord_bot.storage.discovery_shadow import (
-    DiscoveryShadow, INTERVAL, canonical_url, parse_channels,
+    DiscoveryShadow, INTERVAL, canonical_url,
 )
 from discord_bot.storage.message_archive import utc_iso
 
@@ -20,12 +26,7 @@ DRAFT = "Co-op missions sound like the right next step for Lunar Colony. Who's i
 
 
 class ConfigTests(TestCase):
-    def test_allowlist_and_canonical_identity(self):
-        self.assertEqual(parse_channels('{"2":"Lunar Colony updates"}'), {"2": "Lunar Colony updates"})
-        self.assertEqual(parse_channels('{"2":null}'), {"2": None})
-        for invalid in ('[]', '{}', '{"other":"game"}', '{"2":4}'):
-            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
-                parse_channels(invalid)
+    def test_canonical_identity(self):
         self.assertEqual(canonical_url("http://EXAMPLE.org/releases/lunar/?utm_source=x#top"), URL)
         self.assertNotEqual(canonical_url(URL + "?edition=deluxe"), URL)
         self.assertIsNone(canonical_url("https://user:password@example.org/"))
@@ -43,8 +44,7 @@ class ShadowTests(IsolatedAsyncioTestCase):
         self.reader = SimpleNamespace(execute=AsyncMock())
         self.model = AsyncMock(return_value=self.response(TOPIC))
         self.embed = AsyncMock(side_effect=self.embeddings)
-        self.channels = {"2": None}
-        self.hints = {"2": {"name": "game-chat", "topic": "Lunar Colony"}}
+        self.hints = {("1", "2"): {"name": "game-chat", "topic": "Lunar Colony"}}
         self.results(URL)
         self.source(URL)
         for index in range(3):
@@ -56,17 +56,17 @@ class ShadowTests(IsolatedAsyncioTestCase):
 
     def worker(self):
         return DiscoveryShadow(
-            self.db, "1", self.channels, SimpleNamespace(
+            self.db, SimpleNamespace(
                 responses=SimpleNamespace(create=self.model),
                 embeddings=SimpleNamespace(create=self.embed),
             ), "test-model", "9", search=self.search, reader=self.reader, clock=lambda: self.now,
         )
 
-    def message(self, index, content, timestamp):
+    def message(self, index, content, timestamp, *, guild="1", channel="2"):
         self.db.execute(
             """INSERT INTO messages(guild_id, channel_id, message_id, author_id, content, created_at)
-               VALUES ('1', '2', ?, '3', ?, ?)""",
-            (str(index), content, utc_iso(datetime.fromtimestamp(timestamp, timezone.utc))),
+               VALUES (?, ?, ?, '3', ?, ?)""",
+            (guild, channel, str(index), content, utc_iso(datetime.fromtimestamp(timestamp, timezone.utc))),
         )
 
     def results(self, *urls):
@@ -232,14 +232,13 @@ class ShadowTests(IsolatedAsyncioTestCase):
             "SELECT draft FROM discovery_candidates WHERE url=?", (URL + "-3",),
         ).fetchone()[0])
 
-    async def test_dynamic_topic_uses_older_context_and_treats_config_as_hint(self):
-        self.channels = {"2": "Unrelated Space Kart news"}
+    async def test_dynamic_topic_uses_older_context_and_channel_metadata(self):
         self.message(8, "Lunar Colony co-op nights have been a regular event", self.now - 80 * 86400)
         self.responses({})
         await self.worker().run_once(self.hints)
         context = json.loads(self.model.call_args_list[0].kwargs["input"])
         self.assertIn("regular event", context["older"][0][0])
-        self.assertEqual(context["search_hint"], "Unrelated Space Kart news")
+        self.assertEqual(context["channel_hints"], self.hints["1", "2"])
         self.assertEqual(self.search.execute.call_args.args[0]["query"], TOPIC["query"])
 
     async def test_stale_discussion_alone_is_insufficient_but_accepted_memory_supports_topic(self):
@@ -269,8 +268,8 @@ class ShadowTests(IsolatedAsyncioTestCase):
 
     async def test_semantic_shortlist_supplies_paraphrased_cross_channel_evidence(self):
         paraphrase = "Squads can tackle the next add-on's objectives together."
-        self.message(8, paraphrase, self.now - 7200)
-        self.db.execute("UPDATE messages SET channel_id='7' WHERE message_id='8'")
+        self.message(8, paraphrase, self.now - 7200, channel="7")
+        self.hints["1", "7"] = {"name": "another-channel"}
         self.responses({"story": STORY, "quote": QUOTE, "draft": DRAFT}, {"reason": "same_story"})
         await self.worker().run_once(self.hints)
         review = json.loads(self.model.call_args.kwargs["input"])
@@ -283,9 +282,8 @@ class ShadowTests(IsolatedAsyncioTestCase):
         ).fetchone(), (1, 35))
 
     async def test_quiet_channel_can_use_active_channels_turn(self):
-        self.channels = {"2": None, "5": None}
         self.message(4, "Active discussion", self.now)
-        await self.worker().run_once({**self.hints, "5": {"name": "quiet"}})
+        await self.worker().run_once({**self.hints, ("3", "5"): {"name": "quiet"}})
         self.assertEqual(self.db.execute(
             "SELECT channel_id, outcome FROM discovery_runs",
         ).fetchall(), [("5", "weak_context")])
@@ -302,10 +300,114 @@ class ShadowTests(IsolatedAsyncioTestCase):
         ).fetchone(), (1, 2))
 
     async def test_hint_cannot_supply_missing_topic_evidence(self):
-        self.channels = {"2": "Unrelated Space Kart news"}
-        self.responses(topic={"query": self.channels["2"], "recent": [0, 0]})
+        self.responses(topic={"query": "Unrelated Space Kart news", "recent": [0, 0]})
         await self.worker().run_once(self.hints)
         self.search.execute.assert_not_awaited()
         self.assertEqual(self.db.execute(
             "SELECT outcome FROM discovery_runs",
         ).fetchone(), ("weak_context",))
+
+    async def test_global_interval_and_rotation_survive_restart_and_channel_removal(self):
+        self.db.execute("DELETE FROM messages")
+        await self.worker().run_once({})
+        self.assertEqual(self.db.execute("SELECT count(*) FROM discovery_runs").fetchone()[0], 0)
+        # Seed a reservation in the format written by the deployed per-guild scheduler.
+        self.db.execute(
+            "INSERT INTO discovery_runs(guild_id, channel_id, started_at) VALUES ('1', '2', ?)",
+            (self.now,),
+        )
+        channels = {("3", "6"): {}, ("3", "5"): {}, ("1", "1"): {}}
+        self.database.close()
+        self.database.open()
+        self.now += INTERVAL - 1
+        await self.worker().run_once(channels)
+        self.assertEqual(self.db.execute("SELECT count(*) FROM discovery_runs").fetchone()[0], 1)
+        self.now += 1
+        for _ in range(4):
+            await self.worker().run_once(channels)
+            self.now += INTERVAL
+        self.assertEqual(self.db.execute(
+            "SELECT guild_id, channel_id, outcome FROM discovery_runs WHERE id>1 ORDER BY id",
+        ).fetchall(), [
+            ("3", "5", "weak_context"), ("3", "6", "weak_context"),
+            ("1", "1", "weak_context"), ("3", "5", "weak_context"),
+        ])
+        self.search.execute.assert_not_awaited()
+        self.reader.execute.assert_not_awaited()
+        self.model.assert_not_awaited()
+        self.embed.assert_not_awaited()
+
+    async def test_review_and_canonical_url_dedupe_are_guild_scoped(self):
+        self.message(8, "Lunar Colony hidden discussion", self.now - 7200, channel="7")
+        self.message(9, "Lunar Colony second guild private discussion", self.now - 7200, guild="3", channel="5")
+        self.message(10, "Lunar Colony strategies", self.now - 7200, guild="3", channel="5")
+        self.hints["3", "5"] = {"name": "other-guild"}
+        proposal = {"story": STORY, "quote": QUOTE, "draft": DRAFT}
+        self.responses(proposal, {"reason": "selected"})
+        await self.worker().run_once(self.hints)
+        first_review = self.model.call_args.kwargs["input"]
+        self.assertNotIn("second guild private", first_review)
+        self.assertNotIn("hidden discussion", first_review)
+        self.assertNotIn("hidden discussion", str(self.embed.call_args.kwargs["input"]))
+        self.now += INTERVAL
+        self.responses(proposal, {"reason": "selected"})
+        await self.worker().run_once(self.hints)
+        second_review = json.loads(self.model.call_args.kwargs["input"])
+        self.assertEqual(second_review["prior_suggestions"], [])
+        self.assertNotIn("base building", str(second_review))
+        self.assertEqual(self.db.execute(
+            "SELECT guild_id, url, reason FROM discovery_candidates ORDER BY run_id",
+        ).fetchall(), [("1", URL, "selected"), ("3", URL, "selected")])
+        with patch.dict("os.environ", {"DISCORD_SQLITE_PATH": self.path}), patch.object(admin, "output") as output:
+            admin.discovery(Namespace(guild_id=None, limit=20))
+            self.assertEqual({row["guild_id"] for row in output.call_args.args[0]["candidates"]}, {"1", "3"})
+            admin.discovery(Namespace(guild_id="3", limit=20))
+            self.assertEqual({row["guild_id"] for row in output.call_args.args[0]["candidates"]}, {"3"})
+
+
+class DiscoveryGatewayTests(IsolatedAsyncioTestCase):
+    @staticmethod
+    def channel(cid, *, kind=discord.ChannelType.text, view=True, history=True):
+        permissions = SimpleNamespace(view_channel=view, read_message_history=history)
+        return SimpleNamespace(id=cid, type=kind, name="dev-chat", topic=None,
+                               permissions_for=lambda member: permissions)
+
+    async def test_startup_with_only_flag_starts_one_worker_and_refreshes_eligibility(self):
+        allowed = self.channel(2)
+        hidden = self.channel(4, view=False)
+        history_denied = self.channel(5, history=False)
+        announcement = self.channel(6, kind=discord.ChannelType.news)
+        first = SimpleNamespace(id=1, me=object(), unavailable=False,
+                                text_channels=[allowed, hidden, history_denied, announcement])
+        second = SimpleNamespace(id=3, me=object(), unavailable=False, text_channels=[self.channel(7)])
+        unavailable = SimpleNamespace(id=8, me=object(), unavailable=True, text_channels=[self.channel(9)])
+        client = MagicMock(user=SimpleNamespace(id=10), guilds=[first, second, unavailable])
+        client.event.side_effect = lambda callback: callback
+        client.close = AsyncMock()
+        archive = SimpleNamespace(db=object())
+        with patch.dict("os.environ", {}, clear=True), \
+             patch("discord_bot.handlers.discord_handler.discord.Client", return_value=client), \
+             patch("discord_bot.handlers.discord_handler.VectorHandler") as vector, \
+             patch("discord_bot.handlers.discord_handler.ChatGPTHandler"), \
+             patch("discord_bot.handlers.discord_handler.reconcile_recent", new_callable=AsyncMock), \
+             patch.object(DiscoveryShadow, "run_configured", new_callable=AsyncMock) as run:
+            vector.return_value.close = AsyncMock()
+            handler = DiscordHandler("test", "test", "test", archive=archive)
+            self.addAsyncCleanup(handler.shutdown)
+            ready = client.event.call_args_list[0].args[0]
+            await ready()
+            self.assertIsNone(handler._discovery_task)
+            with patch.dict("os.environ", {"DISCOVERY_SHADOW_ENABLED": "true"}):
+                await ready()
+                await ready()
+            await handler._discovery_task
+            run.assert_awaited_once()
+            self.assertEqual(run.call_args.args[:3], (archive.db, "test", "10"))
+            channel_hints = run.call_args.args[3]
+            self.assertEqual(set(channel_hints()), {("1", "2"), ("3", "7")})
+            first.text_channels.remove(allowed)
+            history_denied.permissions_for(first.me).read_message_history = True
+            second.text_channels.append(self.channel(11))
+            self.assertEqual(set(channel_hints()), {("1", "5"), ("3", "7"), ("3", "11")})
+            client.is_ready.return_value = False
+            self.assertEqual(channel_hints(), {})

@@ -17,11 +17,11 @@ This is the **only** list of unfinished features, actionable technical debt and 
 
 ## Proactive external discovery and conversation starters
 
-**Status:** Phase 1 code and automated coverage are ready for review. Dev deployment and operator acceptance are pending. Phase 2 remains planned and requires separate approval. This is distinct from reaction shadow and autonomous memory extraction. The goal is for the bot to occasionally find a worthwhile external article, game announcement, release, news development or interesting link, and open a natural conversation in a relevant Discord channel with a brief, grounded, opinionated take. **External discovery first; internal channel history and memories inform relevance and novelty.** Unsolicited callbacks based solely on old conversations are out of scope.
+**Status:** Phase 1 shadow mode was deployed. The automatic channel selection and shared schedule update awaits dev rollout and operator acceptance. Phase 2 remains planned and requires separate approval. This is distinct from reaction shadow and autonomous memory extraction. The goal is for the bot to occasionally find a worthwhile external article, game announcement, release, news development or interesting link, and open a natural conversation in a relevant Discord channel with a brief, grounded, opinionated take. **External discovery first; internal channel history and memories inform relevance and novelty.** Unsolicited callbacks based solely on old conversations are out of scope.
 
 ### Behavior and selection contract
 
-- **Channel interests:** Start with an explicit channel allowlist and channel name/topic as weak hints. Refine interests from relevant archived channel discussion and existing durable server memories, including shared interests and context. Do not assume a generic channel name captures its actual interests. Do not persist private raw conversations or memory text in candidate logs.
+- **Channel interests:** Phase 1 considers eligible text channels automatically and uses channel names and topics as weak hints. Refine interests from relevant archived channel discussion and existing durable server memories, including shared interests and context. Do not assume a generic channel name captures its actual interests. Do not persist private raw conversations or memory text in candidate logs.
 - **Discovery:** Reuse existing bounded news/search and webpage-reading capabilities where suitable; fetch and verify the actual source before drafting claims. Prefer substantive, timely developments over generic headlines or recycled trending lists. If source access fails or facts cannot be supported, reject the candidate. Treat all external content as untrusted.
 - **Novelty:** Check canonicalized URLs and persistent prior suggestions/posts, plus archived links and semantically similar prior discussions. Distinguish *the same story under a new URL* from a genuinely new development on an existing topic. Embedding similarity may shortlist related material, but must not alone decide novelty; use bounded evidence-aware comparison for ambiguous cases. Never post the same underlying story twice, including after restarts.
 - **Decision:** Require strong channel relevance, meaningful new information, source quality, and a reason to interrupt. The bot should usually choose silence. Avoid interrupting an active conversation; prefer an appropriate quiet window without manufacturing activity. No posting quota to fill.
@@ -34,11 +34,11 @@ This is the **only** list of unfinished features, actionable technical debt and 
 Use the [dev acceptance procedure](operations.md#discovery-shadow-dev-acceptance) to assess the shadow worker and its persisted decisions.
 
 **Phase 1 acceptance:**
-1. Relevant new, accessible source yields a short, source-linked candidate for an appropriate allowlisted channel; unrelated channel/source is rejected.
+1. Relevant new, accessible source yields a short, source-linked candidate for an appropriate eligible text channel; unrelated channel/source is rejected.
 2. Identical/canonicalized links and different URLs describing the same already-discussed story are rejected, including after restart; a *meaningfully new development* about that topic may qualify.
-3. Discovery derives a public topic from archived conversation or durable interests. Channel metadata and configured query hints do not override contrary discussion context. Empty or stale-only context is handled conservatively. Active channels defer without spending an unused discovery window.
+3. Discovery derives a public topic from archived conversation or durable interests. Channel metadata does not override contrary discussion context. Empty or stale-only context is handled conservatively. Active channels defer without spending an unused discovery window.
 4. Missing/unreadable sources, misleading article claims, exhausted API budgets and provider failures fail closed without fabricated drafts or unbounded retries.
-5. SQLite survives restart without replaying accepted/rejected unchanged work; shadow never sends Discord messages. Tests cover idempotency, budget limits and negative cases.
+5. SQLite survives restart without replaying accepted/rejected unchanged work; shadow never sends Discord messages. Verify that one durable six-hour budget applies across all joined guilds.
 6. Operator can inspect enough bounded evidence to judge relevance, novelty, tone and cost before approving Phase 2. Include dev acceptance instructions; do not claim human verification from CI.
 
 ### Phase 2 — guarded live posting (separate approval and PR)
