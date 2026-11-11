@@ -20,8 +20,8 @@ MAX_TOTAL_BYTES = 8 * 1024 * 1024
 MAX_PIXELS = 20_000_000
 DOWNLOAD_TIMEOUT = 10
 REPLY_TIMEOUT = 5
-MIME_FORMATS = {"image/png": "PNG", "image/jpeg": "JPEG", "image/webp": "WEBP"}
-IMAGE_EXTENSIONS = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+FORMAT_MIME = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 GENERIC_TYPES = {"", "application/octet-stream", "binary/octet-stream"}
 CDN_HOSTS = {"cdn.discordapp.com", "media.discordapp.net"}
 
@@ -38,10 +38,6 @@ class EmbedImage:
 
 def normalized_mime(value):
     return (value or "").split(";", 1)[0].lower().strip()
-
-
-def attachment_extension_mime(attachment):
-    return IMAGE_EXTENSIONS.get(PurePath(getattr(attachment, "filename", "") or "").suffix.lower())
 
 
 def attachment_url_allowed(url):
@@ -69,21 +65,17 @@ def message_media(message, source):
         yield EmbedImage(url) if url else None, source
 
 
-def validate_image(data, declared_type, response_type):
-    """Fully decode one supported still image within a pixel budget."""
-    if declared_type not in MIME_FORMATS or response_type != declared_type:
-        raise ImageFailure("unsupported_type")
+def validate_image(data):
+    """Return the MIME type of a verified, fully decoded supported still image."""
     try:
-        with Image.open(io.BytesIO(data)) as image:
-            if image.format != MIME_FORMATS[declared_type]:
-                raise ImageFailure("type_mismatch")
+        with Image.open(io.BytesIO(data), formats=list(FORMAT_MIME)) as image:
+            mime = FORMAT_MIME[image.format]
             if image.width * image.height > MAX_PIXELS or getattr(image, "is_animated", False):
                 raise ImageFailure("image_limits")
             image.verify()
-        with Image.open(io.BytesIO(data)) as image:
+        with Image.open(io.BytesIO(data), formats=list(FORMAT_MIME)) as image:
             image.load()
-    except ImageFailure:
-        raise
+        return mime
     except (UnidentifiedImageError, OSError, ValueError, SyntaxError, Image.DecompressionBombError):
         raise ImageFailure("invalid_image") from None
 
@@ -93,12 +85,9 @@ class ImageContextBuilder:
         self.semaphore = asyncio.Semaphore(2)
 
     async def download(self, attachment, remaining):
-        is_embed = isinstance(attachment, EmbedImage)
-        expected = None
-        if not is_embed:
-            declared = normalized_mime(getattr(attachment, "content_type", None))
-            expected = attachment_extension_mime(attachment) if declared in GENERIC_TYPES else declared
-            if expected not in MIME_FORMATS:
+        declared = normalized_mime(getattr(attachment, "content_type", None))
+        if not isinstance(attachment, EmbedImage):
+            if declared not in GENERIC_TYPES and declared not in FORMAT_MIME.values():
                 raise ImageFailure("unsupported_type")
             size = getattr(attachment, "size", None)
             if not isinstance(size, int) or size <= 0 or size > MAX_IMAGE_BYTES or size > remaining:
@@ -116,11 +105,6 @@ class ImageContextBuilder:
                         if response.status != 200:
                             raise ImageFailure("download_unavailable")
                         response_type = normalized_mime(response.headers.get("Content-Type"))
-                        if (not is_embed and response_type in GENERIC_TYPES
-                                and declared in GENERIC_TYPES):
-                            response_type = expected
-                        if response_type not in MIME_FORMATS or (expected is not None and response_type != expected):
-                            raise ImageFailure("unsupported_type")
                         if response.headers.get("Content-Encoding", "identity").lower().strip() not in ("", "identity"):
                             raise ImageFailure("unsupported_encoding")
                         data = bytearray()
@@ -130,9 +114,10 @@ class ImageContextBuilder:
                                 raise ImageFailure("size_limit")
                 if not data:
                     raise ImageFailure("invalid_image")
-                worker = asyncio.create_task(asyncio.to_thread(validate_image, bytes(data), expected or response_type, response_type))
+                image_bytes = bytes(data)
+                worker = asyncio.create_task(asyncio.to_thread(validate_image, image_bytes))
                 try:
-                    await asyncio.shield(worker)
+                    mime = await asyncio.shield(worker)
                 except asyncio.CancelledError:
                     # A cancelled await cannot stop a decoder thread. Keep the permit
                     # until it exits, even if the request no longer has a waiter.
@@ -145,7 +130,12 @@ class ImageContextBuilder:
                             self.semaphore.release()
                     worker.add_done_callback(release_after_decode)
                     raise
-                return bytes(data), response_type
+                declared_mismatch = declared not in GENERIC_TYPES and declared != mime
+                cdn_mismatch = response_type not in GENERIC_TYPES and response_type != mime
+                if declared_mismatch or cdn_mismatch:
+                    logging.info("Image MIME mismatch: decoded=%s attachment_mismatch=%s cdn_mismatch=%s",
+                                 mime, declared_mismatch, cdn_mismatch)
+                return image_bytes, mime
             finally:
                 if not release_deferred:
                     self.semaphore.release()
@@ -192,18 +182,17 @@ class ImageContextBuilder:
                     continue
             else:
                 declared = normalized_mime(getattr(attachment, "content_type", None))
-                extension_mime = attachment_extension_mime(attachment)
+                extension = PurePath(getattr(attachment, "filename", "") or "").suffix.lower()
                 if not declared:
                     category = "missing"
                 elif declared in GENERIC_TYPES:
                     category = "generic"
-                elif declared in MIME_FORMATS:
+                elif declared in FORMAT_MIME.values():
                     category = declared
                 else:
                     category = "unsupported"
-                attachment_metadata[(category, extension_mime is not None)] += 1
-                expected = extension_mime if declared in GENERIC_TYPES else declared
-                if expected not in MIME_FORMATS:
+                attachment_metadata[(category, extension in IMAGE_EXTENSIONS)] += 1
+                if category == "unsupported":
                     failures.append("unsupported_type")
                     continue
             if len(images) < MAX_IMAGES:
