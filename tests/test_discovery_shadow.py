@@ -372,7 +372,7 @@ class DiscoveryGatewayTests(IsolatedAsyncioTestCase):
         return SimpleNamespace(id=cid, type=kind, name="dev-chat", topic=None,
                                permissions_for=lambda member: permissions)
 
-    async def test_startup_with_only_flag_starts_one_worker_and_refreshes_eligibility(self):
+    async def test_ready_starts_one_worker_with_archive_and_refreshes_eligibility(self):
         allowed = self.channel(2)
         hidden = self.channel(4, view=False)
         history_denied = self.channel(5, history=False)
@@ -392,14 +392,15 @@ class DiscoveryGatewayTests(IsolatedAsyncioTestCase):
              patch("discord_bot.handlers.discord_handler.reconcile_recent", new_callable=AsyncMock), \
              patch.object(DiscoveryShadow, "run_configured", new_callable=AsyncMock) as run:
             vector.return_value.close = AsyncMock()
-            handler = DiscordHandler("test", "test", "test", archive=archive)
+            handler = DiscordHandler("test", "test", "test")
             self.addAsyncCleanup(handler.shutdown)
             ready = client.event.call_args_list[0].args[0]
             await ready()
             self.assertIsNone(handler._discovery_task)
-            with patch.dict("os.environ", {"DISCOVERY_SHADOW_ENABLED": "true"}):
-                await ready()
-                await ready()
+            run.assert_not_awaited()
+            handler.archive = archive
+            await ready()
+            await ready()
             await handler._discovery_task
             run.assert_awaited_once()
             self.assertEqual(run.call_args.args[:3], (archive.db, "test", "10"))

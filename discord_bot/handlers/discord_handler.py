@@ -57,8 +57,7 @@ class DiscordHandler:
                     reconcile_recent(self.client, self.archive), name='discord-history-reconcile'
                 )
 
-            if (self._discovery_task is None
-                    and os.getenv("DISCOVERY_SHADOW_ENABLED", "false").lower() == "true"):
+            if self.archive is not None and self._discovery_task is None:
                 self.start_discovery(openai_key)
         
         @self.client.event
@@ -203,10 +202,6 @@ class DiscordHandler:
         return hints
 
     def start_discovery(self, api_key):
-        if self.archive is None:
-            logging.warning("Discovery shadow disabled: SQLite archive unavailable")
-            return
-
         async def run_discovery():
             if self._reconcile_task is not None:
                 try:

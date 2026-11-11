@@ -57,7 +57,7 @@ With `REACTION_SHADOW_ENABLED=true` and a matching guild ID, the evaluator obser
 
 ## Discovery shadow dev acceptance
 
-After the application rolls out to dev, set `DISCOVERY_SHADOW_ENABLED=true` in dev GitOps. The bot uses the existing SQLite archive and Brave credentials. From the dev bot container, inspect runs and candidates across all guilds. Add `--guild-id` before the subcommand to filter to one guild.
+After the application rolls out to dev, discovery starts automatically when the gateway is ready and the SQLite archive is available. External search uses the existing Brave credentials. From the dev bot container, inspect runs and candidates across all guilds. Add `--guild-id` before the subcommand to filter to one guild.
 
 ```bash
 python -m discord_bot.admin --json discovery --limit 20
@@ -65,7 +65,7 @@ python -m discord_bot.admin --json discovery --limit 20
 
 The worker checks channel eligibility each minute and reserves at most one attempt per six hours across the bot. If all available channels are active before reservation, `deferred_active` consumes no interval. A `deferred_after_work` run still counts toward the interval. Restarting preserves the reservation and rotation cursor.
 
-1. Start dev with the flag and an eligible quiet text channel. On an empty archive, expect `weak_context` and zero provider calls. Restart within six hours and check that there is no new reservation, including for other guilds.
+1. Start dev with an eligible quiet text channel. On an empty archive, expect `weak_context` and zero provider calls. Restart within six hours and check that there is no new reservation, including for other guilds.
 2. Add a standard text channel or grant the bot View Channel and Read Message History in an existing channel. Confirm it can enter rotation without restarting. Revoke either permission and confirm future runs skip it. An active channel should be skipped in favor of a quiet eligible one.
 3. In an eligible dev channel, discuss a game or project with a recent public announcement across several substantive messages, then let the channel stay quiet for 30 minutes. Inspect the channel, evidence, reason, usage and any proposed draft at its turn. Confirm Discord receives no unsolicited message or reaction.
 
