@@ -8,6 +8,8 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
+import httpx
+from openai import AsyncOpenAI
 
 from discord_bot import admin
 from discord_bot.handlers.discord_handler import DiscordHandler
@@ -195,6 +197,88 @@ class ShadowTests(IsolatedAsyncioTestCase):
         self.assertEqual(self.db.execute(
             "SELECT outcome, model_calls FROM discovery_runs ORDER BY id",
         ).fetchall(), [("provider_error", 2), ("complete", 1)])
+
+    async def test_topic_http_rejection_logs_safe_traceback_with_no_usage(self):
+        private_marker = "synthetic private payload"
+        requests = []
+
+        def reject(request):
+            requests.append(json.loads(request.content))
+            return httpx.Response(400, json={
+                "error": {"message": private_marker, "code": "unsupported_parameter"},
+            })
+
+        async with AsyncOpenAI(
+            api_key="synthetic-key", max_retries=0,
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(reject)),
+        ) as client:
+            worker = self.worker()
+            worker.client = client
+            with self.assertLogs(level="WARNING") as logs:
+                await worker.run_once(self.hints)
+
+        self.assertEqual(len(requests), 1)
+        request = requests[0]
+        self.assertEqual(request["model"], "test-model")
+        self.assertEqual(request["text"], {"format": {"type": "json_object"}})
+        self.assertEqual(request["max_output_tokens"], 650)
+        self.assertFalse(request["store"])
+        self.assertNotIn("tools", request)
+        logged = "\n".join(logs.output)
+        for expected in ("run=1", "stage=topic", "BadRequestError", "HTTP 400",
+                         "unsupported_parameter", "Traceback", "in ask"):
+            self.assertIn(expected, logged)
+        for private in (private_marker, "synthetic-key", "base building", request["instructions"]):
+            self.assertNotIn(private, logged)
+        self.assert_topic_failed((0, 0))
+
+    async def test_topic_timeout_omits_exception_and_chained_messages(self):
+        async def timeout(**kwargs):
+            try:
+                raise OSError("private chained diagnostic")
+            except OSError as cause:
+                raise TimeoutError("private timeout diagnostic") from cause
+
+        self.model.side_effect = timeout
+        with self.assertLogs(level="WARNING") as logs:
+            await self.worker().run_once(self.hints)
+        self.model.assert_awaited_once()
+        logged = "\n".join(logs.output)
+        self.assertIn("stage=topic exception=TimeoutError", logged)
+        self.assertIn("in timeout", logged)
+        self.assertNotIn("private", logged)
+        self.assert_topic_failed((0, 0))
+
+    async def test_topic_response_failures_record_reported_usage(self):
+        cases = [
+            ("incomplete", "max_output_tokens", '{"query":', "incomplete_max_output_tokens"),
+            ("incomplete", "content_filter", "", "incomplete_content_filter"),
+            ("failed", None, "", "response_not_completed"),
+            ("completed", None, "", "empty_output"),
+            ("completed", None, "synthetic non-JSON output", "JSONDecodeError"),
+            ("completed", None, "[]", "non_object_output"),
+        ]
+        for status, reason, output, diagnostic in cases:
+            with self.subTest(diagnostic=diagnostic):
+                self.model.return_value = SimpleNamespace(
+                    status=status, incomplete_details=SimpleNamespace(reason=reason),
+                    output_text=output, usage=SimpleNamespace(input_tokens=30, output_tokens=10),
+                )
+                with self.assertLogs(level="WARNING") as logs:
+                    await self.worker().run_once(self.hints)
+                self.assertIn(diagnostic, "\n".join(logs.output))
+                self.assertNotIn("synthetic non-JSON output", "\n".join(logs.output))
+                self.assert_topic_failed((30, 10))
+                self.now += INTERVAL
+
+    def assert_topic_failed(self, tokens):
+        self.assertEqual(self.db.execute(
+            """SELECT outcome, model_calls, input_tokens, output_tokens, searches, fetches
+               FROM discovery_runs ORDER BY id DESC LIMIT 1""",
+        ).fetchone(), ("provider_error", 1, *tokens, 0, 0))
+        self.assertEqual(self.reasons(), [])
+        self.search.execute.assert_not_awaited()
+        self.reader.execute.assert_not_awaited()
 
     async def test_model_budget_and_activity_during_review(self):
         self.results(URL, URL + "-2", URL + "-3")
