@@ -193,7 +193,8 @@ class DiscoveryShadow:
     async def topic(self, run, hints, recent, older, memories):
         result = await self.ask(run, TOPIC_INSTRUCTIONS, {
             "channel_hints": hints,
-            "recent": recent, "older": older, "accepted_memories": memories,
+            "recent": recent, "older": [tuple(row) for row in older],
+            "accepted_memories": memories,
         })
         if not result:
             return None
@@ -383,7 +384,7 @@ class DiscoveryShadow:
             **public, "proposal": {"story": story, "quote": quote, "draft": draft},
             "channel_hints": hints, "discussion": discussion,
             "related_discussion": related[:32], "semantic_discussion": semantic,
-            "prior_suggestions": previous, "channel_memories": memories,
+            "prior_suggestions": [tuple(row) for row in previous], "channel_memories": memories,
         })
         if review is None:
             return "budget_exhausted", None, None, None

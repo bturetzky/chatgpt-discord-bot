@@ -65,6 +65,12 @@ class MemoryEvaluationTests(unittest.TestCase):
         self.assertEqual(self.conn.execute(
             "SELECT status FROM extraction_candidates").fetchone()[0], "proposed")
 
+    def test_preview_preserves_shared_connection_row_factory(self):
+        self.assertIsNone(self.conn.row_factory)
+        self.assertEqual(len(preview(self.conn, guild_id="guild")), 1)
+        self.assertIsNone(self.conn.row_factory)
+        self.assertEqual(self.conn.execute("SELECT 1").fetchone(), (1,))
+
     def test_invalid_limit_rejected(self):
         with self.assertRaises(ValueError):
             preview(self.conn, guild_id="guild", limit=101)
