@@ -21,7 +21,7 @@ Python 3.12, Poetry 1.8.3 (or Docker), Discord bot permissions/message-content i
 ```bash
 poetry install --only main --no-root
 poetry run python -m run
-make test
+poetry run python -m unittest discover -s tests -t .
 ```
 
 Or build with `docker build -t chatgpt-discord-bot:local .` and run with a securely supplied env file. Never commit `.env`, Discord tokens or API keys.
