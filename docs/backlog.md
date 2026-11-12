@@ -1,22 +1,28 @@
-# Outstanding work
+# Feature backlog
 
-This is the **only** list of unfinished features, actionable technical debt and pending operator acceptance. A feature is not unfinished merely because its original design document included future ideas. Completed PR history lives in GitHub, not here. Priorities reflect a small trusted server, not enterprise hardening.
+This is the only list of **approved unfinished features** and concrete follow-up decisions. It is not a priority queue, release history, or speculative technical-debt inventory. A feature is ready for Codex when its scope and acceptance boundary are explicit. Implemented behavior belongs in [architecture](architecture.md), operator procedures in [operations](operations.md), and completed work in GitHub PR history.
 
-## Features and correctness
+## Approved feature assignments
 
-| Priority | Work | Completion boundary |
-| --- | --- | --- |
-| P1 | Memory correction, forget and invalidation | Provide a narrow explicit correction/deletion path and retire or revise memories when archived source evidence changes/deletes. No general distributed transaction framework. |
-| P1 | Crash-safe Pinecone publication/retry | Persist and reconcile intent, deterministic vector identity and remote outcome across SQLite/Pinecone; test interruption after remote success. Existing ledger helpers are foundations, **not** a wired worker. |
-| P2 | Memory quality and deduplication | Improve repeated/low-value candidate handling when observed; retain grounding and durability. #96–97 idle evaluation optimization is already verified, not pending. |
-| P2 | Proactive external discovery and conversation starters | Two gated phases: durable, inspectable discovery shadow mode first; only after operator acceptance, opt-in guarded posting. See specification below. |
-| P2 | Desktop-pasted PNG and image embed acceptance | The original fix was deployed, but desktop paste still failed with Discord declaring WebP and a recognized filename extension. The CDN response MIME was unavailable. Verify the follow-up with the same desktop paste, a replied-to embed, and the unsupported-image fallback in dev before promotion. |
-| P3 | Automatic historical archive/extraction catch-up | Evaluate a safe bounded schedule only if manual backfill and restart reconciliation leave meaningful gaps. Manual Discord history and SQLite memory extraction backfills are already implemented and verified. |
-| P3 | Richer reply/reference graph and media archive | Only if server context failures justify it; do not assume background image/video indexing is needed. |
+### Memory lifecycle — assignment A: reliable publication
 
-## Proactive external discovery and conversation starters
+**Outcome:** SQLite/Pinecone publication is restart-safe, with deterministic vector identity and reconciled outcomes. Wire existing ledger/revision helpers into the worker rather than building a general transaction framework.
 
-**Status:** Phase 1 shadow mode was deployed. The automatic channel selection and shared schedule update awaits dev rollout and operator acceptance. Phase 2 remains planned and requires separate approval. This is distinct from live emoji reactions and autonomous memory extraction. The goal is for the bot to occasionally find a worthwhile external article, game announcement, release, news development or interesting link, and open a natural conversation in a relevant Discord channel with a brief, grounded, opinionated take. **External discovery first; internal channel history and memories inform relevance and novelty.** Unsolicited callbacks based solely on old conversations are out of scope.
+**Codex boundary:** Persist intent before remote writes; reconcile after ambiguous interruption (including a crash after remote success but before SQLite acceptance); use idempotent retries and bounded diagnostics. Add interruption/restart regression tests. Preserve current create-only behavior until assignment B.
+
+### Memory lifecycle — assignment B: correct and forget
+
+**Depends on:** assignment A.
+
+**Outcome:** A narrow explicit way to correct or forget a memory, plus invalidation when its archived source evidence changes or is deleted.
+
+**Codex boundary:** Implement targeted update/delete handling in SQLite and Pinecone, prevent retired memories from reappearing, and handle legacy vectors with missing provenance conservatively. Test correction, deletion, source edits/deletes, retries and retrieval after removal. No general multi-guild ACL system or wholesale legacy migration.
+
+### Proactive external discovery — finish shadow review, then live posting
+
+**Current implementation:** Discovery shadow mode exists and records inspectable decisions without posting. Operator review of the current shadow behavior remains the decision gate for a separate live-posting PR. Do not conflate this with the **already verified** live emoji reaction feature.
+
+**Next Codex assignment:** Only after satisfactory shadow review, implement the Phase 2 live-posting behavior below. Keep dev acceptance and manual production promotion separate.
 
 ### Behavior and selection contract
 
@@ -28,7 +34,7 @@ This is the **only** list of unfinished features, actionable technical debt and 
 - **Budget:** Initial live-posting target is **at most 1–2 posts per week across the entire server**, not per channel. Make the final limit configurable and durable; use cooldowns and dedupe as separate gates. Discovery runs may occur a few times daily, but must have bounded candidate counts, search calls, model calls and embedding use. Avoid idle repeated model evaluations of unchanged candidates.
 - **Persistence and operations:** Use the existing per-environment SQLite database for discovery cursors/checkpoints, canonical source/story identity, evaluation decisions, proposed drafts and posting outcomes. Ensure idempotent retries and inspectable rejection reasons without retaining unnecessary source text or sensitive memory. No new database/service or generalized multi-guild framework. Add concise operator inspection via existing admin tooling if practical.
 
-### Phase 1 — pending operator acceptance
+### Phase 1 — shadow review
 
 Use the [dev acceptance procedure](operations.md#discovery-shadow-dev-acceptance) to assess the shadow worker and its persisted decisions.
 
@@ -46,23 +52,26 @@ Only after the operator accepts Phase 1 candidate quality: implement an **explic
 
 **Phase 2 acceptance:** demonstrate in dev that only permitted channels receive source-linked openers, active discussions are not interrupted, weekly/cooldown limits survive restart, duplicate stories are not reposted, provider/Discord failures are safe, and disabling posting stops further messages. Production enablement is a separate operator decision.
 
-## Pending operator acceptance
 
-1. **Live emoji reactions:** verify successful posts and distinct-human pile-ons in dev Discord, then observe reaction frequency after operator-approved production promotion. See [operations](operations.md#verify-live-emoji-reactions).
-2. **Multi-person/relationship memory recall:** test shared lore or running jokes with two people, later recall, and accurate attribution without relying solely on recent channel history. Improve only failures demonstrated in testing.
+### Contextual conversational interjections — new approved feature
 
-## Contained technical debt
+**Outcome:** The bot occasionally joins an ongoing server conversation with a genuinely relevant or funny short message without being mentioned. Unlike external discovery, this uses the **current conversation** as its trigger; it does not fetch news to start a new topic.
 
-- **Reaction evaluator lock:** model I/O currently runs under an `asyncio.Lock`; reserve budget under lock and evaluate outside it if contention matters.
-- **Bot-authored message handling:** review the five-second sleep/embed suppression for avoidable blocking.
-- **Toolchain config:** align mypy's Python target with Python 3.12; let Renovate handle routine dependency proposals.
-- **Pinecone index configuration and legacy provenance:** hardcoded index and older unscoped vectors complicate isolation/migration. Address when needed for correction/reconciliation.
-- **Provider edge cases:** add targeted tests for real URL/transcript failures; avoid generic browser/scraper infrastructure without a use case.
+**Codex boundary:** One bounded, opt-in text-message feature in the existing configured guild. Observe eligible conversation windows, decide whether the bot has a worthwhile contribution, and otherwise remain silent. Use recent context and existing memory retrieval where helpful; do not create a new background indexing system. Respect quietness, cooldowns, an explicit disable switch, and restart-safe duplicate suppression. Never reply to its own messages or create loops. Make decisions inspectable without logging private raw chat. Define a modest configurable posting budget during design, not an arbitrary global priority.
 
-## Explicitly deferred
+**Acceptance:** In dev, demonstrate a relevant interjection, silence on mundane or stale conversations, no duplicate posting after restart, correct handling of Discord errors, and immediate disablement. Avoid triggering during an active exchange in which a bot message would be disruptive.
 
-No automatic production promotion, general multi-guild ACL platform, always-on dashboard, automatic Codex resumption, headless browser, or sweeping refactor. These are not implicitly approved backlog commitments.
+## Evaluation, not yet implementation
 
-## Verified and closed
+**Relationship/lore recall:** Test real multi-person shared history, attribution and callbacks beyond recent channel context. If retrieval already works, close the evaluation. If it fails, record concrete examples (without committing private messages) and scope a targeted Codex feature. No broad memory-quality project is approved.
 
-Operator confirmed: #99 memory retrieval selection; autonomous memory in production; investigation of the earlier publication-verifier discrepancy; bounded historical memory extraction backfill; #96–97 idle-cycle optimization; restoration of normal memory logging; production operator CLI inspection; direct/replied-image understanding. These are **not** pending acceptance.
+## Ideas to discuss, not approved work
+
+- **Server lore and callbacks:** Natural use of recurring jokes and shared history, beyond simply retrieving correct facts. May overlap with relationship-memory evaluation.
+- **Long-running conversation awareness:** Recognize a discussion resuming after time has passed and restore the right context. Define a concrete experience before approving implementation.
+
+Social games/challenges were explicitly rejected. Do not silently promote these ideas into approved tasks.
+
+## Deliberately out of scope
+
+Automatic historical catch-up, speculative richer reply/media archive, reaction-lock optimization, bot-message sleep refactor, generic provider edge-case work, routine memory-quality tuning, automatic production promotion, general multi-guild ACL platform, always-on dashboard, automatic Codex resumption, headless browser, and sweeping refactors. Revisit only on new evidence and an explicit decision.
