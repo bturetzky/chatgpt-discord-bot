@@ -15,6 +15,8 @@ Discord mention / DM
 
 Entry points are `run.py` and `discord_bot/app.py`. `discord_bot/handlers/` contains Discord, model, memory and image routing; `discord_bot/functions/` implements tools. Current tools include Brave search, public webpage/GitHub README reading, YouTube metadata/transcripts, weather, news, IGDB and Discord history search. URL/text from external sources is untrusted; readers use bounded network requests and must not pretend to have read inaccessible content.
 
+The tool loop can send one optional conversational progress message per Discord request, even across tool batches and retries. Discord history tools remain silent.
+
 `ImageContextBuilder` in `discord_bot/handlers/image_context.py` appends PNG/JPEG/WebP attachments and embed images present on a triggering message or its direct reply. The bot considers attachments with supported, missing, or generic MIME and uses HTTPS Discord CDN URLs, including Discord's media proxy. Pillow verifies and fully decodes only still PNG/JPEG/WebP files. The detected format supplies the model input MIME, even when the filename or headers disagree. The two sources share a cap of two selected images, 4 MiB each / 8 MiB total, and 20 megapixels each. Failed or unsupported images do not block the text response. Image bytes are not archived. YouTube support is transcript/metadata reading, not video-frame understanding.
 
 ## SQLite server archive

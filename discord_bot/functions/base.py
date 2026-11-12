@@ -28,7 +28,7 @@ class BaseFunction:
             "properties": {
                 "quick_update": {
                     "type": "string",
-                    "description": "A very brief message to send back to the user explaining your thought process and telling them what you're doing.  Don't include this when storing a memory."
+                    "description": "Optional short, conversational message about what you're checking for the user. Include it on at most one tool call per request. Omit it for Discord history tools and when storing a memory."
                 }
             },
             "required": []

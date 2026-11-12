@@ -39,21 +39,76 @@ class OpenAIToolRegressions(unittest.IsolatedAsyncioTestCase):
         self.handler.function_handler.api_functions = []
         self.handler.function_handler.execute_function = AsyncMock(return_value="ok")
 
+    async def test_no_tools_sends_only_the_model_reply(self):
+        self.handler.send_interim_message = AsyncMock()
+        self.handler.client.responses.create.return_value = response([], "Which city?")
+        self.assertEqual(await self.handler.get_response([], "channel"), "Which city?")
+        self.handler.send_interim_message.assert_not_awaited()
+        self.handler.function_handler.execute_function.assert_not_awaited()
+
+    async def test_independent_requests_each_send_one_update_for_one_tool(self):
+        progress = AsyncMock()
+        self.handler.send_interim_message = progress
+        for update in ("Checking the forecast", "Checking tomorrow's weather"):
+            self.handler.client.responses.create.side_effect = [
+                response([tool_call("weather", "weather_lookup",
+                                    json.dumps({"quick_update": update}))]),
+                response([], "Forecast ready"),
+            ]
+            self.assertEqual(await self.handler.get_response([], "channel"), "Forecast ready")
+        self.assertEqual([call.args for call in progress.await_args_list], [
+            ("channel", "Checking the forecast"), ("channel", "Checking tomorrow's weather"),
+        ])
+
     async def test_multiple_calls_produce_distinct_correlated_outputs(self):
+        progress = AsyncMock()
+        self.handler.send_interim_message = progress
         calls = [
-            tool_call("one", "weather_lookup", '{"city":"Seattle"}'),
-            tool_call("two", "search_web", '{"query":"Python"}'),
+            tool_call("one", "weather_lookup", '{"city":"Seattle","quick_update":"Checking the forecast"}'),
+            tool_call("two", "search_web", '{"query":"Seattle","quick_update":"Checking the web"}'),
         ]
         self.handler.client.responses.create.side_effect = [
             response(calls),
+            response([tool_call("three", "search_web", '{"query":"Seattle rain","quick_update":"Checking rainfall"}')]),
             response([], "Done"),
         ]
-        self.assertEqual(await self.handler.get_response([{"role": "user", "content": "hi"}], None), "Done")
-        self.assertEqual(self.handler.function_handler.execute_function.await_count, 2)
+        self.assertEqual(await self.handler.get_response([], "channel"), "Done")
+        progress.assert_awaited_once_with("channel", "Checking the forecast")
+        self.assertEqual(self.handler.function_handler.execute_function.await_count, 3)
         sent = self.handler.client.responses.create.await_args.kwargs["input"]
         outputs = [item for item in sent if isinstance(item, dict) and item.get("type") == "function_call_output"]
-        self.assertEqual([item["call_id"] for item in outputs], ["one", "two"])
-        self.assertEqual([item["output"] for item in outputs], ["ok", "ok"])
+        self.assertEqual([item["call_id"] for item in outputs], ["one", "two", "three"])
+        self.assertEqual([item["output"] for item in outputs], ["ok", "ok", "ok"])
+
+    async def test_concurrent_requests_have_separate_progress_allowances(self):
+        both_started = asyncio.Event()
+        progress = AsyncMock()
+        self.handler.send_interim_message = progress
+
+        async def create_response(**kwargs):
+            conversation = kwargs["input"]
+            topic = conversation[0]["content"]
+            if len(conversation) == 1:
+                return response([tool_call(topic, "search_web",
+                                           json.dumps({"quick_update": f"Checking {topic}"}))])
+            return response([], f"Found {topic}")
+
+        async def execute(*args):
+            if progress.await_count == 2:
+                both_started.set()
+            await both_started.wait()
+            return "ok"
+
+        self.handler.client.responses.create.side_effect = create_response
+        self.handler.function_handler.execute_function.side_effect = execute
+        results = await asyncio.wait_for(asyncio.gather(
+            self.handler.get_response([{"role": "user", "content": "Seattle"}], "channel"),
+            self.handler.get_response([{"role": "user", "content": "Portland"}], "channel"),
+        ), timeout=2)
+        self.assertEqual(results, ["Found Seattle", "Found Portland"])
+        self.assertCountEqual([call.args for call in progress.await_args_list], [
+            ("channel", "Checking Seattle"), ("channel", "Checking Portland"),
+        ])
 
     async def test_both_discord_history_tools_receive_context(self):
         context = {"guild": object(), "member": object(), "archive": object()}
@@ -120,15 +175,21 @@ class OpenAIToolRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.handler.get_response([], None), "OK")
         self.handler.function_handler.execute_function.assert_not_awaited()
 
-    async def test_tool_error_is_passed_back_for_model_response(self):
-        self.handler.function_handler.execute_function.return_value = "An error occurred while executing the function."
+    async def test_tool_error_and_retry_do_not_send_another_update(self):
+        progress = AsyncMock()
+        self.handler.send_interim_message = progress
+        self.handler.function_handler.execute_function.side_effect = ["Search error", "Retry error"]
         self.handler.client.responses.create.side_effect = [
-            response([tool_call("failure", "search_web", '{"query":"test"}')]),
+            response([tool_call("failure", "search_web", '{"query":"test","quick_update":"Checking sources"}')]),
+            response([tool_call("retry", "search_web", '{"query":"test","quick_update":"Trying again"}')]),
             response([], "Search unavailable"),
         ]
-        self.assertEqual(await self.handler.get_response([], None), "Search unavailable")
+        self.assertEqual(await self.handler.get_response([], "channel"), "Search unavailable")
+        progress.assert_awaited_once_with("channel", "Checking sources")
         sent = self.handler.client.responses.create.await_args.kwargs["input"]
-        self.assertIn("error", sent[-1]["output"])
+        outputs = [item["output"] for item in sent if isinstance(item, dict)
+                   and item.get("type") == "function_call_output"]
+        self.assertEqual(outputs, ["Search error", "Retry error"])
 
     async def test_empty_response_returns_fallback(self):
         self.handler.client.responses.create.return_value = response([])

@@ -66,7 +66,7 @@ class ChatGPTHandler:
         started = time.monotonic()
         page_reads = 0
         invalid_youtube_calls = 0
-        youtube_progress_sent = False
+        progress_sent = False
         try:
             for attempt in range(MAX_FUNCTION_CALLS + 1):
                 response = await self.client.responses.create(
@@ -98,12 +98,12 @@ class ChatGPTHandler:
                         arguments = json.loads(call.arguments)
                         if not isinstance(arguments, dict):
                             raise ValueError("Tool arguments must be an object")
-                        if (arguments.get("quick_update") and self.send_interim_message
-                                and call.name not in ("search_discord_history", "get_discord_conversation_context")
-                                and (call.name != "read_youtube" or not youtube_progress_sent)):
-                            await self.send_interim_message(channel, arguments["quick_update"])
-                            if call.name == "read_youtube":
-                                youtube_progress_sent = True
+                        update = arguments.get("quick_update")
+                        if (not progress_sent and self.send_interim_message
+                                and isinstance(update, str) and update.strip()
+                                and call.name not in ("search_discord_history", "get_discord_conversation_context")):
+                            progress_sent = True
+                            await self.send_interim_message(channel, update.strip())
                         if call.name == "read_youtube" and invalid_youtube_calls >= MAX_INVALID_YOUTUBE_CALLS:
                             result = json.dumps({"ok": False, "error": {"code": "VALIDATION_LIMIT", "message": "Too many invalid YouTube requests in this response."}})
                         elif call.name in ("get_webpage_contents", "read_youtube") and page_reads >= MAX_PAGE_READS:
