@@ -1,6 +1,6 @@
 # Architecture and current behavior
 
-This document describes the implemented bot, not a proposed architecture. The [backlog](backlog.md) is the only source of unfinished features and pending operator acceptance. Kubernetes and Argo CD manifests live in [homelab-gitops](https://github.com/bturetzky/homelab-gitops).
+This document describes the implemented bot, not a proposed architecture. The [backlog](backlog.md) is the source of approved unfinished features and evaluation decisions. Kubernetes and Argo CD manifests live in [homelab-gitops](https://github.com/bturetzky/homelab-gitops).
 
 ## Request path and tools
 
@@ -31,7 +31,7 @@ The archive is the source of evidence. The opt-in worker (`discord_bot/storage/a
 
 The production worker and publication/retrieval have been operator-verified. The #96–97 idle/evaluation changes prevent repeated model requests for unchanged proposed evidence: persisted evaluation decisions and cycle checkpoints skip idle work; new evidence and publication errors remain eligible for processing. This is not a general billing ledger or a guarantee that no other bot activity calls OpenAI.
 
-The existing Pinecone store remains the retrieval source, including legacy records. The #99 selection path uses a single query embedding from recent user turns, Pinecone ordering/similarity, a semantic pool plus participant-filtered relationship pool, caps and a rendered character budget. It avoids adding a second homegrown semantic classifier; an optional similarity floor can exclude low-score candidates. The operator verified this behavior in Discord. Attribution still depends on available record metadata; multi-person relationship/lore recall awaits separate acceptance.
+The existing Pinecone store remains the retrieval source, including legacy records. The #99 selection path uses a single query embedding from recent user turns, Pinecone ordering/similarity, a semantic pool plus participant-filtered relationship pool, caps and a rendered character budget. It avoids adding a second homegrown semantic classifier; an optional similarity floor can exclude low-score candidates. The operator verified this behavior in Discord. Attribution still depends on available record metadata; multi-person relationship/lore recall remains an evaluation question, not an unverified implementation claim.
 
 **Important limitations:** The running worker does not implement autonomous memory corrections, merges, deletes or source-deletion invalidation. SQLite publication ledger/revision helpers and read-only Pinecone reconciliation exist, but are not a wired end-to-end transactional publication system. A Pinecone upsert and SQLite acceptance update are separate operations; a crash between them can leave ambiguous state. A previously observed verifier `not_found` discrepancy was investigated/verified by the operator; do not turn that old checkpoint into a pending incident, but preserve the broader crash/reconciliation limitation. Legacy Pinecone vectors may lack newer guild/scope metadata. Do not infer multi-tenant privacy isolation.
 
