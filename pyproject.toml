@@ -23,38 +23,6 @@ pillow = ">=12.3,<13"
 youtube-transcript-api = {version = "1.2.5", markers = "python_version < \"3.16\""}
 
 
-
-[tool.poetry.dev-dependencies]
-black = "^23.3.0"
-coverage = "^7.2.2"
-mypy = "^1.1.1"
-isort = "^5.12.0"
-pyclean = "^2.7.0"
-
-
-
-[tool.coverage.report]
-exclude_lines = [
-"raise NotImplementedError",
-"pragma: no cover",
-"if __name__ == .__main__.:",
-]
-
-
-[tool.isort]
-profile = "black"
-skip_gitignore = true
-skip = [".venv"]
-
-
-[tool.mypy]
-python_version = "3.12"
-disable_error_code = ["var-annotated"]
-disallow_untyped_defs = false
-ignore_missing_imports = true
-strict_optional = true
-
-
 [build-system]
 requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
