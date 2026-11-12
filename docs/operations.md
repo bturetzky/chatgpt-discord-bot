@@ -1,6 +1,6 @@
 # Operations and manual acceptance
 
-Use the existing bot container and persistent SQLite database; there is no separate dashboard. Start in dev. Replace `discord-dev` with `discord-prod` only for intentional production inspection. Avoid pasting real guild IDs, raw Discord messages or private memory content into GitHub.
+Use the existing bot container and persistent SQLite database; there is no separate dashboard. Start in dev. Select the intended Kubernetes namespace in your current context before running these commands; they deliberately omit `-n` so the same commands work in dev and prod. Avoid pasting real guild IDs, raw Discord messages or private memory content into GitHub.
 
 ## Operator CLI
 
@@ -9,6 +9,9 @@ kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin --help
 kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin status
 kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin reactions
 kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin reactions --posted-only
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin reactions --react-only
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin discovery
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin --json discovery --limit 20
 kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin archive
 kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin memories --stats
 kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin memories --limit 20
@@ -17,16 +20,16 @@ kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin memories 
 
 Global `--json` and `--guild-id` options precede the subcommand. Inspection commands are read-only; `--verify-pinecone` makes read-only remote fetches. SQLite `accepted` does not by itself prove the vector still exists; a `not_found` result requires investigation of vector identity, namespace and deduplication, not automatic deletion. The previously observed discrepancy was operator-verified and is not an open acceptance item.
 
-`status` shows integrity, flags and row counts; `reactions` reports recorded decisions, posting outcomes, selected emoji and message links; `archive` reports coverage/cursors; `memories` reports candidates and extraction usage. Historical shadow rows have no posting outcome. An `attempting` row may represent an interrupted request with an uncertain outcome.
+`status` shows integrity, flags and row counts; `reactions` reports recorded decisions, posting outcomes, selected emoji and message links; `discovery` reports six-hour budgets, runs, reasons, source URLs and any shadow drafts (all guilds by default); `archive` reports coverage/cursors; `memories` reports candidates and extraction usage. Historical shadow rows have no posting outcome. An `attempting` row may represent an interrupted request with an uncertain outcome.
 
 ## Two different backfills
 
 **Discord message archive import** reads the Discord history API, storing messages in SQLite:
 
 ```bash
-kubectl -n discord-dev exec deploy/chatgpt-discord-bot -- \
+kubectl exec deploy/chatgpt-discord-bot -- \
   python -m discord_bot.storage.backfill --days 30 --limit-per-channel 100 --dry-run
-kubectl -n discord-dev exec deploy/chatgpt-discord-bot -- \
+kubectl exec deploy/chatgpt-discord-bot -- \
   python -m discord_bot.storage.backfill --days 30 --limit-per-channel 100
 ```
 
@@ -35,10 +38,10 @@ kubectl -n discord-dev exec deploy/chatgpt-discord-bot -- \
 **Historical memory extraction** processes *already archived SQLite messages* and records extraction proposals; it does not fetch Discord history:
 
 ```bash
-kubectl -n discord-dev exec deploy/chatgpt-discord-bot -- \
+kubectl exec deploy/chatgpt-discord-bot -- \
   python -m discord_bot.admin backfill --days 30 --max-chunks 12 --chunk-hours 1
 # Resume with the next_since cursor printed by the previous run:
-kubectl -n discord-dev exec deploy/chatgpt-discord-bot -- \
+kubectl exec deploy/chatgpt-discord-bot -- \
   python -m discord_bot.admin backfill --since 2026-11-01T12:00:00Z \
   --until 2026-11-02T00:00:00Z --max-chunks 12 --chunk-hours 1
 ```
@@ -66,8 +69,12 @@ The CLI includes Discord message links. Use the first command to inspect cooldow
 After the application rolls out to dev, discovery starts automatically when the gateway is ready and the SQLite archive is available. External search uses the existing Brave credentials. From the dev bot container, inspect runs and candidates across all guilds. Add `--guild-id` before the subcommand to filter to one guild.
 
 ```bash
-python -m discord_bot.admin --json discovery --limit 20
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin discovery
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin --json discovery --limit 20
+kubectl logs deploy/chatgpt-discord-bot --since=24h | grep -i 'discovery'
 ```
+
+The `started_at` field is a Unix UTC timestamp; compare it with the last deployment rollout and the six-hour reservation interval before concluding a fix has run. `Discovery shadow enabled` only confirms startup. `complete` means evaluation finished, not that a draft was accepted. `provider_error` requires examining the corresponding log stage; `weak_source` and `source_unavailable` are rejected candidates, not drafts. A new pod does not reset the persistent six-hour interval.
 
 The worker checks channel eligibility each minute and reserves at most one attempt per six hours across the bot. If all available channels are active before reservation, `deferred_active` consumes no interval. A `deferred_after_work` run still counts toward the interval. Restarting preserves the reservation and rotation cursor.
 
@@ -82,8 +89,8 @@ For a discovery `provider_error`, match the SQLite run ID to the application log
 After ARC dev rollout verification, **actually select the bot from Discord's @-mention picker**; typing a literal `@chatgpt-dev` string is not sufficient. Test a brief calculation (17 × 23 = 391), weather lookup, Brave search for official Python docs, public webpage fetch (`https://docs.python.org/3/`), and an existing-memory question that does not write new memories. Expect an accurate result or explicit provider failure, never a fabricated read. For changed image handling, test direct and replied-to images plus unsupported/expired attachments. For memory changes, test retrieval and source attribution without inserting false permanent facts. Desktop-pasted PNG, image embed/reply handling, live reactions, and #99 retrieval enhancement have already been operator-verified; repeat targeted tests only when behavior changes.
 
 ```bash
-kubectl -n discord-dev rollout status deployment/chatgpt-discord-bot --timeout=120s
-kubectl -n discord-dev logs deploy/chatgpt-discord-bot --since=10m
+kubectl rollout status deployment/chatgpt-discord-bot --timeout=120s
+kubectl logs deploy/chatgpt-discord-bot --since=10m
 ```
 
 A healthy Deployment or gateway-ready log is not a substitute for a real Discord response. Temporary DEBUG logging may expose memory contents; normal logging was operator-confirmed restored. Avoid collecting sensitive content. For promotion and rollback see [deployment](deployment.md).
