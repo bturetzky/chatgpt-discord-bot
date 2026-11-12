@@ -234,7 +234,7 @@ class ShadowTests(IsolatedAsyncioTestCase):
         def reject(request):
             requests.append(json.loads(request.content))
             return httpx.Response(400, json={
-                "error": {"message": private_marker, "code": "unsupported_parameter"},
+                "error": {"message": private_marker, "code": "unsupported_parameter", "param": "text.format"},
             })
 
         async with AsyncOpenAI(
@@ -250,12 +250,13 @@ class ShadowTests(IsolatedAsyncioTestCase):
         request = requests[0]
         self.assertEqual(request["model"], "test-model")
         self.assertEqual(request["text"], {"format": {"type": "json_object"}})
+        self.assertEqual(json.loads(request["input"])["output_instruction"], "Return a JSON object.")
         self.assertEqual(request["max_output_tokens"], 650)
         self.assertFalse(request["store"])
         self.assertNotIn("tools", request)
         logged = "\n".join(logs.output)
         for expected in ("run=1", "stage=topic", "BadRequestError", "HTTP 400",
-                         "unsupported_parameter", "Traceback", "in ask"):
+                         "unsupported_parameter", "param=text.format", "Traceback", "in ask"):
             self.assertIn(expected, logged)
         for private in (private_marker, "synthetic-key", "base building", request["instructions"]):
             self.assertNotIn(private, logged)

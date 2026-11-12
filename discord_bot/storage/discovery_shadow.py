@@ -84,6 +84,8 @@ def log_run_failure(run, stage, error):
         detail = f"HTTP {error.status_code}"
         if error.code in ("model_not_found", "unsupported_parameter", "invalid_api_key"):
             detail += f" {error.code}"
+        if error.param in ("input", "text.format", "model", "max_output_tokens", "store"):
+            detail += f" param={error.param}"
     elif isinstance(error, DiscoveryResponseError):
         detail = error.args[0]
     logging.warning(
@@ -297,7 +299,10 @@ class DiscoveryShadow:
             return None
         response = await asyncio.wait_for(self.client.responses.create(
             model=self.model, instructions=instructions,
-            input=json.dumps(data, ensure_ascii=False), max_output_tokens=650,
+            # JSON mode validates the input text separately from instructions.
+            input=json.dumps({**data, "output_instruction": "Return a JSON object."},
+                             ensure_ascii=False),
+            max_output_tokens=650,
             text={"format": {"type": "json_object"}}, store=False,
         ), timeout=25)
         usage = getattr(response, "usage", None)
