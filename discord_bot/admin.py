@@ -49,27 +49,51 @@ def status(args):
         output(counts, args)
 
 def reactions(args):
+    from .handlers.reaction_shadow import ReactionShadow
+
     gid = guild(args)
     with connect() as db:
         totals = [dict(r) for r in db.execute(
-            """SELECT status, COALESCE(decision,'pending') AS decision,
+            """SELECT trigger, status, COALESCE(decision,'pending') AS decision,
                       posting_outcome, COUNT(*) AS count
-               FROM shadow_evaluations WHERE guild_id=? GROUP BY status, decision, posting_outcome""", (gid,))]
+               FROM shadow_evaluations WHERE guild_id=?
+               GROUP BY trigger, status, decision, posting_outcome""", (gid,))]
+        used = db.execute(
+            """SELECT COUNT(*) FROM shadow_evaluations
+               WHERE guild_id=? AND evaluated_at >= datetime('now', '-24 hours')""",
+            (gid,),
+        ).fetchone()[0]
+        pending = [dict(r) for r in db.execute(
+            """SELECT channel_id, COUNT(*) AS new_message_count,
+                      datetime(MIN(reaction_queued_at), 'unixepoch') AS oldest_queued_at,
+                      CASE WHEN COUNT(*) < ? AND MIN(reaction_queued_at) > unixepoch('now') - ?
+                           THEN 'waiting_for_interval_or_threshold'
+                           WHEN ? >= ? THEN 'evaluation_budget'
+                           ELSE 'due' END AS scheduling_state
+               FROM messages WHERE guild_id=? AND reaction_queued_at > 0 AND deleted_at IS NULL
+               GROUP BY channel_id ORDER BY MIN(reaction_queued_at)""",
+            (ReactionShadow.MESSAGE_THRESHOLD, ReactionShadow.INTERVAL, used,
+             ReactionShadow.MAX_EVALUATIONS, gid),
+        )]
         where = "AND decision='react'" if args.react_only else ""
         if getattr(args, "posted_only", False):
             where = "AND posting_outcome='posted'"
         rows = [dict(r) for r in db.execute(
             f"""SELECT evaluated_at, status, trigger, decision, emoji_key, reason_category,
-                       guild_id, channel_id, message_id, input_tokens, output_tokens,
-                       posting_outcome, posted_at
+                       guild_id, channel_id, new_message_count,
+                       CASE WHEN new_message_count IS NULL THEN message_id
+                            ELSE selected_message_id END AS message_id,
+                       input_tokens, output_tokens, posting_outcome, posted_at
                 FROM shadow_evaluations WHERE guild_id=? {where}
-                ORDER BY evaluated_at DESC LIMIT ?""", (gid, args.limit))]
+                ORDER BY evaluated_at DESC, rowid DESC LIMIT ?""", (gid, args.limit))]
     for r in rows:
-        r["url"] = f"https://discord.com/channels/{r['guild_id']}/{r['channel_id']}/{r['message_id']}"
+        if r["message_id"] is not None:
+            r["url"] = f"https://discord.com/channels/{r['guild_id']}/{r['channel_id']}/{r['message_id']}"
+    report = {"totals": totals, "evaluations_used_24h": used, "pending_windows": pending}
     if args.json:
-        output({"totals": totals, "evaluations": rows}, args)
+        output({**report, "evaluations": rows}, args)
     else:
-        print("Reaction evaluation totals:", totals or "none recorded")
+        output(report, args)
         output(rows, args)
 
 def discovery(args):

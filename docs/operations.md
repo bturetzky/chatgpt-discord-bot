@@ -20,7 +20,9 @@ kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin memories 
 
 Global `--json` and `--guild-id` options precede the subcommand. Inspection commands are read-only; `--verify-pinecone` makes read-only remote fetches. SQLite `accepted` does not by itself prove the vector still exists; a `not_found` result requires investigation of vector identity, namespace and deduplication, not automatic deletion. The previously observed discrepancy was operator-verified and is not an open acceptance item.
 
-`status` shows integrity, flags and row counts; `reactions` reports recorded decisions, posting outcomes, selected emoji and message links; `discovery` reports six-hour budgets, runs, reasons, source URLs and any shadow drafts (all guilds by default); `archive` reports coverage/cursors; `memories` reports candidates and extraction usage. Historical shadow rows have no posting outcome. An `attempting` row may represent an interrupted request with an uncertain outcome.
+`status` shows integrity, flags and row counts. `reactions` shows pending windows and scheduling state, rolling model attempts, triggers, window sizes, reasons, token usage, selected emoji and message links, and posting outcomes. Historical shadow rows have no posting outcome. An `attempting` row may represent an interrupted request with an uncertain outcome.
+
+`discovery` reports six-hour budgets, runs, reasons, source URLs and shadow drafts across all guilds by default. `archive` reports coverage and cursors. `memories` reports candidates and extraction usage.
 
 ## Two different backfills
 
@@ -48,18 +50,20 @@ kubectl exec deploy/chatgpt-discord-bot -- \
 
 The second command's timestamps are **illustrative**, not current operational dates. Completed extraction batches are skipped. Narrow `--chunk-hours` if bounded window/row limits are exceeded. Model calls cost money. **Critical:** although the CLI does not directly publish to Pinecone, an enabled autonomous worker may later evaluate and publish the resulting proposals. It is not a production-safe dry run. Use dev and obtain approval for production historical processing.
 
-## Live emoji reaction regression procedure (operator-verified)
+## Conversation reaction dev acceptance
 
-Live reaction posting and pile-ons have already been verified by the operator. Use these steps only for regressions or changed behavior. Select the dev Kubernetes namespace and use a dev text channel in the configured guild with persistent SQLite. The bot needs View Channel, Read Message History and Add Reactions. Choose fresh human messages with at least 12 characters and allow for recent channel and author cooldowns.
+After dev deployment, use a text channel in the configured guild with persistent SQLite and View Channel, Read Message History and Add Reactions permissions. Allow for recent channel and author cooldowns and check the rolling evaluation budget. Leave the dev test prefix out of the timing checks.
 
-1. Send a playful message such as “The rubber duck found the bug before I did.” With the existing dev test prefix configured, start the message with that prefix to force sampling. Wait 60–90 seconds for a decision. The model can still ignore it.
-2. On a fresh message, have two different people add an emoji. Look for a `pile_on` evaluation if the message was not independently sampled. If the bot posts, compare the visible emoji with the CLI result.
-3. As a negative case, have one person add two emoji to a message. This alone should never trigger a pile-on. An `ignored` decision should leave the bot absent from the reaction list.
+1. Send one playful message in a quiet channel and leave it idle. Expect a `conversation_window` decision with one new message after approximately an hour.
+2. Have participants exchange 10 fresh messages in a quiet channel, including a joke or a surprise. Expect a `conversation_window` decision without waiting an hour.
+3. On a fresh message, have one person add two emoji. This alone should produce no immediate evaluation. Have a second person add an emoji and expect a prompt `pile_on` decision. Later windows may include the message as context.
+
+The model can ignore any window. If it selects a message and the CLI reports `posted`, check that the visible bot reaction matches the selected emoji.
 
 ```bash
 kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin reactions
 kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin reactions --posted-only
-kubectl logs deploy/chatgpt-discord-bot --since=24h | grep 'Reaction evaluated'
+kubectl logs deploy/chatgpt-discord-bot --since=24h | grep -E 'Reaction (evaluating|evaluated|skipped|model failure)'
 ```
 
 The CLI includes Discord message links. Use the first command to inspect cooldowns, model decisions and Discord errors. Remove the dev test prefix after use if it was set temporarily.

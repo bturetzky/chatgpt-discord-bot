@@ -23,7 +23,7 @@ Entry points are `run.py` and `discord_bot/app.py`. `discord_bot/handlers/` cont
 
 Live guild text ingestion records edits/deletes; recent Discord history remains the normal conversation context. Startup best-effort reconciliation reads up to 100 recent messages per accessible text channel. Explicit, bounded, resumable Discord history backfill uses per-channel cursors and idempotent message IDs; it does not cover DMs, threads, all historical deletions or an unbounded crawl. See [operations](operations.md).
 
-Reaction observations, budgets and evaluations use separate SQLite tables, not FTS5. Historical archive messages are not replayed as reaction candidates.
+Reaction observations and evaluations use SQLite tables alongside the archive. Only live gateway messages enter the reaction queue. Imported messages can provide context.
 
 ## Autonomous server memory
 
@@ -37,11 +37,11 @@ The existing Pinecone store remains the retrieval source, including legacy recor
 
 ## Live emoji reactions
 
-`discord_bot/handlers/reaction_shadow.py` evaluates recent eligible messages after a 60-second delay. It samples 1 in 12 independent messages and also considers pile-ons with at least two distinct observed human reactors. Both paths share a persisted rolling limit of 48 model evaluations in 24 hours and a queue of at most 16 delayed candidates. The dev test prefix can force independent sampling while leaving eligibility and limits in effect.
+`discord_bot/handlers/reaction_shadow.py` evaluates a text channel when it has 10 pending human messages or its oldest pending message has waited about an hour. A gateway-ready worker checks due channels every 30 seconds, including quiet channels. Reactions from two distinct observed humans can immediately trigger an evaluation of a single pending message with surrounding context. Each request includes up to 20 archived messages and can select one eligible message and emoji or return ignore. Previously evaluated messages can appear as context.
 
-A positive model decision can post a standard emoji from the evaluator allowlist or an observed custom emoji usable in the configured guild. The bot fetches the current message before posting. Successful posts cool down the channel for five minutes and the author for 30 minutes. After 12 successes in a rolling 24 hours, roughly one in four otherwise eligible positive decisions can post. These limits apply at all hours.
+SQLite stores pending eligibility on live archive rows. Both triggers serialize evaluation and share a persisted rolling budget of 48 model attempts per 24 hours. A completed decision atomically marks its candidates processed. Failed or interrupted evaluations leave those candidates queued for retry, and the attempts count against the budget.
 
-SQLite reserves each message before evaluation and records the posting outcome separately from the model decision. An interrupted Discord request can leave an uncertain attempt. Previously evaluated messages are never retried, including after a restart.
+The bot fetches the selected message before posting a standard or observed usable custom emoji. Successful posts cool down the channel for five minutes and the author for 30 minutes. After 12 successes in 24 hours, the existing deterministic pacing allows roughly one in four otherwise eligible decisions to post. SQLite records the Discord attempt before sending. An interrupted request can leave an uncertain outcome and is never automatically reposted.
 
 ## Proactive discovery shadow
 

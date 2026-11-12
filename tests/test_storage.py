@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from discord_bot.storage import Database
+from discord_bot.storage.database import MIGRATIONS
 
 
 class DatabaseTests(unittest.TestCase):
@@ -13,10 +14,15 @@ class DatabaseTests(unittest.TestCase):
             with Database(path) as database:
                 self.assertEqual(database.connection.execute("PRAGMA journal_mode").fetchone()[0], "wal")
                 self.assertEqual(database.connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
-                self.assertEqual(database.connection.execute("SELECT version FROM schema_migrations").fetchall(), [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,), (9,), (10,), (11,), (12,), (13,)])
+                versions = database.connection.execute(
+                    "SELECT version FROM schema_migrations ORDER BY version"
+                ).fetchall()
+                self.assertEqual(versions, [(version,) for version in range(1, len(MIGRATIONS) + 1)])
                 self.assertTrue(database.integrity_check())
             with Database(path) as database:
-                self.assertEqual(database.connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0], 13)
+                self.assertEqual(database.connection.execute(
+                    "SELECT COUNT(*) FROM schema_migrations"
+                ).fetchone()[0], len(MIGRATIONS))
 
     def test_refuses_memory_database_and_missing_parent(self):
         with self.assertRaises(ValueError):

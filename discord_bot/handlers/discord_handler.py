@@ -38,7 +38,7 @@ class DiscordHandler:
         async def on_ready():
             logging.info('Discord gateway ready: bot_id=%s guilds=%d message_content_intent=%s', self.client.user.id, len(self.client.guilds), self.client.intents.message_content)
             if self.reaction_shadow is not None:
-                self.reaction_shadow.bot_user_id = str(self.client.user.id)
+                self.reaction_shadow.start()
             if (self.archive is not None and self._memory_task is None
                     and os.getenv('AUTONOMOUS_MEMORY_ENABLED', 'false').lower() == 'true'):
                 guild_id = os.getenv('AUTONOMOUS_MEMORY_GUILD_ID') or os.getenv('REACTION_SHADOW_GUILD_ID')
@@ -72,7 +72,7 @@ class DiscordHandler:
                     logging.exception('Discord message archive write failed')
             if self.reaction_shadow is not None and self.archive is not None:
                 try:
-                    self.reaction_shadow.observe_message(message, bot_id=self.client.user.id)
+                    self.reaction_shadow.observe_message(message)
                 except Exception:
                     logging.exception('Reaction message gate failed')
             await self.process_message(message)
