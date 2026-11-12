@@ -78,7 +78,7 @@ Deployment manifests and Secrets belong to [homelab-gitops](https://github.com/b
 ## Documentation
 
 - [Architecture and current behavior](docs/architecture.md)
-- [Unfinished work and pending acceptance](docs/backlog.md)
+- [Approved feature backlog and evaluation ideas](docs/backlog.md)
 - [Deployment and promotion](docs/deployment.md)
 - [Operations, diagnostics and smoke tests](docs/operations.md)
 - [Agent and documentation rules](AGENTS.md)

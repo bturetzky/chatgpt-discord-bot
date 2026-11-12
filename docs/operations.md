@@ -8,7 +8,7 @@ Use the existing bot container and persistent SQLite database; there is no separ
 kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin --help
 kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin status
 kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin reactions
-kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin reactions --react-only
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin reactions --posted-only
 kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin archive
 kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin memories --stats
 kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin memories --limit 20
@@ -45,9 +45,9 @@ kubectl -n discord-dev exec deploy/chatgpt-discord-bot -- \
 
 The second command's timestamps are **illustrative**, not current operational dates. Completed extraction batches are skipped. Narrow `--chunk-hours` if bounded window/row limits are exceeded. Model calls cost money. **Critical:** although the CLI does not directly publish to Pinecone, an enabled autonomous worker may later evaluate and publish the resulting proposals. It is not a production-safe dry run. Use dev and obtain approval for production historical processing.
 
-## Verify live emoji reactions
+## Live emoji reaction regression procedure (operator-verified)
 
-Select the dev Kubernetes namespace and use a dev text channel in the configured guild with persistent SQLite. The bot needs View Channel, Read Message History and Add Reactions. Choose fresh human messages with at least 12 characters and allow for recent channel and author cooldowns.
+Live reaction posting and pile-ons have already been verified by the operator. Use these steps only for regressions or changed behavior. Select the dev Kubernetes namespace and use a dev text channel in the configured guild with persistent SQLite. The bot needs View Channel, Read Message History and Add Reactions. Choose fresh human messages with at least 12 characters and allow for recent channel and author cooldowns.
 
 1. Send a playful message such as “The rubber duck found the bug before I did.” With the existing dev test prefix configured, start the message with that prefix to force sampling. Wait 60–90 seconds for a decision. The model can still ignore it.
 2. On a fresh message, have two different people add an emoji. Look for a `pile_on` evaluation if the message was not independently sampled. If the bot posts, compare the visible emoji with the CLI result.
@@ -79,7 +79,7 @@ For a discovery `provider_error`, match the SQLite run ID to the application log
 
 ## Dev Discord smoke test
 
-After ARC dev rollout verification, **actually select the bot from Discord's @-mention picker**; typing a literal `@chatgpt-dev` string is not sufficient. Test a brief calculation (17 × 23 = 391), weather lookup, Brave search for official Python docs, public webpage fetch (`https://docs.python.org/3/`), and an existing-memory question that does not write new memories. Expect an accurate result or explicit provider failure, never a fabricated read. For changed image handling, test direct and replied-to images plus unsupported/expired attachments. For memory changes, test retrieval and source attribution without inserting false permanent facts. Live image/replied-image understanding and #99 retrieval enhancement have already been operator-verified; repeat targeted tests only when behavior changes.
+After ARC dev rollout verification, **actually select the bot from Discord's @-mention picker**; typing a literal `@chatgpt-dev` string is not sufficient. Test a brief calculation (17 × 23 = 391), weather lookup, Brave search for official Python docs, public webpage fetch (`https://docs.python.org/3/`), and an existing-memory question that does not write new memories. Expect an accurate result or explicit provider failure, never a fabricated read. For changed image handling, test direct and replied-to images plus unsupported/expired attachments. For memory changes, test retrieval and source attribution without inserting false permanent facts. Desktop-pasted PNG, image embed/reply handling, live reactions, and #99 retrieval enhancement have already been operator-verified; repeat targeted tests only when behavior changes.
 
 ```bash
 kubectl -n discord-dev rollout status deployment/chatgpt-discord-bot --timeout=120s
