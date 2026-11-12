@@ -241,6 +241,14 @@ MIGRATIONS = (
         "ALTER TABLE shadow_evaluations ADD COLUMN posting_outcome TEXT",
         "ALTER TABLE shadow_evaluations ADD COLUMN posted_at TEXT",
     ),
+    (
+        # NULL is archive-only, a positive timestamp is queued, and zero is processed.
+        "ALTER TABLE messages ADD COLUMN reaction_queued_at INTEGER",
+        """CREATE INDEX reaction_pending ON messages(guild_id, channel_id, reaction_queued_at)
+            WHERE reaction_queued_at > 0 AND deleted_at IS NULL""",
+        "ALTER TABLE shadow_evaluations ADD COLUMN selected_message_id TEXT",
+        "ALTER TABLE shadow_evaluations ADD COLUMN new_message_count INTEGER",
+    ),
 )
 
 

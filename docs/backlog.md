@@ -2,6 +2,10 @@
 
 This is the only list of **approved unfinished features** and concrete follow-up decisions. It is not a priority queue, release history, or speculative technical-debt inventory. A feature is ready for Codex when its scope and acceptance boundary are explicit. Implemented behavior belongs in [architecture](architecture.md), operator procedures in [operations](operations.md), and completed work in GitHub PR history.
 
+## Conversation-aware emoji reactions
+
+Dev Discord acceptance is pending for hourly quiet-channel evaluation, the 10-message trigger and immediate pile-ons with conversation context. Use the [dev acceptance procedure](operations.md#conversation-reaction-dev-acceptance).
+
 ## Approved feature assignments
 
 ### Memory lifecycle — assignment A: reliable publication

@@ -10,7 +10,7 @@ Self-hosted Python Discord bot for a small trusted server, with OpenAI Responses
 - SQLite message archive with FTS5 search, edit/delete handling, restart reconciliation and bounded historical import.
 - Autonomous evidence-grounded memory extraction and guarded **create-only** Pinecone publication; semantic and participant-aware retrieval. Operator-verified in production.
 - With a SQLite archive, proactive discovery shadow mode automatically evaluates recent public sources for eligible Discord text channels and record decisions and drafts in SQLite. See [dev acceptance](docs/operations.md#discovery-shadow-dev-acceptance).
-- Occasional live emoji reactions in the configured guild, triggered by sampled messages or reactions from two distinct people. Supports standard and observed server emoji.
+- Occasional live emoji reactions in the configured guild, triggered by conversation windows or reactions from two distinct people. Supports standard and observed server emoji.
 
 Memory is shared within the bot's existing trust model; legacy Pinecone records may lack participant provenance. Do not use the bot for sensitive conversations. Memory correction/deletion and crash-safe cross-store publication remain future work; see [backlog](docs/backlog.md).
 
@@ -52,7 +52,7 @@ Runtime settings:
 | `DISCORD_SQLITE_PATH` | Persistent SQLite file; needed for archive/reaction/memory worker; dev/prod use separate PVCs |
 | `REACTION_SHADOW_GUILD_ID` | Numeric guild ID for live reactions when persistent SQLite is configured |
 | `REACTION_SHADOW_MODEL` | Reaction evaluator model; defaults to `OPENAI_MODEL` |
-| `REACTION_SHADOW_TEST_PREFIX` | Dev-only deterministic test prefix; unset in production |
+| `REACTION_SHADOW_TEST_PREFIX` | Dev-only prefix to trigger an immediate conversation evaluation; unset in production |
 | `AUTONOMOUS_MEMORY_ENABLED` | Opt-in background extraction/evaluation/publication, default `false` |
 | `AUTONOMOUS_MEMORY_GUILD_ID` | Target guild for worker; falls back to shadow guild setting |
 | `OPENAI_MODEL` | Main Responses model override |
