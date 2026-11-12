@@ -91,6 +91,17 @@ class OperatorCliTests(unittest.TestCase):
         self.assertEqual(window["new_message_count"], 10)
         self.assertEqual(window["url"], "https://discord.com/channels/123/456/789")
 
+    def test_reactions_reports_model_retry_delay(self):
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE messages SET reaction_queued_at=unixepoch('now')-3601")
+            db.execute(
+                """INSERT INTO shadow_evaluations VALUES (
+                   '123','456','failed-key',datetime('now'),'failed','conversation_window',
+                   NULL,NULL,'TimeoutError',0,0,NULL,NULL,NULL,1)"""
+            )
+        report = json.loads(self.capture(admin.reactions))
+        self.assertEqual(report["pending_windows"][0]["scheduling_state"], "model_retry_delay")
+
     def test_reactions_empty_guild(self):
         result = self.capture(admin.reactions, guild_id="999")
         self.assertIn('"evaluations": []', result)

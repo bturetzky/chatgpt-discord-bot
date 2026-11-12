@@ -54,7 +54,8 @@ def reactions(args):
     gid = guild(args)
     with connect() as db:
         totals = [dict(r) for r in db.execute(
-            """SELECT trigger, status, COALESCE(decision,'pending') AS decision,
+            """SELECT trigger, status,
+                      COALESCE(decision, CASE WHEN status='reserved' THEN 'pending' END) AS decision,
                       posting_outcome, COUNT(*) AS count
                FROM shadow_evaluations WHERE guild_id=?
                GROUP BY trigger, status, decision, posting_outcome""", (gid,))]
@@ -68,11 +69,16 @@ def reactions(args):
                       datetime(MIN(reaction_queued_at), 'unixepoch') AS oldest_queued_at,
                       CASE WHEN COUNT(*) < ? AND MIN(reaction_queued_at) > unixepoch('now') - ?
                            THEN 'waiting_for_interval_or_threshold'
+                           WHEN EXISTS (SELECT 1 FROM shadow_evaluations e
+                                        WHERE e.guild_id=m.guild_id AND e.channel_id=m.channel_id
+                                          AND e.status='failed' AND e.new_message_count IS NOT NULL
+                                          AND e.evaluated_at > datetime('now', ?))
+                           THEN 'model_retry_delay'
                            WHEN ? >= ? THEN 'evaluation_budget'
                            ELSE 'due' END AS scheduling_state
-               FROM messages WHERE guild_id=? AND reaction_queued_at > 0 AND deleted_at IS NULL
+               FROM messages m WHERE guild_id=? AND reaction_queued_at > 0 AND deleted_at IS NULL
                GROUP BY channel_id ORDER BY MIN(reaction_queued_at)""",
-            (ReactionShadow.MESSAGE_THRESHOLD, ReactionShadow.INTERVAL, used,
+            (ReactionShadow.MESSAGE_THRESHOLD, ReactionShadow.INTERVAL, ReactionShadow.RETRY_LOOKBACK, used,
              ReactionShadow.MAX_EVALUATIONS, gid),
         )]
         where = "AND decision='react'" if args.react_only else ""

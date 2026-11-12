@@ -240,14 +240,43 @@ class WindowTests(unittest.IsolatedAsyncioTestCase):
                FROM shadow_evaluations"""
         ).fetchone()), ("4", 10, "posted", 42))
 
-    async def test_window_rejects_a_target_that_is_only_context(self):
+    async def test_invalid_model_responses_are_recorded_and_not_retried(self):
         self.ingest(1, live=False)
-        self.ingest(2)
-        self.age(3601)
-        self.create.return_value = model_response("react", "1", "unicode:🔥")
-        await self.worker._process("2", None, "conversation_window", False)
+        malformed = model_response()
+        malformed.output_text = "{not JSON"
+        cases = (
+            (model_response("react", "1", "unicode:🔥"), "invalid_target_id"),
+            (model_response("react", "3", "custom:42"), "invalid_emoji"),
+            (malformed, "invalid_model_output"),
+        )
+        for n, (response, reason) in enumerate(cases, start=2):
+            with self.subTest(reason=reason):
+                self.ingest(n)
+                self.age(3601)
+                self.create.return_value = response
+                await self.worker._process("2", None, "conversation_window", False)
+                await self.worker._process("2", None, "conversation_window", False)
+                self.assertEqual(self.create.await_count, n - 1)
+                self.assertEqual(self.db.execute(
+                    """SELECT status, reason_category, posting_outcome, input_tokens, output_tokens
+                       FROM shadow_evaluations ORDER BY rowid DESC LIMIT 1"""
+                ).fetchone(), ("invalid_response", reason, "not_attempted", 42, 12))
         self.worker.discord_client.get_channel.assert_not_called()
-        self.assertEqual(self.db.execute("SELECT status FROM shadow_evaluations").fetchone()[0], "failed")
+
+    async def test_malformed_stored_custom_emoji_are_skipped(self):
+        self.ingest(1)
+        custom = Mock()
+        guild = Mock(get_emoji=Mock(return_value=custom))
+        self.worker.discord_client.get_guild.return_value = guild
+        for key in ("custom:", "custom:bad", "custom:４２", "custom:0", "custom:18446744073709551616",
+                    b"custom:42", "custom:42"):
+            human_reaction(self.db, 1, 8, key)
+        self.pile_on(1)
+        await self.drain()
+        row = self.inputs()[0]["messages"][0]
+        self.assertEqual(row["reactions"], {"custom:42": 1, "unicode:🔥": 2})
+        self.assertIn("custom:42", row["allowed_emoji"])
+        guild.get_emoji.assert_called_once_with(42)
 
     async def test_migration_preserves_historical_evaluations_and_archive(self):
         path = str(Path(self.path).with_name("historical.sqlite3"))
@@ -305,7 +334,7 @@ class WindowTests(unittest.IsolatedAsyncioTestCase):
             "SELECT reaction_queued_at FROM messages WHERE message_id='2'"
         ).fetchone()[0], 0)
 
-    async def test_model_failure_and_restart_keep_only_unevaluated_targets(self):
+    async def test_model_retry_delay_survives_restart_and_does_not_consume_budget(self):
         self.ingest(1)
         self.pile_on(1)
         await self.drain()
@@ -318,7 +347,20 @@ class WindowTests(unittest.IsolatedAsyncioTestCase):
         self.database.open()
         self.db = self.database.connection
         self.worker = self.new_worker()
+        self.worker.POLL_INTERVAL = 0
         self.worker.start()
+        for _ in range(3):
+            await asyncio.sleep(0)
+            self.assertFalse(self.worker.pending)
+        self.pile_on(2)
+        self.assertFalse(self.worker.pending)
+        self.assertEqual(self.create.await_count, 2)
+        self.assertEqual(self.db.execute(
+            "SELECT reason_category FROM shadow_evaluations WHERE status='failed'"
+        ).fetchone()[0], "TimeoutError")
+        self.db.execute(
+            "UPDATE shadow_evaluations SET evaluated_at=datetime('now', '-61 minutes') WHERE status='failed'"
+        )
         await asyncio.sleep(0)
         await self.drain()
         self.assertEqual([p["eligible_message_ids"] for p in self.inputs()], [["1"], ["2"], ["2"]])

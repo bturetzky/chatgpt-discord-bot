@@ -18,6 +18,7 @@ DEFAULT_EMOJI = ("unicode:😂", "unicode:💀", "unicode:🔥", "unicode:🤨",
 class ReactionShadow:
     INTERVAL = 3600
     POLL_INTERVAL = 30
+    RETRY_LOOKBACK = "-1 hour"
     MESSAGE_THRESHOLD = 10
     WINDOW_SIZE = 20
     MAX_EVALUATIONS = 48
@@ -116,9 +117,22 @@ class ReactionShadow:
             return "archive_only"
         return None
 
+    def _retry_delayed(self, channel_id):
+        return self.db.execute(
+            """SELECT 1 FROM shadow_evaluations
+               WHERE guild_id=? AND channel_id=? AND status='failed'
+                 AND new_message_count IS NOT NULL AND evaluated_at > datetime('now', ?)
+               LIMIT 1""",
+            (self.guild_id, channel_id, self.RETRY_LOOKBACK),
+        ).fetchone() is not None
+
     def _schedule(self, channel_id, message_id=None, *, force=False):
         key = (channel_id, message_id)
         trigger = "pile_on" if message_id is not None else "conversation_window"
+        if self._retry_delayed(channel_id):
+            logging.debug("Reaction skipped: trigger=%s channel_id=%s reason=model_retry_delay",
+                          trigger, channel_id)
+            return
         if key in self.pending or len(self.pending) >= 16:
             logging.info("Reaction skipped: trigger=%s channel_id=%s message_id=%s reason=%s",
                          trigger, channel_id, message_id,
@@ -151,6 +165,8 @@ class ReactionShadow:
                 elif (message_id is None and not force and count < self.MESSAGE_THRESHOLD
                       and candidates[0][1] > time.time() - self.INTERVAL):
                     skip = "not_due"
+                elif self._retry_delayed(channel_id):
+                    skip = "model_retry_delay"
                 elif self.db.execute(
                     """SELECT COUNT(*) FROM shadow_evaluations
                        WHERE guild_id=? AND evaluated_at >= datetime('now', '-24 hours')""",
@@ -212,21 +228,27 @@ class ReactionShadow:
                 (self.guild_id, channel_id, message_id),
             ).fetchall()
             allowed = list(DEFAULT_EMOJI)
-            for key, _ in reactions:
+            observed = {}
+            for key, count in reactions:
+                if not isinstance(key, str):
+                    continue
                 if key.startswith("unicode:"):
                     if key not in allowed:
                         allowed.append(key)
-                elif guild is not None:
-                    emoji = guild.get_emoji(int(key.split(":", 1)[1]))
+                else:
+                    match = re.fullmatch(r"custom:([1-9][0-9]{0,19})", key)
+                    if match is None or (emoji_id := int(match[1])) >= 2**64:
+                        continue
+                    emoji = guild.get_emoji(emoji_id) if guild is not None else None
                     if emoji is not None and emoji.is_usable():
                         allowed.append(key)
+                observed[key] = count
             context.append({"message_id": message_id, "author_id": author, "content": content,
-                            "reactions": dict(reactions), "allowed_emoji": allowed if message_id in candidate_ids else []})
+                            "reactions": observed, "allowed_emoji": allowed if message_id in candidate_ids else []})
         return context
 
     async def _evaluate(self, evaluation_id, channel_id, candidate_ids, context, trigger):
         decision = emoji = message_id = None
-        input_tokens = output_tokens = 0
         try:
             response = await asyncio.wait_for(self.client.responses.create(
                 model=self.model,
@@ -247,44 +269,51 @@ class ReactionShadow:
                 text={"format": {"type": "json_object"}},
                 store=False,
             ), timeout=25)
-            usage = getattr(response, "usage", None)
-            input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
-            output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
-            parsed = json.loads(response.output_text)
-            if not isinstance(parsed, dict):
-                raise ValueError("Invalid reaction model response")
-            decision = parsed.get("action")
-            if decision == "react":
-                message_id, emoji = parsed.get("message_id"), parsed.get("emoji_key")
-                if message_id not in candidate_ids or not any(
-                    row["message_id"] == message_id and emoji in row["allowed_emoji"] for row in context
-                ):
-                    raise ValueError("Invalid reaction target or emoji")
-            elif decision != "ignore":
-                raise ValueError("Invalid reaction action")
         except Exception as exc:
+            reason = type(exc).__name__
             self.db.execute(
-                """UPDATE shadow_evaluations SET status='failed', reason_category=?,
-                   input_tokens=?, output_tokens=? WHERE message_id=?""",
-                (type(exc).__name__, input_tokens, output_tokens, evaluation_id),
+                """UPDATE shadow_evaluations SET status='failed', reason_category=? WHERE message_id=?""",
+                (reason, evaluation_id),
             )
-            logging.warning("Reaction model failure: trigger=%s channel_id=%s new_messages=%d "
-                            "reason=%s input_tokens=%d output_tokens=%d",
-                            trigger, channel_id, len(candidate_ids), type(exc).__name__,
-                            input_tokens, output_tokens)
+            logging.warning("Reaction model failure: trigger=%s channel_id=%s new_messages=%d reason=%s",
+                            trigger, channel_id, len(candidate_ids), reason)
             return
 
-        label = parsed.get("reason_category")
-        reason = label if isinstance(label, str) and re.fullmatch(
-            r"[a-z][a-z0-9_]{0,47}", label) else "unspecified"
-        outcome = "pending" if decision == "react" else "ignored"
+        usage = getattr(response, "usage", None)
+        input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+        output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+        try:
+            parsed = json.loads(response.output_text)
+        except (AttributeError, ValueError, TypeError, RecursionError):
+            parsed = None
+
+        status, reason, outcome = "invalid_response", "invalid_model_output", "not_attempted"
+        action = parsed.get("action") if isinstance(parsed, dict) else None
+        if action == "ignore":
+            decision, outcome = "ignore", "ignored"
+        elif action == "react":
+            target = parsed.get("message_id")
+            requested_emoji = parsed.get("emoji_key")
+            if target not in candidate_ids:
+                reason = "invalid_target_id"
+            elif not any(row["message_id"] == target and requested_emoji in row["allowed_emoji"]
+                         for row in context):
+                reason = "invalid_emoji"
+            else:
+                decision, message_id, emoji, outcome = "react", target, requested_emoji, "pending"
+        if decision is not None:
+            status = "completed"
+            label = parsed.get("reason_category")
+            reason = label if isinstance(label, str) and re.fullmatch(
+                r"[a-z][a-z0-9_]{0,47}", label) else "unspecified"
+
         self.db.execute("BEGIN IMMEDIATE")
         try:
             self.db.execute(
-                """UPDATE shadow_evaluations SET status='completed', decision=?, selected_message_id=?,
+                """UPDATE shadow_evaluations SET status=?, decision=?, selected_message_id=?,
                    emoji_key=?, reason_category=?, input_tokens=?, output_tokens=?, posting_outcome=?
                    WHERE message_id=?""",
-                (decision, message_id, emoji, reason, input_tokens, output_tokens, outcome, evaluation_id),
+                (status, decision, message_id, emoji, reason, input_tokens, output_tokens, outcome, evaluation_id),
             )
             self.db.executemany("UPDATE messages SET reaction_queued_at=0 WHERE message_id=?",
                                 [(key,) for key in candidate_ids])
@@ -311,8 +340,8 @@ class ReactionShadow:
                 (outcome, outcome, evaluation_id),
             )
         logging.info("Reaction evaluated: trigger=%s channel_id=%s new_messages=%d message_id=%s "
-                     "decision=%s reason=%s emoji=%s outcome=%s input_tokens=%d output_tokens=%d",
-                     trigger, channel_id, len(candidate_ids), message_id, decision, reason, emoji,
+                     "status=%s decision=%s reason=%s emoji=%s outcome=%s input_tokens=%d output_tokens=%d",
+                     trigger, channel_id, len(candidate_ids), message_id, status, decision, reason, emoji,
                      outcome, input_tokens, output_tokens)
 
     def _is_deleted(self, message_id):
