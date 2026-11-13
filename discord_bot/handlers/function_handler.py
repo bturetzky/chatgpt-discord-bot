@@ -44,10 +44,17 @@ class FunctionHandler:
         started = time.monotonic()
         try:
             instance = function_class()
-            result = (instance.execute_with_context(args, context)
-                      if function_name in CONTEXT_TOOLS else instance.execute(args))
-            if inspect.isawaitable(result):
-                result = await asyncio.wait_for(result, timeout=TOOL_TIMEOUT)
+            if function_name in CONTEXT_TOOLS:
+                execute, execution_args = instance.execute_with_context, (args, context)
+            else:
+                execute, execution_args = instance.execute, (args,)
+            async with asyncio.timeout(TOOL_TIMEOUT):
+                if inspect.iscoroutinefunction(execute):
+                    result = execute(*execution_args)
+                else:
+                    result = await asyncio.to_thread(execute, *execution_args)
+                if inspect.isawaitable(result):
+                    result = await result
         except asyncio.TimeoutError:
             result = tool_error("TIMEOUT", "Tool timed out. Try another source or retry if budget allows.", retryable=True)
         except Exception as exc:

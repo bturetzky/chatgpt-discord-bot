@@ -470,7 +470,8 @@ class YouTubeToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["content_truncated"])
 
     async def test_whole_video_path_returns_late_captions_end_to_end(self):
-        snippets = [SimpleNamespace(text=f"caption {n}", start=n * 5, duration=4) for n in range(900)]
+        snippets = [SimpleNamespace(text=f"caption {n} " + "字" * 44, start=n * 5, duration=4)
+                    for n in range(900)]
         with patch("discord_bot.handlers.function_handler.FunctionHandler.load_functions", return_value={"read_youtube": ReadYouTube}):
             handler = ChatGPTHandler("test-key")
         handler.client = MagicMock()
@@ -482,7 +483,7 @@ class YouTubeToolTests(unittest.IsolatedAsyncioTestCase):
         sent = handler.client.responses.create.await_args.kwargs["input"]
         result = json.loads(next(item for item in sent if item.get("type") == "function_call_output")["output"])
         self.assertEqual(len(result["transcript"]), 900)
-        self.assertEqual(result["transcript"][-1]["text"], "caption 899")
+        self.assertEqual(result["transcript"][-1]["text"], "caption 899 " + "字" * 44)
         self.assertFalse(result["content_truncated"])
 
     async def test_failed_automatic_continuation_reports_partial_coverage(self):

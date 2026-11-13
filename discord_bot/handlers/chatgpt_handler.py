@@ -12,6 +12,7 @@ from ..functions.base import tool_error
 from ..functions.react_to_message import ReactToMessage, ReplyReactions
 from .function_handler import CONTEXT_TOOLS, TOOL_TIMEOUT, FunctionHandler
 from .personality_prompt import build_system_prompt
+from .tool_output import bound_tool_output
 from .usage_metrics import ChatUsage
 
 GPT_MODEL = os.getenv("OPENAI_MODEL", "gpt-6.1-terra")
@@ -95,15 +96,15 @@ class ChatGPTHandler:
                 }
                 budget_instructions = (
                     f" Internal tool budget: {json.dumps(budget, separators=(',', ':'))}. "
-                    f"Async tools time out after {TOOL_TIMEOUT} seconds. "
-                    "Failed calls count against the function cap. Reads admitted for execution spend a read, "
-                    "except YouTube URL or argument validation errors. Automatic YouTube continuation spends a call and a shared read. "
-                    "Webpage cursors issued for the same URL use the separate continuation allowance. "
-                    "Keep the budget internal. Skip calls with exhausted allowances. "
-                    "If you cannot research further, answer using the information already gathered."
+                    f"Tool timeout: {TOOL_TIMEOUT}s. Failures spend a call; YouTube validation "
+                    "failures spare the shared read. Automatic YouTube paging spends both. "
+                    "Use the webpage continuation allowance only with a cursor issued for that URL. "
+                    "Keep counts internal and skip exhausted allowances."
                 )
                 if not remaining:
-                    budget_instructions += " Answer now using the information already gathered."
+                    budget_instructions += " Answer now using gathered evidence."
+                else:
+                    budget_instructions += " If further research is blocked, answer using gathered evidence."
                 response = await self.client.responses.create(
                     model=GPT_MODEL,
                     instructions=instructions + budget_instructions,
@@ -223,7 +224,7 @@ class ChatGPTHandler:
                     conversation.append({
                         "type": "function_call_output",
                         "call_id": call.call_id,
-                        "output": str(result),
+                        "output": bound_tool_output(call.name, result),
                     })
             return "Sorry, I reached the limit for tool calls."
         except (OpenAIError, asyncio.TimeoutError) as exc:

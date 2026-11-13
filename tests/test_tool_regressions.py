@@ -1,6 +1,7 @@
 """Mocked tool and OpenAI failure regressions; no network or credentials needed."""
 import asyncio
 import json
+import threading
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,6 +13,7 @@ from pydantic import BaseModel
 from discord_bot.handlers import chatgpt_handler
 from discord_bot.handlers.chatgpt_handler import ChatGPTHandler
 from discord_bot.handlers.function_handler import FunctionHandler
+from discord_bot.handlers.tool_output import MAX_TOOL_RESULT_CHARS
 from discord_bot.functions.get_weather import WeatherLookup
 from discord_bot.functions.get_webpage_contents import GetWebPageContents
 from discord_bot.functions.search_web import SearchWeb
@@ -99,6 +101,30 @@ class OpenAIToolRegressions(unittest.IsolatedAsyncioTestCase):
                    if item["type"] == "function_call_output"]
         self.assertIn("failed or timed out", outputs[0]["limitations"][0])
         self.assertEqual(outputs[1]["error"]["code"], "READ_LIMIT")
+
+    async def test_oversized_tool_results_are_bounded_before_model_replay(self):
+        create = self.handler.client.responses.create
+        create.side_effect = [
+            response([tool_call("object", "search_web", "{}"),
+                      tool_call("list", "search_web", "{}"),
+                      tool_call("text", "search_web", "{}")]),
+            response([], "Done"),
+        ]
+        large = "x" * MAX_TOOL_RESULT_CHARS
+        self.handler.function_handler.execute_function.side_effect = [
+            json.dumps({"ok": True, "data": large}),
+            json.dumps([{"title": "First"}, {"data": large}]),
+            "\\\n" * MAX_TOOL_RESULT_CHARS,
+        ]
+        self.assertEqual(await self.handler.get_response([], None), "Done")
+        outputs = [item["output"] for item in create.await_args.kwargs["input"]
+                   if item["type"] == "function_call_output"]
+        for output in outputs:
+            self.assertLessEqual(len(output), MAX_TOOL_RESULT_CHARS)
+            self.assertTrue(json.loads(output)["result_truncated"])
+        self.assertEqual(json.loads(outputs[0])["result"], {"ok": True})
+        self.assertEqual(json.loads(outputs[1])["result"], [{"title": "First"}])
+        self.assertTrue(json.loads(outputs[2])["result"])
 
     async def test_no_tools_sends_only_the_model_reply(self):
         self.handler.send_interim_message = AsyncMock()
@@ -266,6 +292,28 @@ class OpenAIToolRegressions(unittest.IsolatedAsyncioTestCase):
 
 
 class FunctionExecutionRegressions(unittest.IsolatedAsyncioTestCase):
+    async def test_sync_tool_times_out_without_blocking_event_loop(self):
+        started = threading.Event()
+        release = threading.Event()
+
+        class SyncTool:
+            def execute(self, args):
+                started.set()
+                release.wait(2)
+                return "Finished"
+
+        with patch.object(FunctionHandler, "load_functions", return_value={"sync": SyncTool}), \
+                patch.object(FunctionHandler, "get_api_functions", return_value=[]):
+            handler = FunctionHandler()
+        try:
+            with patch("discord_bot.handlers.function_handler.TOOL_TIMEOUT", 0.1):
+                task = asyncio.create_task(handler.execute_function("sync", {}))
+                self.assertTrue(await asyncio.to_thread(started.wait, 1))
+                result = json.loads(await task)
+                self.assertEqual(result["error"]["code"], "TIMEOUT")
+        finally:
+            release.set()
+
     async def test_timeout_and_provider_errors_exclude_sensitive_details(self):
         tool = MagicMock()
         with patch.object(FunctionHandler, "load_functions", return_value={"sample": tool}), \
@@ -347,7 +395,6 @@ class WebpageToolRegressions(unittest.IsolatedAsyncioTestCase):
 
 class LoggingRegressions(unittest.TestCase):
     def test_tool_registration_logs_names_not_schema(self):
-        from discord_bot.handlers.function_handler import FunctionHandler
         handler = object.__new__(FunctionHandler)
         handler.functions = {"search_web": MagicMock(name="search_web")}
         handler.functions["search_web"].return_value.description = "secret-description"
