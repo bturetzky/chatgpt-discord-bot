@@ -2,6 +2,10 @@
 
 This is the only list of **approved unfinished features** and concrete follow-up decisions. It is not a priority queue, release history, or speculative technical-debt inventory. A feature is ready for Codex when its scope and acceptance boundary are explicit. Implemented behavior belongs in [architecture](architecture.md), operator procedures in [operations](operations.md), and completed work in GitHub PR history.
 
+## Approved on-demand LLM tool assignments
+
+The independent, unimplemented Codex assignments for tool enhancements and new callable functions are indexed in [tool designs](tool-designs/README.md). Each design has its own scope, tests and dev acceptance boundary; implement one per PR. These are distinct from background discovery, reactions and memory extraction. The index is the authoritative list of these tool assignments; do not duplicate them here.
+
 ## Direct reply emoji reactions
 
 Dev Discord acceptance is pending. Use the [dev acceptance procedure](operations.md#direct-reply-reaction-dev-acceptance).
