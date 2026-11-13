@@ -136,7 +136,8 @@ class URLReaderTests(unittest.IsolatedAsyncioTestCase):
             ({"cursor": 1}, "INVALID_CURSOR"),
             ({"cursor": "bogus"}, "INVALID_CURSOR"),
             ({"cursor": "x" * 1000}, "INVALID_CURSOR"),
-            ({"find_text": ""}, "INVALID_ARGUMENT"),
+            # Empty optional search fields are now treated as omitted; covered by
+            # test_webpage_optional_arguments rather than this rejection test.
             ({"find_text": "x" * 201}, "INVALID_ARGUMENT"),
             ({"cursor": "bogus", "find_text": "phrase"}, "INVALID_ARGUMENT"),
         ]:
