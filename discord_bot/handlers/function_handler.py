@@ -1,5 +1,11 @@
 from ..functions.base import BaseFunction
+from ..functions.react_to_message import ReactToMessage
 import asyncio, importlib, inspect, json, pkgutil, logging, time
+
+CONTEXT_TOOLS = frozenset({
+    "search_discord_history", "get_discord_conversation_context", ReactToMessage.name,
+})
+
 
 class FunctionHandler:
     def __init__(self):
@@ -30,7 +36,7 @@ class FunctionHandler:
                     args = json.loads(args)
                 instance = function_class()
                 result = (instance.execute_with_context(args, context)
-                          if function_name in ('search_discord_history', 'get_discord_conversation_context') else instance.execute(args))
+                          if function_name in CONTEXT_TOOLS else instance.execute(args))
                 result = await asyncio.wait_for(result, timeout=30) if inspect.isawaitable(result) else result
                 failed = False
                 if isinstance(result, str):

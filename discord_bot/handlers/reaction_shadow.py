@@ -11,6 +11,8 @@ from uuid import uuid4
 import discord
 from openai import AsyncOpenAI
 
+from ..reaction_emoji import usable_guild_emoji
+
 DEFAULT_EMOJI = ("unicode:😂", "unicode:💀", "unicode:🔥", "unicode:🤨",
                  "unicode:❤️", "unicode:👏", "unicode:🤘")
 
@@ -239,8 +241,8 @@ class ReactionShadow:
                     match = re.fullmatch(r"custom:([1-9][0-9]{0,19})", key)
                     if match is None or (emoji_id := int(match[1])) >= 2**64:
                         continue
-                    emoji = guild.get_emoji(emoji_id) if guild is not None else None
-                    if emoji is not None and emoji.is_usable():
+                    emoji = usable_guild_emoji(guild, emoji_id) if guild is not None else None
+                    if emoji is not None:
                         allowed.append(key)
                 observed[key] = count
             context.append({"message_id": message_id, "author_id": author, "content": content,
@@ -385,8 +387,8 @@ class ReactionShadow:
             kind, value = emoji_key.split(":", 1)
             emoji = value
             if kind == "custom":
-                emoji = message.guild.get_emoji(int(value))
-                if emoji is None or not emoji.is_usable():
+                emoji = usable_guild_emoji(message.guild, int(value))
+                if emoji is None:
                     return "emoji_unavailable"
 
             # Persist the attempt before sending. An interrupted request may have reached Discord.

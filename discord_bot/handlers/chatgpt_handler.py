@@ -8,7 +8,8 @@ from datetime import datetime
 
 from openai import AsyncOpenAI, OpenAIError
 
-from .function_handler import FunctionHandler
+from ..functions.react_to_message import ReactToMessage, ReplyReactions
+from .function_handler import CONTEXT_TOOLS, FunctionHandler
 from .personality_prompt import build_system_prompt
 from .usage_metrics import ChatUsage
 
@@ -51,16 +52,27 @@ class ChatGPTHandler:
     def get_response_system_prompt_content(self, bot_mention):
         return build_system_prompt(bot_mention, datetime.now())
 
-    async def get_response(self, messages, channel, discord_context=None):
+    async def get_response(self, messages, channel, discord_context=None, *, triggering_message=None):
         # Discord history and retrieved memories are already ordinary role/content
         # messages. Responses accepts these directly; legacy function-role messages
         # must never be constructed.
         conversation = list(messages)
+        reactions = ReplyReactions.for_message(triggering_message)
+        if reactions is not None:
+            discord_context = {**(discord_context or {}), "reply_reactions": reactions}
         tools = [
             {"type": "function", **definition}
             for definition in self.function_handler.api_functions
+            if definition["name"] != ReactToMessage.name or reactions is not None
         ]
         instructions = self.get_response_system_prompt_content(self.bot_mention)
+
+        if reactions is not None:
+            instructions += (
+                " Occasionally use react_to_message for a funny, surprising, or wholesome message "
+                "when a reaction feels natural. Skip routine messages and avoid reactions in serious "
+                "or sensitive conversations. Always continue with the normal reply, even if the tool fails."
+            )
 
         usage_metrics = ChatUsage(model=GPT_MODEL)
         started = time.monotonic()
@@ -101,7 +113,7 @@ class ChatGPTHandler:
                         update = arguments.get("quick_update")
                         if (not progress_sent and self.send_interim_message
                                 and isinstance(update, str) and update.strip()
-                                and call.name not in ("search_discord_history", "get_discord_conversation_context")):
+                                and call.name not in CONTEXT_TOOLS):
                             progress_sent = True
                             await self.send_interim_message(channel, update.strip())
                         if call.name == "read_youtube" and invalid_youtube_calls >= MAX_INVALID_YOUTUBE_CALLS:
@@ -113,7 +125,7 @@ class ChatGPTHandler:
                                 page_reads += 1
                             result = await self.function_handler.execute_function(
                                 call.name, arguments, context=discord_context
-                            ) if call.name in ('search_discord_history', 'get_discord_conversation_context') else await self.function_handler.execute_function(
+                            ) if call.name in CONTEXT_TOOLS else await self.function_handler.execute_function(
                                 call.name, arguments
                             )
                             if call.name == "read_youtube":

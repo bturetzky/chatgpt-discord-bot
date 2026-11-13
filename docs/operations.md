@@ -50,6 +50,15 @@ kubectl exec deploy/chatgpt-discord-bot -- \
 
 The second command's timestamps are **illustrative**, not current operational dates. Completed extraction batches are skipped. Narrow `--chunk-hours` if bounded window/row limits are exceeded. Model calls cost money. **Critical:** although the CLI does not directly publish to Pinecone, an enabled autonomous worker may later evaluate and publish the resulting proposals. It is not a production-safe dry run. Use dev and obtain approval for production historical processing.
 
+## Direct reply reaction dev acceptance
+
+Use the deployed dev bot in a test guild channel with Read Message History and Add Reactions permissions. Have a usable custom emoji ready. Mention the dev bot in each prompt. Reaction selection is optional, so try a few variations and check that any reaction appears on the mention that triggered the reply and that the bot sends its answer without a reaction progress message.
+
+1. “My rubber duck just asked for a performance review. What should I put on it?” Look for an occasional fitting reaction alongside an answer.
+2. “What is the capital of France?” Expect a normal answer without a reaction.
+3. Include an actual guild emoji and ask “My rubber duck got promoted! If that fits, react with this emoji or 😂 and try both, then write a one-line toast.” Expect the toast and at most one reaction from the reply. Try variations to observe the custom emoji.
+4. In a dev channel where the bot lacks Add Reactions, repeat the humorous prompt on a fresh message with no reactions. Expect the answer even if a reaction attempt fails. Automated tests verify the failure path and repeated or concurrent tool calls deterministically.
+
 ## Conversation reaction dev acceptance
 
 After dev deployment, use a text channel in the configured guild with persistent SQLite and View Channel, Read Message History and Add Reactions permissions. Allow for recent channel and author cooldowns and check the rolling evaluation budget. Leave the dev test prefix out of the timing checks.
