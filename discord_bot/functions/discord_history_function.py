@@ -1,14 +1,50 @@
 """Read-only, bounded FTS5 lookup scoped to visible Discord channels."""
 import json
 import logging
+import re
 import sqlite3
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from discord_bot.functions.base import BaseFunction, tool_error
 
 
+def build_match_query(query):
+    """Build a literal FTS expression from words and paired double quotes."""
+    match_parts = []
+    sections = query.replace("“", '"').replace("”", '"').split('"')
+    word_count = 0
+    for index, section in enumerate(sections):
+        words = re.findall(r"[^\W_]+", section)
+        word_count += len(words)
+        if index % 2 and index < len(sections) - 1 and words:
+            match_parts.append('"' + " ".join(words) + '"')
+        else:
+            match_parts.extend(f'"{word}"' for word in words)
+    if word_count > 12:
+        raise ValueError("query has too many words")
+    return " AND ".join(match_parts)
+
+
+def bounded_excerpt(snippet, opening, closing):
+    """Crop around the first FTS match and remove the internal markers."""
+    prefix, _, marked = snippet.partition(opening)
+    first_match = marked.partition(closing)[0]
+    excerpt = snippet.replace(opening, "").replace(closing, "")
+    limit = 350
+    if len(excerpt) <= limit:
+        return excerpt
+
+    # Reserve space for ellipses and favor keeping a complete match in view.
+    width = limit - 2
+    leading_context = min(80, max(0, width - len(first_match)))
+    start = min(max(0, len(prefix) - leading_context), len(excerpt) - width)
+    end = start + width
+    return ("…" if start else "") + excerpt[start:end] + ("…" if end < len(excerpt) else "")
+
+
 def search_messages(db, *, query, guild_id, channel_ids, channel_id=None,
-                    author_id=None, after=None, before=None, limit=5):
+                    author_id=None, after=None, before=None, limit=5, sort=None):
     if not isinstance(query, str) or not query.strip() or len(query) > 200:
         raise ValueError("query must be 1..200 characters")
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 10:
@@ -24,11 +60,14 @@ def search_messages(db, *, query, guild_id, channel_ids, channel_id=None,
     allowed = [str(channel_id)] if channel_id is not None else list(channel_ids)
     if not allowed:
         return []
-    terms = query.split()
-    # Quote each literal term; no arbitrary FTS query operators or column selectors.
-    if len(terms) > 12:
-        raise ValueError("query has too many words")
-    match = " AND ".join('"' + term.replace('"', '""') + '"' for term in terms)
+    if sort not in (None, "", "relevance", "newest"):
+        raise ValueError("sort must be relevance or newest")
+    match = build_match_query(query)
+    if not match:
+        return []
+    order = "m.created_at DESC, m.message_id DESC"
+    if sort != "newest":
+        order = "bm25(messages_fts), " + order
     where = ["messages_fts MATCH ?", "m.guild_id=?", "m.deleted_at IS NULL",
              "m.content != ''", "m.channel_id IN (" + ",".join("?" for _ in allowed) + ")"]
     params = [match, str(guild_id), *allowed]
@@ -42,15 +81,30 @@ def search_messages(db, *, query, guild_id, channel_ids, channel_id=None,
                 raise ValueError(key + " must include a timezone")
             where.append("m.created_at " + op + " ?")
             params.append(parsed.astimezone(timezone.utc).isoformat(timespec="microseconds"))
+    # Per-query markers avoid collisions with literal Discord message text.
+    marker = uuid4().hex
+    opening, closing = f"<{marker}>", f"</{marker}>"
     rows = db.execute(
-        "SELECT m.guild_id,m.channel_id,m.message_id,m.author_id,m.content,m.created_at "
+        "SELECT m.guild_id,m.channel_id,m.message_id,m.author_id,"
+        "snippet(messages_fts, 0, ?, ?, '…', 32),m.created_at "
         "FROM messages_fts JOIN messages m ON m.rowid=messages_fts.rowid "
-        "WHERE " + " AND ".join(where) + " ORDER BY m.created_at DESC LIMIT ?",
-        (*params, limit),
+        "WHERE " + " AND ".join(where) + " ORDER BY " + order + " LIMIT ?",
+        (opening, closing, *params, limit),
     ).fetchall()
     return [{"message_id": message, "author_id": author, "channel_id": channel, "created_at": created,
-             "snippet": content[:350], "url": f"https://discord.com/channels/{guild}/{channel}/{message}"}
+             "snippet": bounded_excerpt(content, opening, closing), "url": f"https://discord.com/channels/{guild}/{channel}/{message}"}
             for guild, channel, message, author, content, created in rows]
+
+
+def add_author_attribution(results, guild):
+    """Use current guild member display names when cached."""
+    get_member = getattr(guild, "get_member", None)
+    for item in results:
+        member = None
+        author_id = item["author_id"]
+        if get_member and author_id.isascii() and author_id.isdecimal():
+            member = get_member(int(author_id))
+        item["author_display_name"] = getattr(member, "display_name", None)
 
 
 def add_channel_attribution(results, guild, allowed, current_channel_id):
@@ -69,13 +123,15 @@ class SearchDiscordHistory(BaseFunction):
     name = "search_discord_history"
     description = ("Search archived messages from this Discord server by keywords, including older "
                    "conversations in other channels. Use for questions about what people previously said. "
-                   "Results include source channel names and cross-channel flags. Mention a different channel naturally when useful, not for every same-channel hit; don't invent missing context.")
+                   "Use results as historical evidence. Use get_discord_conversation_context with the result IDs to read the matching message and its surroundings. Mention a different source channel when useful.")
     parameters = {"type": "object", "properties": {
-        "query": {"type": "string", "description": "Literal words to find (all words must match)."},
+        "query": {"type": "string", "description": "Up to 12 words, all required. Put double quotes around an exact phrase. Punctuation separates words."},
         "channel_id": {"type": "string", "description": "Optional channel ID; omit to search all visible channels."},
         "author_id": {"type": "string", "description": "Optional author ID; omit to search all authors."},
         "after": {"type": "string", "description": "Inclusive ISO 8601 date/time with timezone."},
         "before": {"type": "string", "description": "Inclusive ISO 8601 date/time with timezone."},
+        "sort": {"type": "string", "enum": ["relevance", "newest"],
+                 "description": "Optional order. Defaults to relevance with newest first on ties."},
         "limit": {"type": "integer", "minimum": 1, "maximum": 10}
     }, "required": ["query"]}
 
@@ -85,7 +141,7 @@ class SearchDiscordHistory(BaseFunction):
     async def execute_with_context(self, args, context):
         if context is None or context.get("archive") is None or context.get("guild") is None:
             return tool_error("ARCHIVE_UNAVAILABLE", "Discord archive unavailable.")
-        guild, member = context["guild"], context["member"]
+        guild, member = context["guild"], context.get("member")
         if member is None or guild.me is None:
             return tool_error("PERMISSIONS_UNAVAILABLE", "Discord permissions unavailable.")
         allowed = {str(ch.id) for ch in guild.text_channels
@@ -98,7 +154,8 @@ class SearchDiscordHistory(BaseFunction):
                 context["archive"].db, query=args.get("query"), guild_id=guild.id,
                 channel_ids=allowed, channel_id=args.get("channel_id"),
                 author_id=args.get("author_id"), after=args.get("after"),
-                before=args.get("before"), limit=args.get("limit", 5))
+                before=args.get("before"), limit=args.get("limit", 5), sort=args.get("sort"))
+            add_author_attribution(hits, guild)
             logging.info("History search completed: results=%d", len(hits))
             return json.dumps({"ok": True, "results": add_channel_attribution(
                 hits, guild, allowed, context.get("channel_id"))})
@@ -158,7 +215,7 @@ class GetDiscordConversationContext(BaseFunction):
     name = "get_discord_conversation_context"
     description = ("After finding a message with search_discord_history, read nearby archived "
                    "messages in the same channel to understand the actual exchange. "
-                   "Use the channel_id and message_id from a search result's Discord URL. "
+                   "Use the channel_id and message_id fields from a search result. Set before and after to zero to read only the matching message (up to 1200 characters). "
                    "Mention a different source channel naturally when useful. Do not assume adjacent messages are replies; use author and timestamps.")
     parameters = {"type": "object", "properties": {
         "channel_id": {"type": "string", "description": "Channel ID from a history-search result URL."},
