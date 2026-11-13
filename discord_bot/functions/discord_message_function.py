@@ -92,6 +92,7 @@ class GetDiscordMessage(BaseFunction):
         "message_url": {"type": "string", "description": "Discord message jump URL."},
         "channel_id": {"type": "string", "description": "Channel ID when no URL is supplied."},
         "message_id": {"type": "string", "description": "Message ID when no URL is supplied."},
+        "include_metadata": {"type": "boolean", "description": "Request live attachments, reactions, and reply references. Omit for text and attribution only."},
     }}
 
     async def execute(self, args):
@@ -102,6 +103,10 @@ class GetDiscordMessage(BaseFunction):
             linked_guild, channel_id, message_id = parse_message_target(args)
         except ValueError:
             return tool_error("INVALID_ARGUMENT", "Provide a Discord message URL or both IDs.", retryable=True)
+
+        include_metadata = args.get("include_metadata", False)
+        if not isinstance(include_metadata, bool):
+            return tool_error("INVALID_ARGUMENT", "include_metadata must be a boolean.", retryable=True)
 
         guild = context.get("guild") if context else None
         member = context.get("member") if context else None
@@ -120,28 +125,29 @@ class GetDiscordMessage(BaseFunction):
             if snapshot and snapshot[3]:
                 return unavailable
             live = None
-            try:
-                # One fetch supplies metadata the archive does not track, or the entire missing message.
-                async with asyncio.timeout(5):
-                    live = await channel.fetch_message(int(message_id))
-            except discord.Forbidden:
-                return inaccessible
-            except discord.NotFound:
-                return unavailable
-            except (discord.HTTPException, OSError, TimeoutError):
-                if snapshot is None:
-                    return tool_error("DISCORD_FETCH_FAILED", "Could not read the Discord message.", retryable=True)
+            if snapshot is None or include_metadata:
+                try:
+                    # One fetch supplies metadata the archive does not track, or the entire missing message.
+                    async with asyncio.timeout(5):
+                        live = await channel.fetch_message(int(message_id))
+                except discord.Forbidden:
+                    return inaccessible
+                except discord.NotFound:
+                    return unavailable
+                except (discord.HTTPException, OSError, TimeoutError):
+                    if snapshot is None:
+                        return tool_error("DISCORD_FETCH_FAILED", "Could not read the Discord message.", retryable=True)
 
-            # Gateway events can change permissions or record a deletion during the fetch.
-            current_channel = guild.get_channel(int(channel_id))
-            if isinstance(member, discord.Member):
-                member = guild.get_member(member.id) or member
-            if (current_channel is None or guild.me is None
-                    or not can_read_history(current_channel, member, guild.me)):
-                return inaccessible
-            snapshot = read_snapshot(archive, guild.id, channel_id, message_id)
-            if snapshot and snapshot[3]:
-                return unavailable
+                # Gateway events can change permissions or record a deletion during the fetch.
+                current_channel = guild.get_channel(int(channel_id))
+                if isinstance(member, discord.Member):
+                    member = guild.get_member(member.id) or member
+                if (current_channel is None or guild.me is None
+                        or not can_read_history(current_channel, member, guild.me)):
+                    return inaccessible
+                snapshot = read_snapshot(archive, guild.id, channel_id, message_id)
+                if snapshot and snapshot[3]:
+                    return unavailable
         except sqlite3.Error:
             return tool_error("ARCHIVE_ERROR", "Could not read the Discord archive.")
 
