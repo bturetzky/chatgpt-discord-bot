@@ -43,9 +43,11 @@ class DiscordMessageTests(unittest.IsolatedAsyncioTestCase):
         with patch("discord_bot.functions.memory_function.VectorHandler"):
             self.handler = FunctionHandler()
 
-    async def lookup(self, args=None):
+    async def lookup(self, args=None, *, include_metadata=False):
         return json.loads(await self.handler.execute_function(
-            "get_discord_message", args if args is not None else {"channel_id": "10", "message_id": "100"},
+            "get_discord_message", args if args is not None else {
+                "channel_id": "10", "message_id": "100", "include_metadata": include_metadata,
+            },
             self.context,
         ))
 
@@ -110,11 +112,20 @@ class DiscordMessageTests(unittest.IsolatedAsyncioTestCase):
         self.channel.fetch_message.side_effect = delete_before_return
         self.assertEqual((await self.lookup())["error"]["code"], "MESSAGE_UNAVAILABLE")
 
+    async def test_archive_hit_without_metadata_skips_discord(self):
+        self.archive_message()
+        self.members[7] = SimpleNamespace(display_name="Cached Author")
+        result = (await self.lookup())["message"]
+        self.assertEqual(result["content"], "archived text")
+        self.assertEqual(result["author_display_name"], "Cached Author")
+        self.assertIsNone(result["metadata"])
+        self.channel.fetch_message.assert_not_awaited()
+
     async def test_archive_hit_and_live_metadata(self):
         self.archive_message()
         self.members[7] = SimpleNamespace(display_name="Cached Author")
         self.live.reference = SimpleNamespace(guild_id=1, channel_id=10, message_id=99)
-        result = (await self.lookup())["message"]
+        result = (await self.lookup(include_metadata=True))["message"]
         self.assertEqual(result["content"], "archived text")
         self.assertEqual(result["created_at"], "2026-01-01T00:00:00+00:00")
         self.assertEqual(result["url"], "https://discord.com/channels/1/10/100")
@@ -151,7 +162,7 @@ class DiscordMessageTests(unittest.IsolatedAsyncioTestCase):
 
         self.archive_message()
         self.channel.fetch_message.side_effect = revoke_before_return
-        self.assertEqual((await self.lookup())["error"]["code"], "MESSAGE_INACCESSIBLE")
+        self.assertEqual((await self.lookup(include_metadata=True))["error"]["code"], "MESSAGE_INACCESSIBLE")
 
     async def test_json_escaping_keeps_result_within_tool_budget(self):
         self.live.content = chr(0) * 4000
@@ -167,11 +178,11 @@ class DiscordMessageTests(unittest.IsolatedAsyncioTestCase):
     async def test_fetch_failures(self):
         self.channel.fetch_message.side_effect = discord.HTTPException(
             SimpleNamespace(status=503, reason="Service unavailable"), "private provider error")
-        result = await self.lookup()
+        result = await self.lookup(include_metadata=True)
         self.assertEqual(result["error"]["code"], "DISCORD_FETCH_FAILED")
         self.assertTrue(result["error"]["retryable"])
         self.archive_message()
-        result = (await self.lookup())["message"]
+        result = (await self.lookup(include_metadata=True))["message"]
         self.assertEqual(result["content"], "archived text")
         self.assertIsNone(result["metadata"])
         for exception, status, code in (
@@ -180,4 +191,4 @@ class DiscordMessageTests(unittest.IsolatedAsyncioTestCase):
         ):
             self.channel.fetch_message.side_effect = exception(
                 SimpleNamespace(status=status, reason="failure"), "private provider error")
-            self.assertEqual((await self.lookup())["error"]["code"], code)
+            self.assertEqual((await self.lookup(include_metadata=True))["error"]["code"], code)
