@@ -27,13 +27,14 @@ For user-visible changes, supply 2–4 concrete manual dev Discord prompts/actio
 - `docs/backlog.md`: **unfinished** features, actionable debt and explicitly pending operator verification.
 - `docs/deployment.md`: CI/CD, promotion, rollback and verification boundaries.
 - `docs/operations.md`: commands, diagnostics, backfills and concise manual acceptance procedures.
+- `docs/tool-designs/`: **operator-approved exception** for independent, unimplemented on-demand LLM function assignments. The index links one actionable Codex handoff per file; remove or consolidate a design when shipped and accepted. Do not create other speculative design folders by default.
 
 - Update the **existing owner document** when behavior changes. Do not create a new roadmap, status checkpoint, feature design, runbook or dated implementation diary by default. If a substantial new design genuinely needs a temporary document, get operator agreement and fold its durable decisions into the permanent docs when shipped.
 - Describe **current code** as implemented only after checking it; label unmerged plans, CI-tested behavior, deployed behavior and operator-verified behavior separately. A green build is not live acceptance.
 - Once work is shipped and accepted, **remove it from the backlog** and delete superseded verification instructions. Keep only important design rationale and current operating commands, not PR timelines, sample logs, token counts or historical checklists.
 - Document pending verification only when genuinely outstanding. Do not reopen operator-confirmed acceptance without new evidence. Keep unfinished work in one backlog, not scattered across feature pages.
 - Link to code, workflows and GitOps instead of duplicating configuration, infrastructure manifests or implementation details. Application env vars belong in README; GitOps is authoritative for deployed values.
-- Fix links and stale statements in the same PR as a feature change. Before adding a Markdown file, first explain why none of the six existing files is suitable.
+- Fix links and stale statements in the same PR as a feature change. The approved tool-design folder is an explicit exception: individual Codex assignments need separate, self-contained handoffs. For any other Markdown file, first explain why the existing owner documents are unsuitable.
 - Do not put real guild IDs, credentials, message contents, private memory summaries or sensitive operational output into documentation.
 - Documentation-only maintenance may go directly through an ordinary reviewed PR; do not introduce runtime changes as part of cleanup.
 
