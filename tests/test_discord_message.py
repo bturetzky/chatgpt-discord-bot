@@ -7,8 +7,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import discord
+from openai.types.responses import ResponseFunctionToolCall
 
 from discord_bot.functions.discord_message_function import parse_message_target
+from discord_bot.handlers.chatgpt_handler import ChatGPTHandler
 from discord_bot.handlers.function_handler import FunctionHandler
 from discord_bot.handlers.tool_output import bound_tool_output
 from discord_bot.storage import Database
@@ -64,6 +66,64 @@ class DiscordMessageTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(parse_message_target(
                     {"message_url": f"<https://{host}/channels/1/10/100>"}), ("1", "10", "100"))
 
+    async def test_responses_argument_shapes(self):
+        self.archive_message()
+        url = "https://discord.com/channels/1/10/100"
+        for args in (
+            {"message_url": url},
+            {"message_url": url, "channel_id": "", "message_id": " ", "include_metadata": None},
+            {"message_url": url, "channel_id": None, "message_id": None, "include_metadata": ""},
+            {"message_url": url, "channel_id": 10, "message_id": "100"},
+            {"message_url": "", "channel_id": 10, "message_id": 100},
+        ):
+            with self.subTest(args=args):
+                self.assertEqual((await self.lookup(json.dumps(args)))["message"]["content"], "archived text")
+        self.channel.fetch_message.assert_not_awaited()
+
+    async def test_responses_round_trip_with_real_function_handler(self):
+        self.archive_message()
+        with patch("discord_bot.handlers.chatgpt_handler.FunctionHandler", return_value=self.handler):
+            chat = ChatGPTHandler("test-key")
+        call = ResponseFunctionToolCall(
+            type="function_call", call_id="call-lookup", name="get_discord_message",
+            arguments=json.dumps({"message_url": "https://discord.com/channels/1/10/100",
+                                  "channel_id": "", "message_id": None, "include_metadata": None}),
+        )
+        create = AsyncMock(side_effect=[
+            SimpleNamespace(output=[call], output_text=""),
+            SimpleNamespace(output=[], output_text="Done."),
+        ])
+        chat.client = SimpleNamespace(responses=SimpleNamespace(create=create))
+        reply = await chat.get_response([{"role": "user", "content": "Read this message"}], None, self.context)
+        self.assertEqual(reply, "Done.")
+        output = create.await_args.kwargs["input"][-1]
+        self.assertEqual(output["type"], "function_call_output")
+        self.assertEqual(output["call_id"], call.call_id)
+        self.assertEqual(json.loads(output["output"])["message"]["content"], "archived text")
+
+    async def test_rejection_diagnostics_are_sanitized(self):
+        url = "https://discord.com/channels/1/10/100"
+        args = {"message_url": url, "channel_id": 987654321, "message_id": "", "include_metadata": None}
+        with self.assertLogs(level="WARNING") as logs:
+            result = await self.lookup(json.dumps(args))
+        self.assertIn("Conflicting fields: channel_id", result["error"]["message"])
+        diagnostic = logs.output[0]
+        for detail in ("message_url", "'type': 'int'", "'empty': True", "'null': True", "Conflicting fields"):
+            self.assertIn(detail, diagnostic)
+        for value in (url, "987654321"):
+            self.assertNotIn(value, diagnostic)
+
+    def test_registered_schema_has_nullable_fields_without_progress(self):
+        for definition in self.handler.api_functions:
+            if definition["name"] not in {"get_discord_message", "get_discord_thread"}:
+                continue
+            schema = definition["parameters"]
+            self.assertFalse(schema["additionalProperties"])
+            self.assertEqual(set(schema["required"]), set(schema["properties"]))
+            self.assertNotIn("quick_update", schema["properties"])
+            for field in schema["properties"].values():
+                self.assertIn("null", field["type"])
+
     async def test_invalid_targets(self):
         for args in (
             {}, {"channel_id": "10", "message_id": "0"}, {"channel_id": "10", "message_id": True},
@@ -71,7 +131,10 @@ class DiscordMessageTests(unittest.IsolatedAsyncioTestCase):
             {"channel_id": "10", "message_id": str(2**64)},
             {"message_url": "https://discord.com.evil.test/channels/1/10/100"},
             {"message_url": "https://discord.com/channels/@me/10/100"},
-            {"message_url": "https://discord.com/channels/1/10/100", "channel_id": "10"},
+            {"message_url": "https://discord.com/channels/1/10/100", "channel_id": "11"},
+            {"channel_id": 10, "message_id": 100.0},
+            {"channel_id": 10, "message_id": 2**64},
+            {"channel_id": 10, "message_id": 100, "include_metadata": "false"},
         ):
             with self.subTest(args=args):
                 self.assertEqual((await self.lookup(args))["error"]["code"], "INVALID_ARGUMENT")
