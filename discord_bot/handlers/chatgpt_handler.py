@@ -83,6 +83,7 @@ class ChatGPTHandler:
         page_reads = 0
         webpage_continuations = 0
         issued_webpage_cursors = set()
+        issued_youtube_cursors = set()
         invalid_youtube_calls = 0
         progress_sent = False
         try:
@@ -141,6 +142,7 @@ class ChatGPTHandler:
                         })
                         continue
                     function_calls += 1
+                    url = None
                     try:
                         arguments = json.loads(call.arguments)
                         if not isinstance(arguments, dict):
@@ -155,8 +157,18 @@ class ChatGPTHandler:
                             webpage_continuations >= MAX_WEBPAGE_CONTINUATIONS if is_webpage_continuation
                             else page_reads >= MAX_PAGE_READS
                         )
+                        cursor_key = None
+                        if call.name == "read_youtube" and cursor is not None and isinstance(url, str):
+                            cursor_key = (url, json.dumps(cursor, sort_keys=True))
                         if call.name == "read_youtube" and invalid_youtube_calls >= MAX_INVALID_YOUTUBE_CALLS:
                             result = tool_error("VALIDATION_LIMIT", "YouTube validation allowance exhausted. Use gathered evidence or another source.")
+                        elif cursor_key is not None and cursor_key not in issued_youtube_cursors:
+                            invalid_youtube_calls += 1
+                            result = tool_error(
+                                "INVALID_ARGUMENT",
+                                "Use an exact next_cursor returned for this URL in this response, or omit cursor for a fresh read.",
+                                retryable=True,
+                            )
                         elif call.name in ("get_webpage_contents", "read_youtube") and read_limit_reached:
                             result = tool_error("READ_LIMIT", "Page read limit reached for this response. Use gathered evidence or an available tool.")
                         else:
@@ -221,10 +233,20 @@ class ChatGPTHandler:
                                     result = json.dumps(combine_youtube_pages(first, second))
                     except ValueError:
                         result = tool_error("INVALID_ARGUMENT", "Invalid tool arguments. Provide an object matching the tool schema.", retryable=True)
+                    output = bound_tool_output(call.name, result)
+                    if call.name == "read_youtube":
+                        try:
+                            page = json.loads(output)
+                        except (TypeError, ValueError):
+                            page = None
+                        if isinstance(page, dict) and page.get("ok") is True and isinstance(url, str):
+                            next_cursor = page.get("next_cursor")
+                            if isinstance(next_cursor, dict) and next_cursor:
+                                issued_youtube_cursors.add((url, json.dumps(next_cursor, sort_keys=True)))
                     conversation.append({
                         "type": "function_call_output",
                         "call_id": call.call_id,
-                        "output": bound_tool_output(call.name, result),
+                        "output": output,
                     })
             return "Sorry, I reached the limit for tool calls."
         except (OpenAIError, asyncio.TimeoutError) as exc:

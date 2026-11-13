@@ -346,15 +346,17 @@ def validate_read_options(args):
 
 class ReadYouTube(BaseFunction):
     name = "read_youtube"
+    strict = False
     description = ("Read timestamped YouTube captions in bounded sections. Each section indexes the transcript array "
                    "from first_segment (inclusive) to last_segment_exclusive. Use start_seconds and optional end_seconds "
-                   "for a requested time range. To continue a truncated result, pass its next_cursor with the same URL. "
+                   "for a requested time range. Omit cursor on the initial read. Continue only with the exact non-null "
+                   "next_cursor returned for the same URL in this response. A null next_cursor means no continuation. "
                    "Cite timestamps and disclose missing or partial captions; do not claim to have watched the video.")
     parameters = {"type": "object", "properties": {
         "url": {"type": "string", "description": "A public YouTube video URL."},
         "start_seconds": {"type": "number", "minimum": 0, "description": "Start of requested time range in seconds."},
         "end_seconds": {"type": "number", "minimum": 0, "description": "Optional exclusive end of requested time range."},
-        "cursor": {"type": "object", "description": "Exact next_cursor object returned by an earlier read of this video.",
+        "cursor": {"type": "object", "description": "Omit for an initial read. Copy the exact non-null next_cursor from a successful read of the same URL in this response.",
                    "properties": {"segment_index": {"type": "integer"}, "char_offset": {"type": "integer"},
                                   "track_hash": {"type": "string"}, "range_start": {"type": ["number", "null"]},
                                   "range_end": {"type": ["number", "null"]}},
@@ -367,27 +369,18 @@ class ReadYouTube(BaseFunction):
         if not video_id:
             logging.warning("YouTube input rejected: code=INVALID_URL reason=URL_FORMAT elapsed_ms=%d", int((time.monotonic() - started) * 1000))
             return json.dumps({"ok": False, "error": {"code": "INVALID_URL", "reason": "URL_FORMAT", "message": "Provide the complete public YouTube video URL."}})
-        ignored_cursor = False
         try:
             start, end, cursor = validate_read_options(args)
         except ReadOptionsError as exc:
             reason = exc.reason
-            if args.get("cursor") is not None and reason.startswith("CURSOR_"):
-                try:
-                    start, end, cursor = validate_read_options({key: value for key, value in args.items() if key != "cursor"})
-                    ignored_cursor = start is not None
-                except (ReadOptionsError, TypeError, ValueError, OverflowError):
-                    ignored_cursor = False
-            if not ignored_cursor:
-                logging.warning("YouTube input rejected: code=INVALID_ARGUMENT reason=%s elapsed_ms=%d", reason, int((time.monotonic() - started) * 1000))
-                return json.dumps({"ok": False, "error": {"code": "INVALID_ARGUMENT", "reason": reason,
-                                   "message": "Use the video URL and a numeric start_seconds (for 8:20, use 500). Only reuse an exact cursor from a tool result in this response."}})
+            logging.warning("YouTube input rejected: code=INVALID_ARGUMENT reason=%s elapsed_ms=%d", reason, int((time.monotonic() - started) * 1000))
+            message = ("Omit cursor for an initial read. Use only a non-null next_cursor returned "
+                       "for this URL in the current response. Use numeric start_seconds for a time (500 for 8:20).")
+            return json.dumps({"ok": False, "error": {"code": "INVALID_ARGUMENT", "reason": reason, "message": message}})
         except (TypeError, ValueError, OverflowError):
             logging.warning("YouTube input rejected: code=INVALID_ARGUMENT reason=OPTIONS elapsed_ms=%d", int((time.monotonic() - started) * 1000))
             return json.dumps({"ok": False, "error": {"code": "INVALID_ARGUMENT", "reason": "OPTIONS", "message": "Invalid time range or continuation cursor."}})
         result = await asyncio.to_thread(read_youtube, video_id, start, end, cursor)
-        if ignored_cursor:
-            result.setdefault("limitations", []).append("An invalid cursor was ignored; this is a fresh read from the provided timestamp.")
         logging.info("YouTube read: source=%s captions=%s truncated=%s sections=%d elapsed_ms=%d",
                      result["source"], result["transcript_available"], result["content_truncated"],
                      len(result.get("sections", [])),

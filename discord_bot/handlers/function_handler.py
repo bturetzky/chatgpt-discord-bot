@@ -91,7 +91,8 @@ class FunctionHandler:
             api_functions.append({
                 'name': func_name,
                 'description': instance.description,
-                'parameters': instance.get_parameters()
+                'parameters': instance.get_parameters(),
+                **({'strict': instance.strict} if hasattr(instance, 'strict') else {}),
             })
         
         logging.info('Registered %d tools: %s', len(api_functions), ', '.join(item['name'] for item in api_functions))
