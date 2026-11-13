@@ -259,7 +259,7 @@ def render_link(tag, label, final_url):
 
 def article_text(main, final_url):
     """Render readable blocks while keeping inline text and links together."""
-    blocks, inline = [], []
+    blocks, inline, lists = [], [], []
     prefix = ""
 
     def flush():
@@ -280,6 +280,8 @@ def article_text(main, final_url):
             if boundary:
                 flush()
                 prefix = ""
+            if boundary in ("ul", "ol"):
+                lists.pop()
             continue
         if isinstance(node, Comment):
             continue
@@ -303,10 +305,26 @@ def article_text(main, final_url):
                 fence = "`" * max(3, 1 + max(map(len, re.findall(r"`+", code)), default=0))
                 blocks.append(f"{fence}\n{code}\n{fence}")
             continue
-        boundary = node.name in BLOCKS or node.name in HEADINGS
+        if node.name == "tr":
+            flush()
+            cells = node.find_all(["th", "td"], recursive=False)
+            if cells:
+                values = [" ".join(article_text(cell, final_url).split()) for cell in cells]
+                blocks.append(" | ".join(values))
+                continue
+        boundary = node.name if node.name in BLOCKS or node.name in HEADINGS else None
         if boundary:
             flush()
-            prefix = HEADINGS.get(node.name, {"li": "- ", "blockquote": "> "}.get(node.name, prefix))
+        if node.name in ("ul", "ol"):
+            lists.append(1 if node.name == "ol" else None)
+        if node.name == "li":
+            number = lists[-1] if lists else None
+            marker = "- " if number is None else f"{number}. "
+            prefix = "    " * max(0, len(lists) - 1) + marker
+            if number is not None:
+                lists[-1] += 1
+        else:
+            prefix = HEADINGS.get(node.name, "> " if node.name == "blockquote" else prefix)
         stack.append((iter(node.children), boundary))
     flush()
     return "\n\n".join(blocks)
@@ -339,7 +357,7 @@ class GetWebPageContents(BaseFunction):
         "properties": {
             "url": {"type": "string", "description": "Public HTTP(S) page or GitHub repository URL."},
             "cursor": {"type": "string", "description": "Exact next_cursor from a read of this URL."},
-            "find_text": {"type": "string", "description": "Case-insensitive literal phrase or heading to jump to (up to 200 characters). Omit when continuing."},
+            "find_text": {"type": "string", "description": "Case-insensitive literal match against extracted text (up to 200 characters). Use words within one paragraph or heading. Matches cannot span paragraph breaks. Omit when continuing."},
         },
         "required": ["url"]
     }

@@ -95,6 +95,27 @@ class URLReaderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(page["content"], "# Real title\n\nRead [the notes](<https://example.org/notes>). Unsafe target"
                          "\n\n## Findings\n\n- Item one")
 
+    async def test_nested_lists_tables_and_headings_keep_structure(self):
+        html = b"""<main><article><section><div><header><h2>Results</h2></header>
+        <ol><li><p>First</p><ul><li>Nested A</li><li><div>Nested B</div></li></ul></li>
+        <li>Second</li></ol>
+        <table><thead><tr><th>Site</th><th>Status</th></tr></thead>
+        <tbody><tr><td><p><a href="/alpha">Alpha</a></p></td><td>Passed</td></tr>
+        <tr><td>Beta</td><td></td></tr></tbody></table>
+        <div><section><h3>Notes</h3><p>Final detail.</p></section></div>
+        </div></section></article></main>"""
+        page = await self.read("https://example.org/story", html)
+        self.assertEqual(page["content"].split("\n\n"), [
+            "## Results", "1. First", "    - Nested A", "    - Nested B", "2. Second",
+            "Site | Status", "[Alpha](<https://example.org/alpha>) | Passed",
+            "Beta | ", "### Notes", "Final detail.",
+        ])
+
+    async def test_find_text_does_not_match_across_paragraphs(self):
+        page = await self.read("https://example.org/story", b"<p>First phrase</p><p>second phrase</p>",
+                               find_text="phrase second")
+        self.assertEqual(page["error"]["code"], "TEXT_NOT_FOUND")
+
     async def test_continuation_still_validates_requested_url(self):
         cursor = f"v1.{'a' * 64}.12000"
         result = json.loads(await GetWebPageContents().execute({
@@ -186,6 +207,9 @@ class URLToolLoopTests(unittest.IsolatedAsyncioTestCase):
         url = "https://example.org/story"
         calls = [tool_call("page", "get_webpage_contents", json.dumps({"url": url})),
                  tool_call("video", "read_youtube", '{"url":"https://youtu.be/jNQXAC9IVRw"}')]
+        self.handler.function_handler.execute_function.side_effect = [
+            json.dumps({"ok": True, "next_cursor": "returned-cursor"}), "ok", *(["ok"] * 4),
+        ]
         continuations = [tool_call(str(i), "get_webpage_contents",
                                    json.dumps({"url": url, "cursor": "returned-cursor"})) for i in range(5)]
         self.handler.client.responses.create.side_effect = [
@@ -196,6 +220,31 @@ class URLToolLoopTests(unittest.IsolatedAsyncioTestCase):
         sent = self.handler.client.responses.create.await_args.kwargs["input"]
         outputs = [item for item in sent if isinstance(item, dict) and item.get("type") == "function_call_output"]
         self.assertEqual(json.loads(outputs[-1]["output"])["error"]["code"], "READ_LIMIT")
+
+    async def test_unissued_or_wrong_url_cursors_use_shared_budget(self):
+        url = "https://example.org/story"
+        self.handler.function_handler.execute_function.side_effect = [
+            json.dumps({"ok": False, "next_cursor": "failed-cursor"}),
+            json.dumps({"ok": True, "next_cursor": "issued-cursor"}),
+            "ok",
+        ]
+        calls = [
+            tool_call("failed", "get_webpage_contents", json.dumps({"url": url})),
+            tool_call("initial", "get_webpage_contents", json.dumps({"url": url})),
+        ]
+        for cursor_url, cursor in [(url, "failed-cursor"), (url, "old-cursor"),
+                                   (url + "/other", "issued-cursor"), (url, ["issued-cursor"]),
+                                   (url, "issued-cursor")]:
+            calls.append(tool_call(str(len(calls)), "get_webpage_contents",
+                                   json.dumps({"url": cursor_url, "cursor": cursor})))
+        self.handler.client.responses.create.side_effect = [response(calls), response([], "Done")]
+        await self.handler.get_response([{"role": "user", "content": "Read more"}], None)
+        self.assertEqual(self.handler.function_handler.execute_function.await_count, 3)
+        sent = self.handler.client.responses.create.await_args.kwargs["input"]
+        outputs = [item for item in sent if isinstance(item, dict) and item.get("type") == "function_call_output"]
+        for output in outputs[2:-1]:
+            self.assertEqual(json.loads(output["output"])["error"]["code"], "READ_LIMIT")
+        self.assertEqual(outputs[-1]["output"], "ok")
 
     async def test_model_can_use_real_cursors_for_three_chunks(self):
         with patch("discord_bot.handlers.function_handler.FunctionHandler.load_functions",

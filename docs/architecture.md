@@ -15,9 +15,9 @@ Discord mention / DM
 
 Entry points are `run.py` and `discord_bot/app.py`. `discord_bot/handlers/` contains Discord, model, memory and image routing; `discord_bot/functions/` implements tools. Current tools include Brave search, public webpage/GitHub README reading, YouTube metadata/transcripts, weather, news, IGDB and Discord history search. URL/text from external sources is untrusted; readers use bounded network requests and must not pretend to have read inaccessible content.
 
-The webpage reader extracts the main article or GitHub README as structured text with headings and links. It returns up to 12,000 characters per chunk and can jump to a literal phrase or heading. Stateless cursors refetch through the same public URL checks and require matching extracted content and URLs. A stale cursor requires a new read. JavaScript-rendered content may be unavailable.
+The webpage reader extracts the main article or GitHub README as structured text with headings and links. It returns up to 12,000 characters per chunk and can jump to a case-insensitive literal match against the extracted text. Whitespace in the query is collapsed, so a phrase spanning paragraph boundaries does not match. Stateless cursors refetch through the same public URL checks and require matching extracted content and URLs. A stale cursor requires a new read. JavaScript-rendered content may be unavailable.
 
-Each Discord response has two shared initial webpage or YouTube reads, with automatic YouTube continuation also using that shared allowance, plus up to four explicit webpage continuation attempts. Phrase lookup counts as an initial read.
+Each Discord response has two shared initial webpage or YouTube reads, with automatic YouTube continuation also using that shared allowance, plus up to four explicit webpage continuation attempts using cursors issued for that URL earlier in the same response. Other cursor calls count against the shared read budget. Phrase lookup counts as an initial read.
 
 The tool loop can send one optional conversational progress message per Discord request, even across tool batches and retries. Discord history tools and `react_to_message` remain silent.
 
