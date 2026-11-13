@@ -4,7 +4,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 from openai.types.responses import ResponseFunctionToolCall
@@ -22,7 +22,7 @@ class DiscordMessageTests(unittest.IsolatedAsyncioTestCase):
         directory = self.enterContext(tempfile.TemporaryDirectory())
         database = self.enterContext(Database(str(Path(directory) / "test.db")))
         self.archive = MessageArchive(database)
-        self.member, self.bot = object(), object()
+        self.member, self.bot = MagicMock(id=1), MagicMock(id=2)
         self.permissions = {
             who: SimpleNamespace(view_channel=True, read_message_history=True)
             for who in (self.member, self.bot)
@@ -39,7 +39,8 @@ class DiscordMessageTests(unittest.IsolatedAsyncioTestCase):
         self.members = {}
         self.guild = SimpleNamespace(
             id=1, me=self.bot, text_channels=[self.channel],
-            get_channel={10: self.channel}.get, get_member=self.members.get,
+            get_channel_or_thread={10: self.channel}.get, get_member=self.members.get,
+            fetch_channel=AsyncMock(return_value=None),
         )
         self.context = {"guild": self.guild, "member": self.member, "archive": self.archive}
         with patch("discord_bot.functions.memory_function.VectorHandler"):
@@ -65,6 +66,55 @@ class DiscordMessageTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(host=host):
                 self.assertEqual(parse_message_target(
                     {"message_url": f"<https://{host}/channels/1/10/100>"}), ("1", "10", "100"))
+
+    async def test_direct_thread_reads_follow_thread_permissions(self):
+        self.live.id = 100
+        self.live.guild = self.guild
+        thread = MagicMock(spec=discord.Thread)
+        thread.id, thread.guild, thread.parent = 20, self.guild, self.channel
+        self.live.channel = thread
+        thread.fetch_message = AsyncMock(return_value=self.live)
+        thread.fetch_member = AsyncMock(return_value=object())
+        self.guild.get_channel_or_thread = {10: self.channel, 20: thread}.get
+        for permissions in self.permissions.values():
+            permissions.manage_threads = False
+        url = "https://discord.com/channels/1/20/100"
+
+        async def history(**kwargs):
+            yield self.live
+
+        thread.history = history
+        for private in (False, True):
+            with self.subTest(private=private):
+                thread.is_private.return_value = private
+                direct = await self.lookup({"message_url": url})
+                chain = json.loads(await self.handler.execute_function(
+                    "get_discord_thread", {"message_url": url}, self.context,
+                ))
+                self.assertTrue(direct["ok"], direct)
+                self.assertTrue(chain["ok"], chain)
+                self.assertEqual(direct["message"]["content"], chain["messages"][0]["content"])
+
+        self.guild.get_channel_or_thread = {10: self.channel}.get
+        self.guild.fetch_channel.return_value = thread
+        self.assertTrue((await self.lookup({"message_url": url}))["ok"])
+        self.guild.fetch_channel.assert_awaited_once_with(20)
+        thread.guild = SimpleNamespace(id=2)
+        self.assertEqual((await self.lookup({"message_url": url}))["error"]["code"], "MESSAGE_INACCESSIBLE")
+        thread.guild = self.guild
+        self.guild.get_channel_or_thread = {10: self.channel, 20: thread}.get
+
+        thread.fetch_member.return_value = None
+        thread.fetch_message.reset_mock()
+        self.assertEqual((await self.lookup({"message_url": url}))["error"]["code"], "MESSAGE_INACCESSIBLE")
+        thread.fetch_message.assert_not_awaited()
+        thread.is_private.return_value = False
+        self.permissions[self.member].view_channel = False
+        self.assertEqual((await self.lookup({"message_url": url}))["error"]["code"], "MESSAGE_INACCESSIBLE")
+        self.permissions[self.member].view_channel = True
+        self.assertEqual((await self.lookup({"message_url": url.replace("/1/", "/2/")}))["error"]["code"], "MESSAGE_INACCESSIBLE")
+        thread.fetch_message.side_effect = discord.NotFound(SimpleNamespace(status=404, reason="Not Found"), "Missing")
+        self.assertEqual((await self.lookup({"channel_id": 20, "message_id": 100}))["error"]["code"], "MESSAGE_UNAVAILABLE")
 
     async def test_responses_argument_shapes(self):
         self.archive_message()

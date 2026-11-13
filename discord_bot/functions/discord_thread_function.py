@@ -7,30 +7,14 @@ import sqlite3
 import discord
 
 from discord_bot.functions.base import BaseFunction, tool_error
-from discord_bot.functions.discord_history_function import can_read_history
 from discord_bot.functions.discord_message_function import (
-    MESSAGE_TARGET_FIELDS, MESSAGE_TARGET_PROPERTIES, optional_argument, parse_message_target,
+    allowed_channel, can_read_native_thread, MESSAGE_TARGET_FIELDS, MESSAGE_TARGET_PROPERTIES, optional_argument, parse_message_target,
     parse_snowflake, read_snapshot, rejected_arguments,
 )
 from discord_bot.storage.message_archive import reply_target, utc_iso
 
 MESSAGE_LIMIT = 16
 LIVE_REQUEST_LIMIT = 8
-
-
-def current_requester(guild, requester):
-    # Guild message events provide a Member even when the member intent is disabled.
-    return (guild.get_member(requester.id) or requester
-            if isinstance(requester, discord.Member) else requester)
-
-
-def allowed_channel(channel, guild, requester):
-    requester = current_requester(guild, requester)
-    if channel is None or requester is None or guild.me is None:
-        return False
-    if isinstance(channel, discord.Thread):
-        channel = channel.parent
-    return channel is not None and can_read_history(channel, requester, guild.me)
 
 
 class ThreadRead:
@@ -51,16 +35,7 @@ class ThreadRead:
         return None
 
     async def native_access(self, thread):
-        if not allowed_channel(thread, self.guild, self.requester):
-            return False
-        if thread.is_private():
-            requester = current_requester(self.guild, self.requester)
-            for member in (requester, self.guild.me):
-                if not thread.parent.permissions_for(member).manage_threads:
-                    membership, _ = await self.fetch(thread.fetch_member, member.id)
-                    if membership is None:
-                        return False
-        return allowed_channel(thread, self.guild, self.requester)
+        return await can_read_native_thread(thread, self.guild, self.requester, self.fetch)
 
     async def fetch(self, operation, *args):
         remaining = self.deadline - asyncio.get_running_loop().time()
