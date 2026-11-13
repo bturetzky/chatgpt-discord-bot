@@ -124,7 +124,9 @@ class ChatGPTHandler:
                         )
                         cursor_key = (arguments.get("url"), arguments.get("cursor"))
                         valid_continuation = (
-                            is_webpage_continuation and cursor_key in valid_webpage_cursors
+                            is_webpage_continuation and isinstance(cursor_key[0], str)
+                            and isinstance(cursor_key[1], str)
+                            and cursor_key in valid_webpage_cursors
                         )
                         read_limit_reached = (
                             webpage_continuations >= MAX_WEBPAGE_CONTINUATIONS if valid_continuation
