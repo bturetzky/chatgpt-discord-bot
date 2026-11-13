@@ -356,11 +356,18 @@ class GetWebPageContents(BaseFunction):
         "type": "object",
         "properties": {
             "url": {"type": "string", "description": "Public HTTP(S) page or GitHub repository URL."},
-            "cursor": {"type": "string", "description": "Exact next_cursor from a read of this URL."},
-            "find_text": {"type": "string", "description": "Case-insensitive literal match against extracted text (up to 200 characters). Use words within one paragraph or heading. Matches cannot span paragraph breaks. Omit when continuing."},
+            "cursor": {"type": ["string", "null"], "description": "Exact next_cursor from an earlier successful read. Use null for a fresh read; never invent a cursor."},
+            "find_text": {"type": ["string", "null"], "description": "Case-insensitive literal match against extracted text (up to 200 characters). Use words within one paragraph or heading. Matches cannot span paragraph breaks. Use null when not searching or continuing."},
         },
-        "required": ["url"]
+        "required": ["url", "cursor", "find_text"],
+        "additionalProperties": False,
     }
+
+    @classmethod
+    def get_parameters(cls):
+        # The Responses API supplies all schema fields; optional inputs are nullable.
+        # Do not inherit the legacy quick_update field for this read-only tool.
+        return cls.parameters
 
     async def execute(self, args):
         started = time.monotonic()
@@ -370,6 +377,12 @@ class GetWebPageContents(BaseFunction):
         if youtube_video_id(url):
             return json.dumps({"ok": False, "error": {"code": "USE_YOUTUBE_READER", "message": "Use read_youtube for this video."}})
         cursor, find_text = args.get("cursor"), args.get("find_text")
+        # Models may serialize unused optional fields as null or empty strings.
+        # Treat only those as omitted; preserve strict validation of real values.
+        if isinstance(cursor, str) and not cursor.strip():
+            cursor = None
+        if isinstance(find_text, str) and not find_text.strip():
+            find_text = None
         if find_text is not None and (
             not isinstance(find_text, str) or not find_text.strip() or len(find_text) > 200 or cursor is not None
         ):
