@@ -1,6 +1,6 @@
 # Standardize tool errors and budget-aware model behavior
 
-**Status:** Approved design; not implemented. **Assignment:** 17 — independent Codex handoff.
+**Status:** Implementation pending review and dev Discord acceptance. **Assignment:** 17 — independent Codex handoff.
 
 ## Outcome
 Standardize tool errors and budget-aware model behavior. This is an on-demand LLM-callable capability, not an autonomous/background feature.
@@ -11,7 +11,7 @@ Standardize tool errors and budget-aware model behavior. This is an on-demand LL
 - `discord_bot/functions/*`
 
 ## Scope and approach
-Adopt a consistent ok/error/code/retryable result convention without breaking working callers. Make 30-second tool timeouts and 11-call/2-page-read limits explicit to the model through actionable errors; ensure paging and multi-step workflows can finish. Keep tool logs sanitized; don't introduce a generalized agent loop or new infrastructure.
+Adopt a consistent ok/error/code/retryable result convention without breaking working callers. Make 30-second tool timeouts and function-call and shared read limits explicit to the model through actionable errors; ensure paging and multi-step workflows can finish. Keep tool logs sanitized; don't introduce a generalized agent loop or new infrastructure.
 
 ## Acceptance criteria
 Tests for timeout, invalid args, provider errors, read limits, recovery paths and no leaked URLs/tokens in logs.

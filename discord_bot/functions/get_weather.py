@@ -1,5 +1,5 @@
 import os, requests, json, asyncio
-from .base import BaseFunction
+from .base import BaseFunction, tool_error
 
 class WeatherLookup(BaseFunction):
     name = "weather_lookup"
@@ -41,23 +41,23 @@ class WeatherLookup(BaseFunction):
             geocode_response.raise_for_status()
             geocode_data = geocode_response.json()
             if not geocode_data:
-                return f"No weather location found for {location}."
+                return tool_error("NO_RESULTS", "No weather location found. Try a more specific location.", retryable=True)
             lat, lon = geocode_data[0]['lat'], geocode_data[0]['lon']
-        except (requests.RequestException, ValueError, KeyError, IndexError) as exc:
-            return f"Unable to look up weather location: {type(exc).__name__}"
+        except (requests.RequestException, ValueError, KeyError, IndexError):
+            return tool_error("PROVIDER_ERROR", "Unable to look up weather location.", retryable=True)
 
         # Make the API request for weather data
         url = f"https://api.openweathermap.org/data/3.0/onecall?lat={lat}&lon={lon}&exclude={exclude}&appid={self.api_key}&units=imperial"
         try:
             response = await asyncio.to_thread(requests.get, url, timeout=10)
-        except requests.RequestException as exc:
-            return f"Unable to fetch weather: {type(exc).__name__}"
+        except requests.RequestException:
+            return tool_error("PROVIDER_ERROR", "Unable to fetch weather.", retryable=True)
         #print(response.text)
 
         if response.status_code == 200:
             return self.trim_data(response.text)
         else:
-            return f"Error fetching the weather: {response.content.decode('utf-8')}"
+            return tool_error("PROVIDER_ERROR", "Unable to fetch weather.")
         
     def trim_data(self, data):
         data_dict = json.loads(data)

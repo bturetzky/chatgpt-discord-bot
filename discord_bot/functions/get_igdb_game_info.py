@@ -1,4 +1,4 @@
-from discord_bot.functions.base import BaseFunction
+from discord_bot.functions.base import BaseFunction, tool_error
 import os, aiohttp, json
 
 class IGDBGameInfo(BaseFunction):
@@ -48,7 +48,7 @@ class IGDBGameInfo(BaseFunction):
             }
             async with session.post(auth_url, params=auth_params) as auth_resp:
                 if auth_resp.status != 200:
-                    return f"Failed to get token: {await auth_resp.text()}"
+                    return tool_error("AUTH_ERROR", "IGDB authentication failed.")
                 token_data = await auth_resp.json()
                 token = token_data['access_token']
 
@@ -66,5 +66,5 @@ class IGDBGameInfo(BaseFunction):
                 if response.status == 200:
                     return json.dumps(await response.json())
                 else:
-                    return f"An error occurred: {await response.text()}"
+                    return tool_error("PROVIDER_ERROR", "IGDB rejected the request.")
 

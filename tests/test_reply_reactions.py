@@ -52,7 +52,7 @@ class ReplyReactionTests(unittest.IsolatedAsyncioTestCase):
         outputs = [json.loads(item["output"]) for item in
                    self.handler.client.responses.create.await_args.kwargs["input"]
                    if item["type"] == "function_call_output"]
-        self.assertEqual([item.get("error") for item in outputs],
+        self.assertEqual([item.get("error", {}).get("code") for item in outputs],
                          [None, "reaction_limit", "reaction_limit"])
 
     async def test_custom_guild_emoji(self):
@@ -87,7 +87,7 @@ class ReplyReactionTests(unittest.IsolatedAsyncioTestCase):
         self.custom.is_usable.return_value = False
         for value in ("hello", "😂😂", "<:external:123>", ":party_blob:"):
             with self.subTest(value=value):
-                self.assertEqual((await self.react(emoji=value))["error"], "emoji_unavailable")
+                self.assertEqual((await self.react(emoji=value))["error"]["code"], "emoji_unavailable")
         self.message.add_reaction.assert_not_awaited()
 
     async def test_discord_failures_leave_allowance_available(self):
@@ -100,7 +100,7 @@ class ReplyReactionTests(unittest.IsolatedAsyncioTestCase):
                 self.message.add_reaction.side_effect = kind(
                     SimpleNamespace(status=status, reason="test"), "test",
                 )
-                self.assertEqual((await self.react(emoji="👍"))["error"], expected)
+                self.assertEqual((await self.react(emoji="👍"))["error"]["code"], expected)
         self.message.add_reaction.side_effect = None
         self.assertEqual(await self.react(emoji="👍"), {"ok": True})
 
@@ -116,7 +116,7 @@ class ReplyReactionTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("react_to_message", {
                     tool["name"] for tool in create.await_args.kwargs["tools"]
                 })
-                self.assertEqual(json.loads(create.await_args.kwargs["input"][-2]["output"])["error"],
+                self.assertEqual(json.loads(create.await_args.kwargs["input"][-2]["output"])["error"]["code"],
                                  "message_unavailable")
         self.message.add_reaction.assert_not_awaited()
 
@@ -140,6 +140,6 @@ class ReplyReactionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(schema["required"], ["emoji"])
         self.assertFalse(schema["additionalProperties"])
         for field in ("message_id", "channel_id", "guild_id"):
-            self.assertEqual((await self.react(emoji="👍", **{field: "123"}))["error"],
+            self.assertEqual((await self.react(emoji="👍", **{field: "123"}))["error"]["code"],
                              "invalid_arguments")
         self.message.add_reaction.assert_not_awaited()

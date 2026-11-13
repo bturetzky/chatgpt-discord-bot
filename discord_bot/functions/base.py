@@ -1,3 +1,6 @@
+import json
+
+
 class BaseFunction:
     name = "base_function"
     description = "Base function, not to be used directly.  A well crafted description is critical and informs the LLM about the purpose of the function."
@@ -45,3 +48,9 @@ class BaseFunction:
         }
 
         return final_params
+
+
+def tool_error(code, message, *, retryable=False):
+    return json.dumps({"ok": False, "error": {
+        "code": code, "message": message, "retryable": retryable,
+    }})
