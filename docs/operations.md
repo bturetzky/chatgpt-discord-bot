@@ -120,3 +120,11 @@ Use the dev bot after rollout. Prepare a message in a guild text channel that bo
 2. Mention the bot with “Read channel ID <channel ID>, message ID <message ID>” for a known visible message outside the archive if available. Expect the same attribution and content via Discord.
 3. Ask the bot to read the saved link to the deleted message. Expect an unavailable response without message content or attribution.
 4. Ask the bot to read the restricted link. Expect an inaccessible response without details about the target message.
+
+## Discord thread dev acceptance
+
+After dev rollout, use the dev bot in a guild channel where both test accounts and the bot can view the channel and read history. Create the test messages after rollout so their reply references enter the archive. Keep a second account outside a private thread for the permission check.
+
+1. Post a root, an unrelated neighboring message and two Discord replies to the root. Reply to one of those replies. Ask the bot to “Follow the reply conversation from <reply link>.” Expect the root, both branches and the nested reply with jump links. The neighboring message should be absent.
+2. Create a native thread and post two standalone messages and an explicit reply. Ask “Read native Discord thread <thread ID>.” Expect all three thread messages, with a parent link for the explicit reply only.
+3. Delete the root of the first conversation and repeat the linked-reply request. Expect the surviving connected messages and an incomplete-coverage indication. Ask from the nonmember account to read the private thread. Expect an access failure without thread content.

@@ -249,6 +249,13 @@ MIGRATIONS = (
         "ALTER TABLE shadow_evaluations ADD COLUMN selected_message_id TEXT",
         "ALTER TABLE shadow_evaluations ADD COLUMN new_message_count INTEGER",
     ),
+    (
+        # NULL identifies legacy snapshots whose reply metadata is unknown.
+        "ALTER TABLE messages ADD COLUMN reply_message_id TEXT",
+        "ALTER TABLE messages ADD COLUMN reply_channel_id TEXT",
+        """CREATE INDEX messages_reply ON messages(guild_id, reply_channel_id, reply_message_id, message_id)
+            WHERE reply_message_id IS NOT NULL AND reply_message_id != ''""",
+    ),
 )
 
 
