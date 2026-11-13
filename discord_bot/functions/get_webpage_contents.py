@@ -220,7 +220,7 @@ BOILERPLATE = (
     ".advertisement, .related-posts, .cookie-banner, .social-share"
 )
 BLOCKS = {"p", "div", "section", "article", "header", "blockquote", "pre", "ul", "ol",
-          "li", "table", "tr", "td", "th", "dl", "dt", "dd", "figure", "figcaption", "hr", "br"}
+          "li", "table", "tr", "dl", "dt", "dd", "figure", "figcaption", "hr", "br"}
 HEADINGS = {f"h{level}": "#" * level + " " for level in range(1, 7)}
 CURSOR_PATTERN = re.compile(r"v1\.([0-9a-f]{64})\.([1-9][0-9]{0,8})")
 
