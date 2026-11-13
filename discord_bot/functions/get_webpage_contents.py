@@ -220,7 +220,7 @@ BOILERPLATE = (
     ".advertisement, .related-posts, .cookie-banner, .social-share"
 )
 BLOCKS = {"p", "div", "section", "article", "header", "blockquote", "pre", "ul", "ol",
-          "li", "table", "tr", "dl", "dt", "dd", "figure", "figcaption", "hr", "br"}
+          "li", "table", "tr", "td", "th", "dl", "dt", "dd", "figure", "figcaption", "hr", "br"}
 HEADINGS = {f"h{level}": "#" * level + " " for level in range(1, 7)}
 CURSOR_PATTERN = re.compile(r"v1\.([0-9a-f]{64})\.([1-9][0-9]{0,8})")
 
@@ -271,9 +271,9 @@ def article_text(main, final_url):
         inline.clear()
 
     # Walk iteratively so deeply nested input cannot exhaust the Python stack.
-    stack = [(iter([main]), None)]
+    stack = [(iter([main]), None, None)]
     while stack:
-        children, boundary = stack[-1]
+        children, boundary, tag_name = stack[-1]
         node = next(children, None)
         if node is None:
             stack.pop()
@@ -296,6 +296,8 @@ def article_text(main, final_url):
             if raw_label[-1:].isspace():
                 inline.append(" ")
             continue
+        if node.name in ("td", "th") and inline:
+            inline.append(" | ")
         if node.name == "pre":
             flush()
             code = node.get_text().strip("\n")
@@ -306,8 +308,12 @@ def article_text(main, final_url):
         boundary = node.name in BLOCKS or node.name in HEADINGS
         if boundary:
             flush()
-            prefix = HEADINGS.get(node.name, {"li": "- ", "blockquote": "> "}.get(node.name, prefix))
-        stack.append((iter(node.children), boundary))
+            if node.name == "li":
+                list_depth = sum(1 for _, _, ancestor in stack if ancestor in ("ul", "ol"))
+                prefix = "  " * max(0, list_depth - 1) + "- "
+            else:
+                prefix = HEADINGS.get(node.name, {"blockquote": "> "}.get(node.name, prefix))
+        stack.append((iter(node.children), boundary, node.name))
     flush()
     return "\n\n".join(blocks)
 
@@ -339,7 +345,7 @@ class GetWebPageContents(BaseFunction):
         "properties": {
             "url": {"type": "string", "description": "Public HTTP(S) page or GitHub repository URL."},
             "cursor": {"type": "string", "description": "Exact next_cursor from a read of this URL."},
-            "find_text": {"type": "string", "description": "Case-insensitive literal phrase or heading to jump to (up to 200 characters). Omit when continuing."},
+            "find_text": {"type": "string", "description": "Case-insensitive literal phrase in extracted text (up to 200 characters). Whitespace within a paragraph is normalized; searches cannot span paragraph or heading boundaries. Omit when continuing."},
         },
         "required": ["url"]
     }
