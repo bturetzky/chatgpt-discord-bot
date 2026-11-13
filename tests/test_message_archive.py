@@ -4,12 +4,57 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import discord
+
 from discord_bot.storage import Database
 from discord_bot.storage.database import MIGRATIONS
 from discord_bot.storage.message_archive import MessageArchive
 
 
 class ArchiveTests(unittest.TestCase):
+    def test_unchanged_edited_snapshots_enrich_legacy_reply_metadata(self):
+        for is_reply in (False, True):
+            with self.subTest(is_reply=is_reply), tempfile.TemporaryDirectory() as tmp:
+                with Database(str(Path(tmp) / "bot.sqlite3")) as db:
+                    archive = MessageArchive(db)
+                    timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+                    message = SimpleNamespace(
+                        guild=SimpleNamespace(id=1), channel=SimpleNamespace(id=2, parent=None),
+                        id=3, author=SimpleNamespace(id=4), content="original",
+                        created_at=timestamp, edited_at=timestamp,
+                    )
+                    archive.upsert(message)
+
+                    def snapshot():
+                        return db.connection.execute(
+                            "SELECT content, edited_at, reply_channel_id, reply_message_id "
+                            "FROM messages WHERE message_id='3'"
+                        ).fetchone()
+
+                    original = snapshot()
+                    self.assertEqual(original[2:], (None, None))
+                    message.type = discord.MessageType.reply if is_reply else discord.MessageType.default
+                    message.reference = SimpleNamespace(guild_id=1, channel_id=2, message_id=1) if is_reply else None
+                    archive.upsert(message)
+                    expected = ("2", "1") if is_reply else (None, "")
+                    self.assertEqual(snapshot(), (*original[:2], *expected))
+
+                    message.edited_at = None
+                    message.content = "stale"
+                    message.reference = None
+                    archive.upsert(message)
+                    self.assertEqual(snapshot(), (*original[:2], *expected))
+
+                    message.edited_at = datetime(2026, 1, 2, tzinfo=timezone.utc)
+                    message.content = "newer"
+                    archive.upsert(message)
+                    self.assertEqual(snapshot()[0], "newer")
+                    self.assertEqual(snapshot()[2:], expected)
+
+                    archive.delete(3)
+                    archive.upsert(message)
+                    self.assertEqual(snapshot()[0], "")
+
     def test_insert_edit_delete_and_reopen(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = str(Path(tmp) / "bot.sqlite3")

@@ -9,7 +9,7 @@ This index tracks approved Codex handoffs and pending dev acceptance. They do no
 5. [Implement get_steam_game_info for Steam store questions](05-steam-game-info.md)
 6. [Implement get_reddit_discussion for public threads](06-reddit-discussion.md)
 7. [Simplify IGDB game/platform lookup and cache authentication](07-igdb-interface.md)
-8. [Implement get_discord_thread for actual reply chains](08-discord-thread.md)
+8. [Implement get_discord_thread for actual reply chains](08-discord-thread.md) (dev acceptance pending after rollout)
 9. [Implement get_movie_tv_info for entertainment lookups](09-movie-tv-info.md)
 10. [Implement roll_dice and random_choice as bounded utilities](10-random-choice.md)
 11. [Enhance weather_lookup with targeted forecast modes](11-weather-output.md)

@@ -1,6 +1,8 @@
 """Idempotent message snapshots and gateway edits/deletes for one Discord server."""
 from datetime import datetime, timezone
 
+import discord
+
 
 def utc_iso(value):
     if value is None:
@@ -10,6 +12,18 @@ def utc_iso(value):
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).isoformat(timespec="microseconds")
+
+
+def reply_target(message):
+    """Read an explicit reply reference without using its embedded message."""
+    if getattr(message, "type", None) != discord.MessageType.reply:
+        return None
+    reference = getattr(message, "reference", None)
+    if reference is None or reference.message_id is None or reference.channel_id is None:
+        return None
+    if reference.guild_id not in (None, message.guild.id):
+        return None
+    return str(reference.channel_id), str(reference.message_id)
 
 
 class MessageArchive:
@@ -22,20 +36,40 @@ class MessageArchive:
             return
         created = utc_iso(message.created_at)
         edited = utc_iso(message.edited_at)
-        self.db.execute(
+        target = reply_target(message)
+        reply_channel, reply_message = target or (
+            None, "" if getattr(message, "type", None) is not None
+            and message.type != discord.MessageType.reply else None
+        )
+        guild_id, channel_id, message_id = map(str, (message.guild.id, message.channel.id, message.id))
+        snapshot = self.db.execute(
             """INSERT INTO messages
-                (guild_id, channel_id, message_id, author_id, content, created_at, edited_at)
-                SELECT ?, ?, ?, ?, ?, ?, ?
+                (guild_id, channel_id, message_id, author_id, content, created_at, edited_at,
+                 reply_channel_id, reply_message_id)
+                SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
                 WHERE NOT EXISTS (SELECT 1 FROM deleted_message_ids WHERE message_id=?)
                 ON CONFLICT(message_id) DO UPDATE SET
-                    content=excluded.content, edited_at=excluded.edited_at
+                    content=excluded.content, edited_at=excluded.edited_at,
+                    reply_channel_id=CASE WHEN messages.reply_message_id IS NULL
+                                          THEN excluded.reply_channel_id ELSE messages.reply_channel_id END,
+                    reply_message_id=COALESCE(messages.reply_message_id, excluded.reply_message_id)
                 WHERE messages.deleted_at IS NULL
                   AND (messages.edited_at IS NULL OR
                        (excluded.edited_at IS NOT NULL AND excluded.edited_at > messages.edited_at))
                   AND (excluded.edited_at IS NOT NULL OR messages.edited_at IS NULL)""",
-            (str(message.guild.id), str(message.channel.id), str(message.id),
-             str(message.author.id), message.content or "", created, edited, str(message.id)),
+            (guild_id, channel_id, message_id, str(message.author.id),
+             message.content or "", created, edited, reply_channel, reply_message, message_id),
         )
+        if snapshot.rowcount == 0 and reply_message is not None:
+            # Reply identity is fixed when a message is sent. It can enrich a
+            # legacy row even when this snapshot cannot replace its content.
+            self.db.execute(
+                """UPDATE messages SET reply_channel_id=?, reply_message_id=?
+                   WHERE guild_id=? AND channel_id=? AND message_id=?
+                     AND reply_message_id IS NULL AND deleted_at IS NULL
+                     AND NOT EXISTS (SELECT 1 FROM deleted_message_ids WHERE message_id=?)""",
+                (reply_channel, reply_message, guild_id, channel_id, message_id, message_id),
+            )
 
     def edit(self, message_id, content, edited_at=None):
         """Apply only a newer edit. Unknown messages can be fetched and upserted by caller."""

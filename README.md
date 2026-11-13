@@ -6,6 +6,7 @@ Self-hosted Python Discord bot for a small trusted server, with OpenAI Responses
 
 - Responds to mentions and direct messages, with recent channel context and a tool-calling loop.
 - Reads linked messages from accessible server text channels, with author attribution and available Discord metadata.
+- Follows explicit Discord reply chains with archived branches and reads accessible native threads on demand.
 - Brave web search, public webpage/GitHub README reading with continuation and phrase lookup, YouTube metadata and best-effort transcripts, weather, news and IGDB game/platform information.
 - Direct and replied-to Discord image understanding for supported still images.
 - SQLite message archive with FTS5 search, edit/delete handling, restart reconciliation and bounded historical import.
