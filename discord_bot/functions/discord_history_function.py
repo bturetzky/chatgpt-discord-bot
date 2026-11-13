@@ -4,6 +4,7 @@ import logging
 import re
 import sqlite3
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from discord_bot.functions.base import BaseFunction, tool_error
 
@@ -23,6 +24,23 @@ def build_match_query(query):
     if word_count > 12:
         raise ValueError("query has too many words")
     return " AND ".join(match_parts)
+
+
+def bounded_excerpt(snippet, opening, closing):
+    """Crop around the first FTS match and remove the internal markers."""
+    prefix, _, marked = snippet.partition(opening)
+    first_match = marked.partition(closing)[0]
+    excerpt = snippet.replace(opening, "").replace(closing, "")
+    limit = 350
+    if len(excerpt) <= limit:
+        return excerpt
+
+    # Reserve space for ellipses and favor keeping a complete match in view.
+    width = limit - 2
+    leading_context = min(80, max(0, width - len(first_match)))
+    start = min(max(0, len(prefix) - leading_context), len(excerpt) - width)
+    end = start + width
+    return ("…" if start else "") + excerpt[start:end] + ("…" if end < len(excerpt) else "")
 
 
 def search_messages(db, *, query, guild_id, channel_ids, channel_id=None,
@@ -63,15 +81,18 @@ def search_messages(db, *, query, guild_id, channel_ids, channel_id=None,
                 raise ValueError(key + " must include a timezone")
             where.append("m.created_at " + op + " ?")
             params.append(parsed.astimezone(timezone.utc).isoformat(timespec="microseconds"))
+    # Per-query markers avoid collisions with literal Discord message text.
+    marker = uuid4().hex
+    opening, closing = f"<{marker}>", f"</{marker}>"
     rows = db.execute(
         "SELECT m.guild_id,m.channel_id,m.message_id,m.author_id,"
-        "snippet(messages_fts, 0, '', '', '…', 32),m.created_at "
+        "snippet(messages_fts, 0, ?, ?, '…', 32),m.created_at "
         "FROM messages_fts JOIN messages m ON m.rowid=messages_fts.rowid "
         "WHERE " + " AND ".join(where) + " ORDER BY " + order + " LIMIT ?",
-        (*params, limit),
+        (opening, closing, *params, limit),
     ).fetchall()
     return [{"message_id": message, "author_id": author, "channel_id": channel, "created_at": created,
-             "snippet": content[:350], "url": f"https://discord.com/channels/{guild}/{channel}/{message}"}
+             "snippet": bounded_excerpt(content, opening, closing), "url": f"https://discord.com/channels/{guild}/{channel}/{message}"}
             for guild, channel, message, author, content, created in rows]
 
 

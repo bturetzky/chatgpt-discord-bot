@@ -42,6 +42,25 @@ class HistorySearchTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(all("space age" in hit["snippet"] and len(hit["snippet"]) <= 350
                                 for hit in hits))
 
+    def test_excerpt_keeps_phrase_after_long_url_and_whitespace(self):
+        with tempfile.TemporaryDirectory() as tmp, Database(str(Path(tmp) / "test.db")) as db:
+            for message_id, prefix in [
+                ("100", "https://example.test/" + "x" * 600),
+                ("101", "start" + "\n" * 500),
+            ]:
+                db.connection.execute(
+                    "INSERT INTO messages(guild_id,channel_id,message_id,author_id,content,created_at) "
+                    "VALUES (?,?,?,?,?,?)",
+                    ("1", "10", message_id, "7", prefix + " space age launch", "2026-11-01"),
+                )
+            hits = search_messages(db.connection, query='"space age launch"', guild_id="1",
+                                   channel_ids={"10"})
+            self.assertEqual({hit["message_id"] for hit in hits}, {"100", "101"})
+            for hit in hits:
+                self.assertLessEqual(len(hit["snippet"]), 350)
+                self.assertTrue(hit["snippet"].startswith("…"))
+                self.assertTrue(hit["snippet"].endswith("space age launch"))
+
     async def test_channel_attribution_same_cross_and_permission_scope(self):
         from discord_bot.functions.discord_history_function import add_channel_attribution
 
