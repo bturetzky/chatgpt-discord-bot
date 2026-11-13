@@ -81,7 +81,7 @@ class HistorySearchTests(unittest.IsolatedAsyncioTestCase):
                         {"query": "Factorio"}, {"archive": SimpleNamespace(db=conn),
                         "guild": guild, "member": object()}))
                 self.assertEqual(len(cross_channel["results"]), 1)
-                self.assertIn("permitted_channels=", logs.output[0])
+                self.assertNotIn("Factorio", logs.output[0])
                 self.assertIn("results=1", logs.output[0])
                 blank_filters = json.loads(await tool.execute_with_context(
                     {"query": "Factorio", "channel_id": "", "author_id": "",
