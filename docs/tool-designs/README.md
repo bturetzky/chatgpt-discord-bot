@@ -5,7 +5,7 @@ This index tracks approved Codex handoffs and pending dev acceptance. They do no
 1. [Enhance get_webpage_contents for complete, navigable article reading](01-webpage-reading.md)
 2. [Enhance search_web with useful search metadata](02-brave-search.md)
 3. [Archived Discord search](03-discord-history-search.md) (dev acceptance pending after rollout)
-4. [Implement get_discord_message for a linked message](04-discord-message.md)
+4. [Implement get_discord_message for a linked message](04-discord-message.md) (implemented in PR, dev acceptance pending)
 5. [Implement get_steam_game_info for Steam store questions](05-steam-game-info.md)
 6. [Implement get_reddit_discussion for public threads](06-reddit-discussion.md)
 7. [Simplify IGDB game/platform lookup and cache authentication](07-igdb-interface.md)
