@@ -16,6 +16,7 @@ from .usage_metrics import ChatUsage
 GPT_MODEL = os.getenv("OPENAI_MODEL", "gpt-6.1-terra")
 MAX_FUNCTION_CALLS = 11
 MAX_PAGE_READS = 2
+MAX_WEBPAGE_CONTINUATIONS = 4
 MAX_INVALID_YOUTUBE_CALLS = 3
 YOUTUBE_CONTINUATION_TIMEOUT = 12
 
@@ -77,6 +78,7 @@ class ChatGPTHandler:
         usage_metrics = ChatUsage(model=GPT_MODEL)
         started = time.monotonic()
         page_reads = 0
+        webpage_continuations = 0
         invalid_youtube_calls = 0
         progress_sent = False
         try:
@@ -116,12 +118,21 @@ class ChatGPTHandler:
                                 and call.name not in CONTEXT_TOOLS):
                             progress_sent = True
                             await self.send_interim_message(channel, update.strip())
+                        is_webpage_continuation = (
+                            call.name == "get_webpage_contents" and arguments.get("cursor") is not None
+                        )
+                        read_limit_reached = (
+                            webpage_continuations >= MAX_WEBPAGE_CONTINUATIONS if is_webpage_continuation
+                            else page_reads >= MAX_PAGE_READS
+                        )
                         if call.name == "read_youtube" and invalid_youtube_calls >= MAX_INVALID_YOUTUBE_CALLS:
                             result = json.dumps({"ok": False, "error": {"code": "VALIDATION_LIMIT", "message": "Too many invalid YouTube requests in this response."}})
-                        elif call.name in ("get_webpage_contents", "read_youtube") and page_reads >= MAX_PAGE_READS:
+                        elif call.name in ("get_webpage_contents", "read_youtube") and read_limit_reached:
                             result = json.dumps({"ok": False, "error": {"code": "READ_LIMIT", "message": "Page read limit reached for this response."}})
                         else:
-                            if call.name in ("get_webpage_contents", "read_youtube"):
+                            if is_webpage_continuation:
+                                webpage_continuations += 1
+                            elif call.name in ("get_webpage_contents", "read_youtube"):
                                 page_reads += 1
                             result = await self.function_handler.execute_function(
                                 call.name, arguments, context=discord_context

@@ -1,6 +1,6 @@
 # Enhance get_webpage_contents for complete, navigable article reading
 
-**Status:** Approved design; not implemented. **Assignment:** 01 — independent Codex handoff.
+**Status:** Implemented on the feature branch; dev Discord verification pending. **Assignment:** 01 — independent Codex handoff.
 
 ## Outcome
 Enhance get_webpage_contents for complete, navigable article reading. This is an on-demand LLM-callable capability, not an autonomous/background feature.
