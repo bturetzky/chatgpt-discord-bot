@@ -111,3 +111,12 @@ A healthy Deployment or gateway-ready log is not a substitute for a real Discord
 For image ingestion failures, the `attachment_mime` field counts inspected attachments by sanitized MIME category and whether the filename had a recognized image extension. For example, `generic/recognized_extension=true:1` records one attachment with a generic MIME and a recognized extension. The field contains no filenames, URLs, or raw MIME values.
 
 When a decoded image disagrees with an attachment or CDN MIME header, the `Image MIME mismatch` line records the detected supported format and two mismatch flags. The bot uses the decoded format.
+
+## Linked message dev acceptance
+
+Use the dev bot after rollout. Prepare a message in a guild text channel that both the requester and bot can view and read history in, a message that the archive has observed being deleted, and a link to a channel the requester cannot read. Use test messages only.
+
+1. Mention the bot with “What does <message link> say, who wrote it, and what attachments or reactions are there?” Expect the source content, correct author and jump link, and metadata when present.
+2. Mention the bot with “Read channel ID <channel ID>, message ID <message ID>” for a known visible message outside the archive if available. Expect the same attribution and content via Discord.
+3. Ask the bot to read the saved link to the deleted message. Expect an unavailable response without message content or attribution.
+4. Ask the bot to read the restricted link. Expect an inaccessible response without details about the target message.
