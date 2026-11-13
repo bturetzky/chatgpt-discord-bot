@@ -1,4 +1,5 @@
 from ..functions.base import BaseFunction, tool_error
+from ..functions.discord_message_function import GetDiscordMessage
 from ..functions.react_to_message import ReactToMessage
 import asyncio, importlib, inspect, json, pkgutil, logging, time
 
@@ -7,6 +8,7 @@ TOOL_TIMEOUT = 30
 
 CONTEXT_TOOLS = frozenset({
     "search_discord_history", "get_discord_conversation_context", ReactToMessage.name,
+    GetDiscordMessage.name,
 })
 
 
