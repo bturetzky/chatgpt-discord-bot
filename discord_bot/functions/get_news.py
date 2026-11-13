@@ -1,4 +1,4 @@
-from discord_bot.functions.base import BaseFunction
+from discord_bot.functions.base import BaseFunction, tool_error
 import os, json, asyncio
 from newsapi import NewsApiClient
 
@@ -63,11 +63,11 @@ class GetNews(BaseFunction):
             elif mode == 'everything':
                 response = await asyncio.to_thread(self.api.get_everything, q=keywords, from_param=from_date, to=to_date, language=language, sort_by='relevancy', page_size=RESULTS_LIMIT)
             else:
-                return "Invalid mode specified."
+                return tool_error("INVALID_ARGUMENT", "Choose a supported news mode.", retryable=True)
             
             if response['status'] == 'ok':
                 return json.dumps(response)
             else:
-                return f"API returned an error: {response['status']}"
-        except Exception as e:
-            return f"An error occurred: {str(e)}"
+                return tool_error("PROVIDER_ERROR", "The news provider rejected the request.")
+        except Exception:
+            return tool_error("PROVIDER_ERROR", "Unable to fetch news.")

@@ -1,6 +1,9 @@
-from ..functions.base import BaseFunction
+from ..functions.base import BaseFunction, tool_error
 from ..functions.react_to_message import ReactToMessage
 import asyncio, importlib, inspect, json, pkgutil, logging, time
+
+TOOL_TIMEOUT = 30
+
 
 CONTEXT_TOOLS = frozenset({
     "search_discord_history", "get_discord_conversation_context", ReactToMessage.name,
@@ -27,35 +30,55 @@ class FunctionHandler:
         return loaded_functions
 
     async def execute_function(self, function_name, args, context=None):
+        function_class = self.functions.get(function_name)
+        if function_class is None:
+            return tool_error("UNKNOWN_TOOL", "Choose an available tool.")
+        try:
+            if isinstance(args, str):
+                args = json.loads(args)
+        except json.JSONDecodeError:
+            args = None
+        if not isinstance(args, dict):
+            return tool_error("INVALID_ARGUMENT", "Provide a JSON object matching the tool schema.", retryable=True)
+
         started = time.monotonic()
         try:
-            function_class = self.functions.get(function_name)
-            if function_class:
-                # Convert args string to dictionary
-                if isinstance(args, str):
-                    args = json.loads(args)
-                instance = function_class()
-                result = (instance.execute_with_context(args, context)
-                          if function_name in CONTEXT_TOOLS else instance.execute(args))
-                result = await asyncio.wait_for(result, timeout=30) if inspect.isawaitable(result) else result
-                failed = False
-                if isinstance(result, str):
-                    try:
-                        payload = json.loads(result)
-                        failed = isinstance(payload, dict) and payload.get("ok") is False
-                    except (ValueError, TypeError):
-                        pass
-                logging.log(logging.WARNING if failed else logging.INFO,
-                            'Tool %s: name=%s duration_ms=%d',
-                            'reported failure' if failed else 'completed',
-                            function_name, int((time.monotonic() - started) * 1000))
-                return result
-            raise ValueError(f"Function {function_name} not found.")
-        #TODO: Catch specific exceptions and return a more specific error message
-        #TODO: handle timeouts errors
-        except Exception as e:
-            logging.warning('Tool failed: name=%s error_type=%s duration_ms=%d', function_name, type(e).__name__, int((time.monotonic() - started) * 1000))
-            return "An error occurred while executing the function."
+            instance = function_class()
+            if function_name in CONTEXT_TOOLS:
+                execute, execution_args = instance.execute_with_context, (args, context)
+            else:
+                execute, execution_args = instance.execute, (args,)
+            async with asyncio.timeout(TOOL_TIMEOUT):
+                if inspect.iscoroutinefunction(execute):
+                    result = execute(*execution_args)
+                else:
+                    result = await asyncio.to_thread(execute, *execution_args)
+                if inspect.isawaitable(result):
+                    result = await result
+        except asyncio.TimeoutError:
+            result = tool_error("TIMEOUT", "Tool timed out. Try another source or retry if budget allows.", retryable=True)
+        except Exception as exc:
+            logging.warning("Tool exception: name=%s error_type=%s", function_name, type(exc).__name__)
+            result = tool_error("PROVIDER_ERROR", "Tool execution failed. Try another source or use gathered information.")
+
+        try:
+            payload = json.loads(result)
+        except (ValueError, TypeError):
+            payload = None
+        failed = isinstance(payload, dict) and payload.get("ok") is False
+        if failed:
+            error = payload.get("error")
+            if not isinstance(error, dict):
+                error = {"code": "TOOL_ERROR", "message": str(error or "Tool execution failed.")}
+                payload["error"] = error
+            error.setdefault("code", "TOOL_ERROR")
+            error.setdefault("retryable", False)
+            result = json.dumps(payload)
+        logging.log(logging.WARNING if failed else logging.INFO,
+                    "Tool %s: name=%s duration_ms=%d",
+                    "reported failure" if failed else "completed",
+                    function_name, int((time.monotonic() - started) * 1000))
+        return result
 
     def get_api_functions(self):
         api_functions = []

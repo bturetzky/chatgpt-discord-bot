@@ -1,6 +1,7 @@
 """Mocked tool and OpenAI failure regressions; no network or credentials needed."""
 import asyncio
 import json
+import threading
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -9,7 +10,10 @@ import requests
 from openai import APIConnectionError
 from pydantic import BaseModel
 
+from discord_bot.handlers import chatgpt_handler
 from discord_bot.handlers.chatgpt_handler import ChatGPTHandler
+from discord_bot.handlers.function_handler import FunctionHandler
+from discord_bot.handlers.tool_output import MAX_TOOL_RESULT_CHARS
 from discord_bot.functions.get_weather import WeatherLookup
 from discord_bot.functions.get_webpage_contents import GetWebPageContents
 from discord_bot.functions.search_web import SearchWeb
@@ -38,6 +42,89 @@ class OpenAIToolRegressions(unittest.IsolatedAsyncioTestCase):
         self.handler.client.responses.create = AsyncMock()
         self.handler.function_handler.api_functions = []
         self.handler.function_handler.execute_function = AsyncMock(return_value="ok")
+
+    def budgets(self):
+        return [
+            json.JSONDecoder().raw_decode(
+                call.kwargs["instructions"].split("Internal tool budget: ", 1)[1]
+            )[0]
+            for call in self.handler.client.responses.create.await_args_list
+        ]
+
+    async def test_parallel_batch_respects_cap_and_forces_final_answer(self):
+        create = self.handler.client.responses.create
+        create.side_effect = [
+            response([tool_call("invalid", "search_web", "bad JSON"),
+                      tool_call("page", "get_webpage_contents", '{"url":"https://example.org"}')]),
+            response([tool_call("video", "read_youtube", '{"url":"https://youtu.be/example"}'),
+                      tool_call("extra", "search_web", '{}')]),
+            response([], "Answer from available evidence"),
+        ]
+        self.handler.function_handler.execute_function.return_value = (
+            '{"ok":false,"error":{"code":"PROVIDER_ERROR"}}'
+        )
+        self.handler.send_interim_message = AsyncMock()
+        with patch.object(chatgpt_handler, "MAX_FUNCTION_CALLS", 3):
+            self.assertEqual(await self.handler.get_response([], None), "Answer from available evidence")
+        budgets = self.budgets()
+        self.assertEqual([b["function_calls_remaining"] for b in budgets], [3, 1, 0])
+        self.assertEqual([b["shared_webpage_youtube_reads_remaining"] for b in budgets],
+                         [chatgpt_handler.MAX_PAGE_READS, 1, 0])
+        self.assertEqual(create.await_args.kwargs["tool_choice"], "none")
+        self.assertIn("Answer now", create.await_args.kwargs["instructions"])
+        outputs = [json.loads(item["output"]) for item in create.await_args.kwargs["input"]
+                   if item["type"] == "function_call_output"]
+        self.assertEqual([item["error"]["code"] for item in outputs],
+                         ["INVALID_ARGUMENT", "PROVIDER_ERROR", "PROVIDER_ERROR", "FUNCTION_LIMIT"])
+        self.assertEqual(self.handler.function_handler.execute_function.await_count, 2)
+        self.handler.send_interim_message.assert_not_awaited()
+
+    async def test_automatic_youtube_timeout_spends_both_allowances(self):
+        create = self.handler.client.responses.create
+        create.side_effect = [
+            response([tool_call("video", "read_youtube", '{"url":"https://youtu.be/example"}')]),
+            response([tool_call("page", "get_webpage_contents", '{"url":"https://example.org"}')]),
+            response([], "Partial coverage"),
+        ]
+        self.handler.function_handler.execute_function.side_effect = [
+            '{"ok":true,"source":"transcript","next_cursor":{"segment_index":2}}',
+            asyncio.TimeoutError(),
+        ]
+        self.assertEqual(await self.handler.get_response([], None), "Partial coverage")
+        budgets = self.budgets()
+        cap = chatgpt_handler.MAX_FUNCTION_CALLS
+        self.assertEqual([b["function_calls_remaining"] for b in budgets], [cap, cap - 2, cap - 3])
+        self.assertEqual([b["shared_webpage_youtube_reads_remaining"] for b in budgets],
+                         [chatgpt_handler.MAX_PAGE_READS, 0, 0])
+        self.assertEqual(self.handler.function_handler.execute_function.await_count, 2)
+        outputs = [json.loads(item["output"]) for item in create.await_args.kwargs["input"]
+                   if item["type"] == "function_call_output"]
+        self.assertIn("failed or timed out", outputs[0]["limitations"][0])
+        self.assertEqual(outputs[1]["error"]["code"], "READ_LIMIT")
+
+    async def test_oversized_tool_results_are_bounded_before_model_replay(self):
+        create = self.handler.client.responses.create
+        create.side_effect = [
+            response([tool_call("object", "search_web", "{}"),
+                      tool_call("list", "search_web", "{}"),
+                      tool_call("text", "search_web", "{}")]),
+            response([], "Done"),
+        ]
+        large = "x" * MAX_TOOL_RESULT_CHARS
+        self.handler.function_handler.execute_function.side_effect = [
+            json.dumps({"ok": True, "data": large}),
+            json.dumps([{"title": "First"}, {"data": large}]),
+            "\\\n" * MAX_TOOL_RESULT_CHARS,
+        ]
+        self.assertEqual(await self.handler.get_response([], None), "Done")
+        outputs = [item["output"] for item in create.await_args.kwargs["input"]
+                   if item["type"] == "function_call_output"]
+        for output in outputs:
+            self.assertLessEqual(len(output), MAX_TOOL_RESULT_CHARS)
+            self.assertTrue(json.loads(output)["result_truncated"])
+        self.assertEqual(json.loads(outputs[0])["result"], {"ok": True})
+        self.assertEqual(json.loads(outputs[1])["result"], [{"title": "First"}])
+        self.assertTrue(json.loads(outputs[2])["result"])
 
     async def test_no_tools_sends_only_the_model_reply(self):
         self.handler.send_interim_message = AsyncMock()
@@ -80,7 +167,7 @@ class OpenAIToolRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item["call_id"] for item in outputs], ["one", "two", "three"])
         self.assertEqual([item["output"] for item in outputs], ["ok", "ok", "ok"])
 
-    async def test_concurrent_requests_have_separate_progress_allowances(self):
+    async def test_concurrent_requests_have_separate_budgets_and_progress_allowances(self):
         both_started = asyncio.Event()
         progress = AsyncMock()
         self.handler.send_interim_message = progress
@@ -105,6 +192,9 @@ class OpenAIToolRegressions(unittest.IsolatedAsyncioTestCase):
             self.handler.get_response([{"role": "user", "content": "Seattle"}], "channel"),
             self.handler.get_response([{"role": "user", "content": "Portland"}], "channel"),
         ), timeout=2)
+        cap = chatgpt_handler.MAX_FUNCTION_CALLS
+        self.assertEqual([b["function_calls_remaining"] for b in self.budgets()],
+                         [cap, cap, cap - 1, cap - 1])
         self.assertEqual(results, ["Found Seattle", "Found Portland"])
         self.assertCountEqual([call.args for call in progress.await_args_list], [
             ("channel", "Checking Seattle"), ("channel", "Checking Portland"),
@@ -201,6 +291,50 @@ class OpenAIToolRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertIn("error processing your request with OpenAI", result)
 
 
+class FunctionExecutionRegressions(unittest.IsolatedAsyncioTestCase):
+    async def test_sync_tool_times_out_without_blocking_event_loop(self):
+        started = threading.Event()
+        release = threading.Event()
+
+        class SyncTool:
+            def execute(self, args):
+                started.set()
+                release.wait(2)
+                return "Finished"
+
+        with patch.object(FunctionHandler, "load_functions", return_value={"sync": SyncTool}), \
+                patch.object(FunctionHandler, "get_api_functions", return_value=[]):
+            handler = FunctionHandler()
+        try:
+            with patch("discord_bot.handlers.function_handler.TOOL_TIMEOUT", 0.1):
+                task = asyncio.create_task(handler.execute_function("sync", {}))
+                self.assertTrue(await asyncio.to_thread(started.wait, 1))
+                result = json.loads(await task)
+                self.assertEqual(result["error"]["code"], "TIMEOUT")
+        finally:
+            release.set()
+
+    async def test_timeout_and_provider_errors_exclude_sensitive_details(self):
+        tool = MagicMock()
+        with patch.object(FunctionHandler, "load_functions", return_value={"sample": tool}), \
+                patch.object(FunctionHandler, "get_api_functions", return_value=[]):
+            handler = FunctionHandler()
+        execute = tool.return_value.execute = AsyncMock()
+        for exc, code, retryable in [
+            (asyncio.TimeoutError("https://example.org/private?token=secret"), "TIMEOUT", True),
+            (RuntimeError("https://example.org/private?token=secret"), "PROVIDER_ERROR", False),
+        ]:
+            with self.subTest(code=code), self.assertLogs(level="WARNING") as logs:
+                execute.side_effect = exc
+                result = json.loads(await handler.execute_function("sample", {}))
+                self.assertFalse(result["ok"])
+                self.assertEqual(result["error"]["code"], code)
+                self.assertEqual(result["error"]["retryable"], retryable)
+                for text in [*logs.output, json.dumps(result)]:
+                    self.assertNotIn("example.org", text)
+                    self.assertNotIn("secret", text)
+
+
 class WeatherToolRegressions(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.tool = WeatherLookup()
@@ -261,7 +395,6 @@ class WebpageToolRegressions(unittest.IsolatedAsyncioTestCase):
 
 class LoggingRegressions(unittest.TestCase):
     def test_tool_registration_logs_names_not_schema(self):
-        from discord_bot.handlers.function_handler import FunctionHandler
         handler = object.__new__(FunctionHandler)
         handler.functions = {"search_web": MagicMock(name="search_web")}
         handler.functions["search_web"].return_value.description = "secret-description"

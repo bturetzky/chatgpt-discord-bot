@@ -6,7 +6,7 @@ import re
 import discord
 import emoji
 
-from .base import BaseFunction
+from .base import BaseFunction, tool_error
 from ..reaction_emoji import usable_guild_emoji
 
 MAX_REPLY_REACTIONS = 1
@@ -89,4 +89,6 @@ class ReactToMessage(BaseFunction):
             error = "message_unavailable"
         else:
             error = await reactions.add(args["emoji"])
-        return json.dumps({"ok": False, "error": error} if error else {"ok": True})
+        if error:
+            return tool_error(error, "Reaction unavailable. Continue with the normal reply.")
+        return json.dumps({"ok": True})

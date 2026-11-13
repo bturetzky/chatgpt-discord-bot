@@ -4,7 +4,7 @@ import logging
 import sqlite3
 from datetime import datetime, timezone
 
-from discord_bot.functions.base import BaseFunction
+from discord_bot.functions.base import BaseFunction, tool_error
 
 
 def search_messages(db, *, query, guild_id, channel_ids, channel_id=None,
@@ -80,14 +80,14 @@ class SearchDiscordHistory(BaseFunction):
     }, "required": ["query"]}
 
     async def execute(self, args):
-        return json.dumps({"ok": False, "error": "Discord request context required"})
+        return tool_error("CONTEXT_REQUIRED", "Discord request context required.")
 
     async def execute_with_context(self, args, context):
         if context is None or context.get("archive") is None or context.get("guild") is None:
-            return json.dumps({"ok": False, "error": "Discord archive unavailable"})
+            return tool_error("ARCHIVE_UNAVAILABLE", "Discord archive unavailable.")
         guild, member = context["guild"], context["member"]
         if member is None or guild.me is None:
-            return json.dumps({"ok": False, "error": "Discord permissions unavailable"})
+            return tool_error("PERMISSIONS_UNAVAILABLE", "Discord permissions unavailable.")
         allowed = {str(ch.id) for ch in guild.text_channels
                    if ch.permissions_for(member).view_channel and
                       ch.permissions_for(member).read_message_history and
@@ -99,15 +99,14 @@ class SearchDiscordHistory(BaseFunction):
                 channel_ids=allowed, channel_id=args.get("channel_id"),
                 author_id=args.get("author_id"), after=args.get("after"),
                 before=args.get("before"), limit=args.get("limit", 5))
-            logging.info("History search: guild=%s query=%r requested_channel=%s permitted_channels=%s results=%d",
-                         guild.id, args.get("query"), args.get("channel_id"),
-                         sorted(allowed), len(hits))
+            logging.info("History search completed: results=%d", len(hits))
             return json.dumps({"ok": True, "results": add_channel_attribution(
                 hits, guild, allowed, context.get("channel_id"))})
         except (ValueError, TypeError, sqlite3.Error) as exc:
-            logging.warning("History search failed: guild=%s query=%r permitted_channels=%s error_type=%s",
-                            guild.id, args.get("query"), sorted(allowed), type(exc).__name__)
-            return json.dumps({"ok": False, "error": str(exc)[:160]})
+            logging.warning("History search failed: error_type=%s", type(exc).__name__)
+            if isinstance(exc, sqlite3.Error):
+                return tool_error("ARCHIVE_ERROR", "Could not read the Discord archive.")
+            return tool_error("INVALID_ARGUMENT", "Check the search query and filters.", retryable=True)
 
 
 def get_conversation_context(db, *, guild_id, channel_ids, channel_id, message_id,
@@ -169,14 +168,14 @@ class GetDiscordConversationContext(BaseFunction):
     }, "required": ["channel_id", "message_id"]}
 
     async def execute(self, args):
-        return json.dumps({"ok": False, "error": "Discord request context required"})
+        return tool_error("CONTEXT_REQUIRED", "Discord request context required.")
 
     async def execute_with_context(self, args, context):
         if context is None or context.get("archive") is None or context.get("guild") is None:
-            return json.dumps({"ok": False, "error": "Discord archive unavailable"})
+            return tool_error("ARCHIVE_UNAVAILABLE", "Discord archive unavailable.")
         guild, member = context["guild"], context.get("member")
         if member is None or guild.me is None:
-            return json.dumps({"ok": False, "error": "Discord permissions unavailable"})
+            return tool_error("PERMISSIONS_UNAVAILABLE", "Discord permissions unavailable.")
         allowed = {str(ch.id) for ch in guild.text_channels
                    if ch.permissions_for(member).view_channel and
                       ch.permissions_for(member).read_message_history and
@@ -189,12 +188,11 @@ class GetDiscordConversationContext(BaseFunction):
                 context["archive"].db, guild_id=guild.id, channel_ids=allowed,
                 channel_id=channel_id, message_id=message_id,
                 before=args.get("before", 4), after=args.get("after", 4))
-            logging.info("History context: guild=%s channel=%s anchor=%s results=%d",
-                         guild.id, channel_id, message_id, len(results))
+            logging.info("History context completed: results=%d", len(results))
             return json.dumps({"ok": True, "results": add_channel_attribution(
                 results, guild, allowed, context.get("channel_id"))})
         except (ValueError, TypeError, sqlite3.Error) as exc:
-            logging.warning("History context failed: guild=%s channel=%r anchor=%r before=%r after=%r error_type=%s error=%s",
-                            guild.id, args.get("channel_id"), args.get("message_id"),
-                            args.get("before"), args.get("after"), type(exc).__name__, str(exc)[:160])
-            return json.dumps({"ok": False, "error": str(exc)[:160]})
+            logging.warning("History context failed: error_type=%s", type(exc).__name__)
+            if isinstance(exc, sqlite3.Error):
+                return tool_error("ARCHIVE_ERROR", "Could not read the Discord archive.")
+            return tool_error("INVALID_ARGUMENT", "Use channel and message IDs from a search result.", retryable=True)

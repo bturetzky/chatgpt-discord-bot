@@ -85,9 +85,6 @@ class ToolReliabilityTests(unittest.IsolatedAsyncioTestCase):
         tool = MagicMock()
         tool.execute = slow_tool
         handler.functions = {"slow": lambda: tool}
-        async def timeout(coro, timeout):
-            coro.close()
-            raise asyncio.TimeoutError()
-        with patch("discord_bot.handlers.function_handler.asyncio.wait_for", side_effect=timeout):
+        with patch("discord_bot.handlers.function_handler.TOOL_TIMEOUT", 0.01):
             result = await handler.execute_function("slow", {})
-        self.assertIn("error", result.lower())
+        self.assertIn('"code": "TIMEOUT"', result)
