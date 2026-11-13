@@ -1,6 +1,6 @@
 # Enhance search_web with useful search metadata
 
-**Status:** Approved design; not implemented. **Assignment:** 02 — independent Codex handoff.
+**Status:** Dev Discord verification pending after merge and rollout. **Assignment:** 02 — independent Codex handoff.
 
 ## Outcome
 Enhance search_web with useful search metadata. This is an on-demand LLM-callable capability, not an autonomous/background feature.
@@ -9,7 +9,7 @@ Enhance search_web with useful search metadata. This is an on-demand LLM-callabl
 - `discord_bot/functions/search_web.py`
 
 ## Scope and approach
-Return short snippets and available publication metadata alongside title/URL; expose a validated optional freshness parameter in the tool schema (current code checks pw but schema omits it). Keep existing 1–5 result bound and structured rate-limit/auth errors. Do not imply snippets prove the full article.
+Return short snippets and available publication metadata alongside title/URL; expose a validated optional freshness parameter in the tool schema. Keep existing 1–5 result bound and structured rate-limit/auth errors. Do not imply snippets prove the full article.
 
 ## Acceptance criteria
 Tests for missing metadata, provider errors, freshness serialization, result limits and malformed payloads; no secrets logged.

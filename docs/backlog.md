@@ -4,7 +4,7 @@ This is the only list of **approved unfinished features** and concrete follow-up
 
 ## Approved on-demand LLM tool assignments
 
-The independent, unimplemented Codex assignments for tool enhancements and new callable functions are indexed in [tool designs](tool-designs/README.md). Each design has its own scope, tests and dev acceptance boundary; implement one per PR. These are distinct from background discovery, reactions and memory extraction. The index is the authoritative list of these tool assignments; do not duplicate them here.
+The independent Codex assignments for tool enhancements and new callable functions, including any pending dev acceptance, are indexed in [tool designs](tool-designs/README.md). Each design has its own scope, tests and dev acceptance boundary; implement one per PR. These are distinct from background discovery, reactions and memory extraction. The index is the authoritative list of these tool assignments; do not duplicate them here.
 
 ## Direct reply emoji reactions
 

@@ -438,6 +438,67 @@ class SearchToolRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["results"][0]["url"], "https://docs.python.org/3/")
         self.assertEqual(session.get.call_args.kwargs["headers"]["X-Subscription-Token"], "test-secret")
 
+    async def test_default_and_explicit_result_counts(self):
+        schema = SearchWeb.get_parameters()
+        self.assertEqual(schema["properties"]["max_results"]["default"], 3)
+        entries = [{"title": str(i), "url": "https://example.com/"} for i in range(5)]
+        for args, expected in (({}, 3), ({"max_results": 1}, 1)):
+            with self.subTest(args=args):
+                session = self.mock_response(payload={"web": {"results": entries}})
+                result = await self.execute_mock_search(session, **args)
+                self.assertEqual(result["results"], entries[:expected])
+                self.assertEqual(session.get.call_args.kwargs["params"]["count"], expected)
+
+    async def test_freshness_schema_and_serialization(self):
+        schema = SearchWeb.get_parameters()
+        options = ["pd", "pw", "pm", "py"]
+        self.assertEqual(schema["properties"]["freshness"]["enum"], options)
+        self.assertNotIn("freshness", schema["required"])
+        for freshness in options:
+            with self.subTest(freshness=freshness):
+                session = self.mock_response()
+                result = await self.execute_mock_search(session, freshness=freshness)
+                self.assertTrue(result["ok"])
+                self.assertEqual(session.get.call_args.kwargs["params"], {
+                    "q": "Python", "count": 3, "freshness": freshness,
+                })
+
+    async def test_invalid_freshness_avoids_provider_request(self):
+        with patch("discord_bot.functions.search_web.aiohttp.ClientSession") as client:
+            for freshness in ("week", "", None, ["pw"]):
+                with self.subTest(freshness=freshness):
+                    result = json.loads(await SearchWeb().execute({
+                        "query": "Python", "freshness": freshness,
+                    }))
+                    self.assertEqual(result["error"]["code"], "INVALID_ARGUMENT")
+            client.assert_not_called()
+
+    async def execute_mock_search(self, session, **args):
+        with patch.dict("os.environ", {"BRAVE_SEARCH_API_KEY": "test-secret"}), \
+             patch("discord_bot.functions.search_web.aiohttp.ClientSession", return_value=session):
+            return json.loads(await SearchWeb().execute({"query": "Python", **args}))
+
+    async def test_metadata_is_optional_and_snippets_are_bounded(self):
+        entry = {"title": "Python docs", "url": "https://docs.python.org/3/"}
+        date = "2025-01-02T00:00:00Z"
+        session = self.mock_response(payload={"web": {"results": [
+            dict(entry, description="  Release   notes  ", page_age=date),
+            entry,
+            dict(entry, description=[], page_age={}, page_fetched=date),
+            dict(entry, description="長" * 500, page_age="  "),
+            dict(entry, description="  ", page_age="x" * 65),
+            dict(entry, title="Outside the requested limit"),
+        ]}})
+        result = await self.execute_mock_search(session, max_results=5)
+        self.assertEqual(result["results"], [
+            dict(entry, snippet="Release notes", page_date=date),
+            entry,
+            entry,
+            dict(entry, snippet="長" * 400),
+            entry,
+        ])
+        self.assertEqual(session.get.call_args.kwargs["params"], {"q": "Python", "count": 5})
+
     async def test_rate_limit_is_explicit(self):
         session = self.mock_response(status=429)
         with patch.dict("os.environ", {"BRAVE_SEARCH_API_KEY": "test-secret"}), \
@@ -479,11 +540,10 @@ class SearchToolRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["error"]["code"], "PROVIDER_ERROR")
 
     async def test_malformed_provider_response_returns_error(self):
-        session = self.mock_response(payload={"web": {"results": "not a list"}})
-        with patch.dict("os.environ", {"BRAVE_SEARCH_API_KEY": "test-secret"}), \
-             patch("discord_bot.functions.search_web.aiohttp.ClientSession", return_value=session):
-            result = json.loads(await SearchWeb().execute({"query": "Python"}))
-        self.assertEqual(result["error"]["code"], "PROVIDER_ERROR")
+        for payload in ([], {"web": []}, {"web": {"results": "not a list"}}):
+            with self.subTest(payload=payload):
+                result = await self.execute_mock_search(self.mock_response(payload=payload))
+                self.assertEqual(result["error"]["code"], "PROVIDER_ERROR")
 
     async def test_invalid_result_count(self):
         result = json.loads(await SearchWeb().execute({"query": "Python", "max_results": 99}))
