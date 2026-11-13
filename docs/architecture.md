@@ -15,7 +15,7 @@ Discord mention / DM
 
 Entry points are `run.py` and `discord_bot/app.py`. `discord_bot/handlers/` contains Discord, model, memory and image routing; `discord_bot/functions/` implements tools. Current tools include Brave search, public webpage/GitHub README reading, YouTube metadata/transcripts, weather, news, IGDB and Discord history search. URL/text from external sources is untrusted; readers use bounded network requests and must not pretend to have read inaccessible content.
 
-Brave web search returns up to five titles and URLs with short snippets and provider page dates when available. The optional freshness filter uses Brave's page age, which can reflect publication or modification. The model uses a source read to verify article details and publication dates.
+Brave web search defaults to three results and accepts a limit of one to five. Results include titles and URLs with short snippets and provider page dates when available. The optional freshness filter uses Brave's page age, which can reflect publication or modification. The model uses a source read to verify article details and publication dates.
 
 The webpage reader extracts the main article or GitHub README as structured text with headings and links. It returns up to 12,000 characters per chunk and can jump to a case-insensitive literal match against the extracted text. Whitespace in the query is collapsed, so a phrase spanning paragraph boundaries does not match. Stateless cursors refetch through the same public URL checks and require matching extracted content and URLs. A stale cursor requires a new read. JavaScript-rendered content may be unavailable.
 

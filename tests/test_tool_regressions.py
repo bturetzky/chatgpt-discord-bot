@@ -438,6 +438,17 @@ class SearchToolRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["results"][0]["url"], "https://docs.python.org/3/")
         self.assertEqual(session.get.call_args.kwargs["headers"]["X-Subscription-Token"], "test-secret")
 
+    async def test_default_and_explicit_result_counts(self):
+        schema = SearchWeb.get_parameters()
+        self.assertEqual(schema["properties"]["max_results"]["default"], 3)
+        entries = [{"title": str(i), "url": "https://example.com/"} for i in range(5)]
+        for args, expected in (({}, 3), ({"max_results": 1}, 1)):
+            with self.subTest(args=args):
+                session = self.mock_response(payload={"web": {"results": entries}})
+                result = await self.execute_mock_search(session, **args)
+                self.assertEqual(result["results"], entries[:expected])
+                self.assertEqual(session.get.call_args.kwargs["params"]["count"], expected)
+
     async def test_freshness_schema_and_serialization(self):
         schema = SearchWeb.get_parameters()
         options = ["pd", "pw", "pm", "py"]
@@ -449,7 +460,7 @@ class SearchToolRegressions(unittest.IsolatedAsyncioTestCase):
                 result = await self.execute_mock_search(session, freshness=freshness)
                 self.assertTrue(result["ok"])
                 self.assertEqual(session.get.call_args.kwargs["params"], {
-                    "q": "Python", "count": 1, "freshness": freshness,
+                    "q": "Python", "count": 3, "freshness": freshness,
                 })
 
     async def test_invalid_freshness_avoids_provider_request(self):

@@ -10,6 +10,7 @@ from .base import BaseFunction, tool_error
 
 SEARCH_URL = "https://api.search.brave.com/res/v1/web/search"
 MAX_RESULTS = 5
+DEFAULT_RESULTS = 3
 MAX_SNIPPET_CHARS = 400
 MAX_PAGE_DATE_CHARS = 64
 FRESHNESS_OPTIONS = ("pd", "pw", "pm", "py")
@@ -32,7 +33,8 @@ class SearchWeb(BaseFunction):
         "properties": {
             "query": {"type": "string", "description": "Specific search terms."},
             "max_results": {"type": "integer", "minimum": 1, "maximum": MAX_RESULTS,
-                            "description": "Number of results, 1 to 5 (default 1)."},
+                            "default": DEFAULT_RESULTS,
+                            "description": "Number of results, 1 to 5."},
             "freshness": {
                 "type": "string", "enum": list(FRESHNESS_OPTIONS),
                 "description": "Optional page-age filter: pd (24 hours), pw (7 days), "
@@ -46,7 +48,7 @@ class SearchWeb(BaseFunction):
         query = args.get("query")
         if not isinstance(query, str) or not query.strip():
             return tool_error("INVALID_ARGUMENT", "A nonempty search query is required.")
-        count = args.get("max_results", 1)
+        count = args.get("max_results", DEFAULT_RESULTS)
         if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= MAX_RESULTS:
             return tool_error("INVALID_ARGUMENT", "max_results must be an integer from 1 to 5.")
 
