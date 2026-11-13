@@ -11,6 +11,37 @@ from discord_bot.functions.discord_history_function import (SearchDiscordHistory
 
 
 class HistorySearchTests(unittest.IsolatedAsyncioTestCase):
+    def test_relevance_phrase_normalization_and_bounds(self):
+        with tempfile.TemporaryDirectory() as tmp, Database(str(Path(tmp) / "test.db")) as db:
+            conn = db.connection
+            rows = [
+                ("1", "10", "100", "7", "space age space age launch!", "2026-11-01", None),
+                ("1", "10", "101", "8", "age of space before launch", "2026-11-02", None),
+                ("1", "10", "102", "8", "space age launch", "2026-11-03", "2026-11-04"),
+            ]
+            rows.extend(("1", "10", str(i), "8", "filler " * 100 + " space age launch",
+                         "2026-11-03", None) for i in range(110, 122))
+            conn.executemany(
+                "INSERT INTO messages(guild_id,channel_id,message_id,author_id,content,created_at,deleted_at) "
+                "VALUES (?,?,?,?,?,?,?)", rows)
+
+            def search(query, **options):
+                return search_messages(conn, query=query, guild_id="1", channel_ids={"10"}, **options)
+
+            self.assertEqual(search("space age")[0]["message_id"], "100")
+            self.assertEqual(search("space age", sort="newest")[0]["message_id"], "121")
+            self.assertEqual(len(search('“space-age” launch?!', limit=10)), 10)
+            self.assertEqual([hit["message_id"] for hit in search('"age of space" launch')], ["101"])
+            self.assertEqual([hit["message_id"] for hit in search('"space-age" launch', limit=2)],
+                             ["100", "121"])
+            self.assertEqual(search('"space-age launch'), search("space age launch"))
+            self.assertEqual(search('("*:")'), [])
+            self.assertEqual(search("space OR age"), [])
+            hits = search("space-age", sort="newest")
+            self.assertEqual(len(hits), 5)
+            self.assertTrue(all("space age" in hit["snippet"] and len(hit["snippet"]) <= 350
+                                for hit in hits))
+
     async def test_channel_attribution_same_cross_and_permission_scope(self):
         from discord_bot.functions.discord_history_function import add_channel_attribution
 
@@ -66,12 +97,37 @@ class HistorySearchTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(ValueError):
                     search_messages(conn, query="Factorio", guild_id="1", channel_ids={"10"}, limit=100)
 
-                class Channel:
-                    id = 10
-                    def permissions_for(self, member):
-                        return SimpleNamespace(view_channel=True, read_message_history=True)
+                requester, bot = object(), object()
 
-                guild = SimpleNamespace(id=1, text_channels=[Channel()], me=object())
+                class Channel:
+                    def __init__(self, channel_id, denied=None, deny_view=False):
+                        self.id = channel_id
+                        self.denied = denied
+                        self.deny_view = deny_view
+
+                    def permissions_for(self, member):
+                        denied = member is self.denied
+                        return SimpleNamespace(view_channel=not (denied and self.deny_view),
+                                               read_message_history=not denied or self.deny_view)
+
+                guild = SimpleNamespace(id=1, text_channels=[Channel(10), Channel(11, requester)],
+                                        me=bot, get_member={7: SimpleNamespace(display_name="Ada")}.get)
+                for channel in [Channel(11, requester), Channel(11, requester, deny_view=True),
+                                Channel(11, bot), Channel(11, bot, deny_view=True)]:
+                    guild.text_channels[1] = channel
+                    context = {"archive": SimpleNamespace(db=conn), "guild": guild, "member": requester}
+                    result = json.loads(await SearchDiscordHistory().execute_with_context(
+                        {"query": "Factorio", "channel_id": "11"}, context))
+                    self.assertEqual(result["results"], [])
+                    result = json.loads(await GetDiscordConversationContext().execute_with_context(
+                        {"channel_id": "11", "message_id": "101"}, context))
+                    self.assertEqual(result["results"], [])
+                guild.text_channels[1] = Channel(11)
+                result = json.loads(await SearchDiscordHistory().execute_with_context(
+                    {"query": "Factorio", "channel_id": "11"}, context))
+                self.assertIsNone(result["results"][0]["author_display_name"])
+                self.assertEqual(result["results"][0]["author_id"], "8")
+                guild.text_channels[1] = Channel(11, bot)
                 tool = SearchDiscordHistory()
                 result = json.loads(await tool.execute_with_context(
                     {"query": "Factorio"}, {"archive": SimpleNamespace(db=conn),
@@ -90,7 +146,8 @@ class HistorySearchTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(blank_filters["ok"])
                 self.assertEqual(len(blank_filters["results"]), 1)
                 self.assertTrue(result["ok"])
-                self.assertEqual(len(result["results"]), 1)
+                self.assertEqual([hit["message_id"] for hit in result["results"]], ["100"])
+                self.assertEqual(result["results"][0]["author_display_name"], "Ada")
                 self.assertFalse(json.loads(await tool.execute_with_context(
                     {"query": "Factorio"}, {"archive": SimpleNamespace(db=conn),
                     "guild": guild, "member": None}))["ok"])

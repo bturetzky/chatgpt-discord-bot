@@ -1,10 +1,10 @@
 # On-demand LLM tool assignments
 
-These **approved but unimplemented** designs are independently actionable Codex handoffs. They do not supersede the implemented architecture or represent deployed features. Pick **one document per PR**; preserve existing interfaces unless the assignment explicitly calls for a compatible extension. Avoid parallel changes to shared tool infrastructure. Each completed assignment should update the owner docs and be removed from this queue after operator acceptance.
+This index tracks approved Codex handoffs and pending dev acceptance. They do not supersede the implemented architecture or represent deployed features. Pick **one document per PR**; preserve existing interfaces unless the assignment explicitly calls for a compatible extension. Avoid parallel changes to shared tool infrastructure. Each completed assignment should update the owner docs and be removed from this queue after operator acceptance.
 
 1. [Enhance get_webpage_contents for complete, navigable article reading](01-webpage-reading.md)
 2. [Enhance search_web with useful search metadata](02-brave-search.md)
-3. [Enhance archived Discord search for natural-language recall](03-discord-history-search.md)
+3. [Archived Discord search](03-discord-history-search.md) (dev acceptance pending after rollout)
 4. [Implement get_discord_message for a linked message](04-discord-message.md)
 5. [Implement get_steam_game_info for Steam store questions](05-steam-game-info.md)
 6. [Implement get_reddit_discussion for public threads](06-reddit-discussion.md)
