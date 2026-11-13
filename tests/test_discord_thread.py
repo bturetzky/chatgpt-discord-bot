@@ -58,7 +58,7 @@ class DiscordThreadTests(IsolatedAsyncioTestCase):
 
     async def read(self, anchor_id=100, **args):
         raw = await self.handler.execute_function(
-            "get_discord_thread", args or {"channel_id": "10", "message_id": str(anchor_id)},
+            "get_discord_thread", json.dumps(args or {"channel_id": "10", "message_id": str(anchor_id)}),
             self.context,
         )
         self.assertEqual(bound_tool_output("get_discord_thread", raw), raw)
@@ -93,6 +93,15 @@ class DiscordThreadTests(IsolatedAsyncioTestCase):
         self.assertEqual(self.ids(result), ["99", "100"])
         self.assertEqual(result["messages"][-1]["content"], "message 100")
         self.text.fetch_message.assert_awaited_once_with(100)
+
+    async def test_serialized_anchor_and_conflicting_native_target(self):
+        self.message(100)
+        result = await self.read(channel_id=10, message_id=100, message_url=None, thread_id="")
+        self.assertEqual(self.ids(result), ["100"])
+        result = await self.read(channel_id=10, message_id=100, thread_id=20)
+        self.assertIn("Conflicting fields", result["error"]["message"])
+        result = await self.read(thread_id=True)
+        self.assertIn("Malformed thread_id", result["error"]["message"])
 
     async def test_missing_and_deleted_parent(self):
         self.message(100, (10, 99))
@@ -159,7 +168,7 @@ class DiscordThreadTests(IsolatedAsyncioTestCase):
                 yield message
 
         thread.history.side_effect = history
-        result = await self.read(thread_id="20")
+        result = await self.read(thread_id=20, message_url="", channel_id=None, message_id=" ")
         self.assertTrue(result["coverage"]["complete"])
         self.assertEqual(self.ids(result), ["200", "201", "202"])
         self.assertIsNone(result["messages"][1]["reply_to"])
