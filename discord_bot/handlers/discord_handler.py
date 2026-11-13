@@ -309,7 +309,7 @@ class DiscordHandler:
 
             try:
                 response = await self.chatgpt_handler.get_response(
-                    messages, channel, discord_context={
+                    messages, channel, triggering_message=message, discord_context={
                         'archive': getattr(self, 'archive', None), 'guild': message.guild, 'member': message.author, 'channel_id': str(message.channel.id)
                     })
             except Exception:

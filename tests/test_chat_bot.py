@@ -23,6 +23,13 @@ class DiscordBehaviorTests(unittest.IsolatedAsyncioTestCase):
         handler.chatgpt_handler.get_response.assert_not_awaited()
         message.channel.send.assert_not_awaited()
 
+    async def test_guild_reply_passes_triggering_message_to_model_handler(self):
+        handler, message = make_handler(), make_message()
+        with patch("discord_bot.handlers.discord_handler.asyncio.sleep", new_callable=AsyncMock):
+            await handler.process_message(message)
+        self.assertIs(handler.chatgpt_handler.get_response.await_args.kwargs["triggering_message"],
+                      message)
+
     async def test_dm_does_not_require_mention(self):
         handler, message = make_handler(), make_message()
         message.guild = None
