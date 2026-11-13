@@ -79,6 +79,7 @@ class ChatGPTHandler:
         started = time.monotonic()
         page_reads = 0
         webpage_continuations = 0
+        valid_webpage_cursors = set()
         invalid_youtube_calls = 0
         progress_sent = False
         try:
@@ -121,8 +122,12 @@ class ChatGPTHandler:
                         is_webpage_continuation = (
                             call.name == "get_webpage_contents" and arguments.get("cursor") is not None
                         )
+                        cursor_key = (arguments.get("url"), arguments.get("cursor"))
+                        valid_continuation = (
+                            is_webpage_continuation and cursor_key in valid_webpage_cursors
+                        )
                         read_limit_reached = (
-                            webpage_continuations >= MAX_WEBPAGE_CONTINUATIONS if is_webpage_continuation
+                            webpage_continuations >= MAX_WEBPAGE_CONTINUATIONS if valid_continuation
                             else page_reads >= MAX_PAGE_READS
                         )
                         if call.name == "read_youtube" and invalid_youtube_calls >= MAX_INVALID_YOUTUBE_CALLS:
@@ -130,7 +135,7 @@ class ChatGPTHandler:
                         elif call.name in ("get_webpage_contents", "read_youtube") and read_limit_reached:
                             result = json.dumps({"ok": False, "error": {"code": "READ_LIMIT", "message": "Page read limit reached for this response."}})
                         else:
-                            if is_webpage_continuation:
+                            if valid_continuation:
                                 webpage_continuations += 1
                             elif call.name in ("get_webpage_contents", "read_youtube"):
                                 page_reads += 1
@@ -139,6 +144,15 @@ class ChatGPTHandler:
                             ) if call.name in CONTEXT_TOOLS else await self.function_handler.execute_function(
                                 call.name, arguments
                             )
+                            if call.name == "get_webpage_contents":
+                                try:
+                                    webpage_result = json.loads(result)
+                                except (TypeError, ValueError):
+                                    webpage_result = None
+                                if isinstance(webpage_result, dict) and webpage_result.get("ok"):
+                                    next_cursor = webpage_result.get("next_cursor")
+                                    if isinstance(next_cursor, str) and next_cursor:
+                                        valid_webpage_cursors.add((arguments.get("url"), next_cursor))
                             if call.name == "read_youtube":
                                 try:
                                     parsed_result = json.loads(result)
