@@ -96,6 +96,14 @@ def search_messages(db, *, query, guild_id, channel_ids, channel_id=None,
             for guild, channel, message, author, content, created in rows]
 
 
+def can_read_history(channel, *members):
+    for member in members:
+        permissions = channel.permissions_for(member)
+        if not (permissions.view_channel and permissions.read_message_history):
+            return False
+    return True
+
+
 def add_author_attribution(results, guild):
     """Use current guild member display names when cached."""
     get_member = getattr(guild, "get_member", None)
@@ -145,10 +153,7 @@ class SearchDiscordHistory(BaseFunction):
         if member is None or guild.me is None:
             return tool_error("PERMISSIONS_UNAVAILABLE", "Discord permissions unavailable.")
         allowed = {str(ch.id) for ch in guild.text_channels
-                   if ch.permissions_for(member).view_channel and
-                      ch.permissions_for(member).read_message_history and
-                      ch.permissions_for(guild.me).view_channel and
-                      ch.permissions_for(guild.me).read_message_history}
+                   if can_read_history(ch, member, guild.me)}
         try:
             hits = search_messages(
                 context["archive"].db, query=args.get("query"), guild_id=guild.id,
@@ -234,10 +239,7 @@ class GetDiscordConversationContext(BaseFunction):
         if member is None or guild.me is None:
             return tool_error("PERMISSIONS_UNAVAILABLE", "Discord permissions unavailable.")
         allowed = {str(ch.id) for ch in guild.text_channels
-                   if ch.permissions_for(member).view_channel and
-                      ch.permissions_for(member).read_message_history and
-                      ch.permissions_for(guild.me).view_channel and
-                      ch.permissions_for(guild.me).read_message_history}
+                   if can_read_history(ch, member, guild.me)}
         try:
             channel_id = str(args.get("channel_id") or "")
             message_id = str(args.get("message_id") or "")
