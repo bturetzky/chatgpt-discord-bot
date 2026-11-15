@@ -103,27 +103,52 @@ def reactions(args):
         output(rows, args)
 
 def discovery(args):
-    from .storage.discovery_shadow import INTERVAL, LIMITS
+    from .storage.discovery_shadow import INTERVAL, LIMITS, MAX_RESULTS
 
     gid = args.guild_id
     if gid is not None and not gid.isdecimal():
         raise SystemExit("--guild-id must be numeric")
     with connect() as db:
-        runs = db.execute(
+        runs = [dict(row) for row in db.execute(
             """SELECT * FROM discovery_runs
-               WHERE (? IS NULL OR guild_id=?) ORDER BY id DESC LIMIT ?""",
-            (gid, gid, args.limit),
-        ).fetchall()
-        candidates = db.execute(
-            """SELECT c.guild_id, c.url, c.source_url, c.reason, c.story, c.evidence, c.draft,
-                      r.channel_id, r.started_at, c.run_id
+               WHERE (? IS NULL OR guild_id=?) AND (? IS NULL OR id=?)
+               ORDER BY id DESC LIMIT ?""",
+            (gid, gid, args.run_id, args.run_id, args.limit),
+        )]
+        for run in runs:
+            run["trace"] = json.loads(run["trace"]) if run["trace"] else None
+        candidates = [dict(row) for row in db.execute(
+            """SELECT c.*, r.channel_id, r.started_at
                FROM discovery_candidates c JOIN discovery_runs r ON r.id=c.run_id
-               WHERE (? IS NULL OR c.guild_id=?) ORDER BY c.run_id DESC, c.url LIMIT ?""",
-            (gid, gid, args.limit),
-        ).fetchall()
+               WHERE c.run_id IN (SELECT value FROM json_each(?))
+               ORDER BY c.run_id DESC, c.url""", (json.dumps([run["id"] for run in runs]),)
+        )]
+        if args.posts:
+            posts = []
+            for run in runs:
+                for event in (run["trace"] or {}).get("events", []):
+                    if event.get("draft"):
+                        selected = (run["trace"].get("selected_result") == event.get("result")
+                                    and event.get("decision") == "approved")
+                        posts.append({"run_id": run["id"], "channel_id": run["channel_id"],
+                                      "result": event.get("result"), "story": event.get("story"),
+                                      "decision": "selected" if selected else event.get("decision", "interrupted"),
+                                      "explanation": event.get("explanation"), "draft": event["draft"]})
+            legacy_ids = {run["id"] for run in runs if run["trace"] is None}
+            posts.extend({**row, "decision": row["reason"]} for row in candidates
+                         if row["draft"] and row["run_id"] in legacy_ids)
+            if args.json:
+                output(posts, args)
+            else:
+                for post in posts:
+                    print(f'Run {post["run_id"]} | {post["decision"]} | {post.get("explanation") or ""}')
+                    print(post["draft"], end="\n\n")
+                if not posts:
+                    print("No proposed posts.")
+            return
         output({"interval_seconds": INTERVAL, "limits_per_run": LIMITS,
-                "runs": [dict(row) for row in runs],
-                "candidates": [dict(row) for row in candidates]}, args)
+                "results_per_search": MAX_RESULTS,
+                "runs": runs, "candidates": candidates}, args)
 
 
 def archive(args):
@@ -245,7 +270,9 @@ def main():
     filters.add_argument("--posted-only", action="store_true")
     reaction.add_argument("--limit", type=int, default=30)
     discovery_parser = commands.add_parser("discovery", help="Discovery budgets, decisions and shadow drafts")
-    discovery_parser.add_argument("--limit", type=int, default=20)
+    discovery_parser.add_argument("--limit", type=int, default=20, help="Number of runs to inspect")
+    discovery_parser.add_argument("--run-id", type=int, help="Inspect one run")
+    discovery_parser.add_argument("--posts", action="store_true", help="Show proposed posts with decisions")
     archive_parser = commands.add_parser("archive", help="Archive coverage and backfill counts")
     memory = commands.add_parser("memories", help="Candidate inspection and statistics")
     memory.add_argument("--stats", action="store_true")
