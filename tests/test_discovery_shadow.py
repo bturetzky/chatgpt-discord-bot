@@ -19,7 +19,7 @@ from discord_bot.handlers.discord_handler import DiscordHandler
 
 from discord_bot.storage.database import Database, MIGRATIONS
 from discord_bot.storage.discovery_shadow import (
-    CANDIDATE_COOLDOWN, DAY, DiscoveryShadow, INTERVAL, LIMITS, canonical_url,
+    CANDIDATE_COOLDOWN, DAY, FINAL_SELECTION, DiscoveryShadow, INTERVAL, LIMITS, canonical_url,
 )
 from discord_bot.storage.message_archive import utc_iso
 
@@ -304,7 +304,8 @@ class ShadowTests(IsolatedAsyncioTestCase):
         self.assertEqual(run["trace"]["events"][-2]["decision"], "review_budget_exhausted")
         self.assertTrue(run["trace"]["events"][-1]["final_selection"])
         final_request = self.model.call_args.kwargs
-        self.assertEqual(final_request["instructions"], self.model.call_args_list[0].kwargs["instructions"])
+        self.assertEqual(final_request["instructions"], FINAL_SELECTION)
+        self.assertIn("The only available action is finish", final_request["instructions"])
         final_input = json.loads(final_request["input"])
         self.assertEqual(list(final_input["approved_candidates"]), ["1"])
         self.assertEqual(run["trace"]["selected_result"], 1)
@@ -319,6 +320,29 @@ class ShadowTests(IsolatedAsyncioTestCase):
         self.assertEqual(run["outcome"], "complete")
         self.assertNotIn("selected_result", run["trace"])
         self.assertEqual(self.reasons(), ["approved"])
+
+    async def test_reserved_selection_rejects_exploration_actions_and_unapproved_ids(self):
+        for final_action, decision in (
+            (SEARCH, "invalid_final_selection"),
+            (FETCH, "invalid_final_selection"),
+            ({**PROPOSE, "draft": DRAFT}, "invalid_final_selection"),
+            ({"action": "finish", "result": 2}, "selection_not_approved"),
+        ):
+            with self.subTest(action=final_action["action"], result=final_action.get("result")):
+                self.search.execute.reset_mock()
+                self.reader.execute.reset_mock()
+                self.responses(SEARCH, FETCH, {**PROPOSE, "draft": DRAFT}, APPROVED,
+                               *([{"action": "unknown"}] * 15), final_action)
+                await self.worker().run_once(self.hints)
+                run = self.latest()
+                self.assertEqual(run["model_calls"], LIMITS["model_calls"])
+                self.assertEqual(run["outcome"], "budget_exhausted")
+                self.assertTrue(run["trace"]["events"][-1]["final_selection"])
+                self.assertEqual(run["trace"]["events"][-1]["decision"], decision)
+                self.assertNotIn("selected_result", run["trace"])
+                self.search.execute.assert_awaited_once()
+                self.reader.execute.assert_awaited_once()
+                self.now += CANDIDATE_COOLDOWN
 
     async def test_stable_prompt_prefix_and_cached_usage_are_visible_in_cli(self):
         def response(payload, cached=None):
