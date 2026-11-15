@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+from contextlib import redirect_stdout
+from io import StringIO
 from argparse import Namespace
 import json
 import sqlite3
@@ -15,16 +17,22 @@ from openai import AsyncOpenAI
 from discord_bot import admin
 from discord_bot.handlers.discord_handler import DiscordHandler
 
-from discord_bot.storage.database import Database
+from discord_bot.storage.database import Database, MIGRATIONS
 from discord_bot.storage.discovery_shadow import (
-    DiscoveryShadow, INTERVAL, canonical_url,
+    DAY, DiscoveryShadow, INTERVAL, LIMITS, canonical_url,
 )
 from discord_bot.storage.message_archive import utc_iso
 
 URL = "https://example.org/releases/lunar"
 QUOTE = "The Lunar Colony expansion adds cooperative missions and launches this Friday."
 STORY = "Lunar Colony's new expansion adds cooperative missions."
-TOPIC = {"query": "Lunar Colony release news", "recent": [0, 1]}
+SEARCH = {"action": "search", "query": "indie automation games programmable organisms",
+          "summary": "Look for games adjacent to Lunar Colony base building."}
+FETCH = {"action": "fetch", "result": 1}
+PROPOSE = {"action": "propose", "result": 1, "story": STORY, "quote": QUOTE}
+APPROVED = {"approved": True, "reason": "interesting_connection",
+            "summary": "The verified co-op mechanic makes for a good discussion."}
+FINISH = {"action": "finish", "result": 1}
 DRAFT = "Co-op missions sound like the right next step for Lunar Colony. Who's in?"
 
 
@@ -45,8 +53,7 @@ class ShadowTests(IsolatedAsyncioTestCase):
         self.now = 1_800_000_000
         self.search = SimpleNamespace(execute=AsyncMock())
         self.reader = SimpleNamespace(execute=AsyncMock())
-        self.model = AsyncMock(return_value=self.response(TOPIC))
-        self.embed = AsyncMock(side_effect=self.embeddings)
+        self.model = AsyncMock(return_value=self.response({"action": "finish"}))
         self.hints = {("1", "2"): {"name": "game-chat", "topic": "Lunar Colony"}}
         self.results(URL)
         self.source(URL)
@@ -61,7 +68,6 @@ class ShadowTests(IsolatedAsyncioTestCase):
         return DiscoveryShadow(
             self.db, SimpleNamespace(
                 responses=SimpleNamespace(create=self.model),
-                embeddings=SimpleNamespace(create=self.embed),
             ), "test-model", "9", search=self.search, reader=self.reader, clock=lambda: self.now,
         )
 
@@ -87,147 +93,197 @@ class ShadowTests(IsolatedAsyncioTestCase):
         return SimpleNamespace(status="completed", output_text=json.dumps(payload),
                                usage=SimpleNamespace(input_tokens=30, output_tokens=10))
 
-    @staticmethod
-    def embeddings(*, model, input):
-        return SimpleNamespace(data=[
-            SimpleNamespace(index=index, embedding=[1, 0] if index == 0 or text.startswith("Squads") else [0, 1])
-            for index, text in enumerate(input)
-        ], usage=SimpleNamespace(total_tokens=35))
+    def responses(self, *payloads):
+        self.model.side_effect = [self.response(payload) for payload in payloads]
 
-    def responses(self, *payloads, topic=TOPIC):
-        self.model.side_effect = [self.response(payload) for payload in (topic, *payloads)]
+    def latest(self):
+        self.db.row_factory = sqlite3.Row
+        run = dict(self.db.execute("SELECT * FROM discovery_runs ORDER BY id DESC LIMIT 1").fetchone())
+        run["trace"] = json.loads(run["trace"]) if run["trace"] else None
+        self.db.row_factory = None
+        return run
 
     def reasons(self):
         return [row[0] for row in self.db.execute(
             "SELECT reason FROM discovery_candidates ORDER BY run_id, url",
         )]
 
-    async def test_selected_and_canonical_duplicate_across_restart(self):
-        self.responses({"story": STORY, "quote": QUOTE, "draft": DRAFT}, {"reason": "selected"})
-        await self.worker().run_once(self.hints)
-        self.assertEqual(self.db.execute(
-            "SELECT reason, evidence, draft FROM discovery_candidates",
-        ).fetchone(), ("selected", QUOTE, f"{DRAFT}\n<{URL}>"))
-        self.assertNotIn("base building", self.model.call_args_list[1].kwargs["input"])
-        self.assertIn("base building", self.model.call_args_list[2].kwargs["input"])
-        self.database.close()
-        self.database.open()
-        await self.worker().run_once(self.hints)
-        self.assertEqual(self.search.execute.await_count, 1)
-        self.now += INTERVAL
-        self.results(URL + "?utm_campaign=test#fragment")
-        self.responses()
-        await self.worker().run_once(self.hints)
-        self.assertEqual(self.search.execute.await_count, 2)
-        self.assertEqual(self.reader.execute.await_count, 1)
-        self.assertEqual(self.model.await_count, 4)
-        self.assertEqual(self.reasons(), ["selected"])
-
-    async def test_same_story_comparison_and_new_development(self):
-        self.responses({"story": STORY, "quote": QUOTE, "draft": DRAFT}, {"reason": "selected"})
-        await self.worker().run_once(self.hints)
-        self.database.close()
-        self.database.open()
-        self.now += INTERVAL
-        self.results(URL + "-mirror")
-        self.source(URL + "-mirror")
-        self.responses({"story": "Cooperative missions arrive in Lunar Colony.", "quote": QUOTE,
-                        "draft": DRAFT}, {"reason": "same_story"})
-        await self.worker().run_once(self.hints)
-        self.assertIn(STORY, self.model.call_args.kwargs["input"])
-        self.now += INTERVAL
-        self.results(URL + "-update")
-        self.source(URL + "-update")
-        new_quote = "Lunar Colony added a cross-platform matchmaking queue in its first expansion patch."
-        page = json.loads(self.reader.execute.return_value)
-        self.reader.execute.return_value = json.dumps({**page, "content": new_quote})
-        self.responses({"story": "Lunar Colony now supports cross-platform matchmaking.",
-                        "quote": new_quote, "draft": "Cross-platform matchmaking should make groups easier to form."},
-                       {"reason": "selected"})
-        await self.worker().run_once(self.hints)
-        self.assertEqual(self.reasons(), ["selected", "same_story", "selected"])
-
-    async def test_archive_link_and_bounded_results(self):
-        self.message(4, "Shared: " + URL + "?utm_source=discord", self.now - 7200)
-        self.results(URL, URL + "-2", URL + "-3")
-        self.reader.execute.side_effect = [
-            self.reader.execute.return_value, json.dumps({"ok": False}),
+    async def test_explores_and_selects_older_adjacent_source_with_long_personal_commentary(self):
+        draft = DRAFT + " " + (
+            "I'm more interested in how a co-op colony changes the social game than in another pile "
+            "of buildings to unlock. Somebody has to keep the lights on while the rest of the team "
+            "tries a completely unnecessary detour, and that feels like the beginning of a better "
+            "story than anything the mission briefing is going to tell us."
+        )
+        self.search.execute.side_effect = [
+            json.dumps({"ok": False, "error": {"code": "NO_RESULTS"}}),
+            json.dumps({"ok": True, "results": [
+                {"url": URL, "snippet": "An automation game with co-op.", "page_date": "2025-01-01"},
+            ]}),
         ]
+        self.responses(SEARCH, {**SEARCH, "query": "automation game cooperative colony"}, FETCH,
+                       {**PROPOSE, "draft": draft}, APPROVED, FINISH)
         await self.worker().run_once(self.hints)
-        self.assertEqual(self.reasons(), ["archived_url", "source_unavailable"])
-        self.assertEqual(self.db.execute(
-            "SELECT searches, fetches, model_calls FROM discovery_runs",
-        ).fetchone(), (1, 2, 1))
-        self.embed.assert_not_awaited()
+        self.assertEqual(self.reasons(), ["selected"])
+        run = self.latest()
+        self.assertEqual((run["searches"], run["fetches"], run["model_calls"]), (2, 1, 6))
+        self.assertEqual(run["trace"]["events"][1]["results"][0]["page_date"], "2025-01-01")
+        self.assertEqual(run["trace"]["events"][1]["results"][0]["snippet"], "An automation game with co-op.")
+        self.assertEqual(run["trace"]["selected_result"], 1)
+        self.assertEqual(self.search.execute.call_args.args[0], {
+            "query": "automation game cooperative colony", "max_results": 5,
+        })
+        self.assertIn("sharp, laid-back", self.model.call_args.kwargs["instructions"])
+        self.assertEqual(self.db.execute("SELECT draft FROM discovery_candidates").fetchone()[0],
+                         f"{draft}\n<{URL}>")
+        self.assertIsInstance(run["duration_ms"], int)
 
-    async def test_active_and_weak_context_make_no_provider_calls(self):
-        self.message(4, "Currently discussing the game", self.now)
+    async def test_context_windows_cover_history_and_eligible_channels_without_copying_text_to_trace(self):
+        self.hints["1", "4"] = {"name": "other"}
+        self.message(8, "excluded message", self.now - DAY, channel="7")
+        self.message(9, "other guild message", self.now - DAY, guild="3")
+        self.db.execute("BEGIN")
+        for age in (2, 8, 35, 125, 500):
+            for channel in ("2", "4"):
+                for index in range(30):
+                    self.message(f"{age}-{channel}-{index}", "Archive excerpt " * 20,
+                                 self.now - age * DAY + index, channel=channel)
+        self.db.execute("UPDATE messages SET author_id='4' WHERE message_id LIKE '%-4-29'")
+        self.db.execute("COMMIT")
         await self.worker().run_once(self.hints)
-        self.database.close()
-        self.database.open()
-        self.db.execute("DELETE FROM messages")
-        self.now += 60
-        await self.worker().run_once(self.hints)
-        self.assertEqual(self.db.execute(
-            "SELECT outcome FROM discovery_runs ORDER BY id",
-        ).fetchall(), [("deferred_active",), ("weak_context",)])
+        context = json.loads(self.model.call_args.kwargs["input"])["windows"]
+        self.assertEqual(len(context), 10)
+        for window in context:
+            times = [message["at"] for message in window["messages"]]
+            self.assertEqual(times, sorted(times))
+        self.assertEqual({m["speaker"] for w in context for m in w["messages"]}, {1, 2})
+        self.assertNotIn("excluded message", str(context))
+        self.assertNotIn("other guild message", str(context))
+        run = self.latest()
+        self.assertGreater(run["trace"]["context"]["estimated_tokens"], 10_000)
+        self.assertLess(run["trace"]["context"]["estimated_tokens"], 20_000)
+        self.assertNotIn("Archive excerpt", json.dumps(run["trace"]))
+        self.assertEqual(run["model_calls"], 1)
         self.search.execute.assert_not_awaited()
 
-    async def test_unrelated_and_fabricated_evidence_produce_no_draft(self):
-        self.responses({"story": STORY, "quote": QUOTE, "draft": DRAFT}, {"reason": "unrelated"})
+    async def test_continue_source_compare_candidates_and_keep_earlier_rejected_drafts(self):
+        second = URL + "-other"
+        self.results(URL, second)
+        self.reader.execute.side_effect = [json.dumps(page) for page in (
+            {"ok": True, "final_url": URL, "content": "Page introduction", "next_cursor": "cursor"},
+            {"ok": True, "final_url": URL, "content": QUOTE, "next_cursor": None},
+            {"ok": True, "final_url": second, "content": QUOTE},
+        )]
+        self.responses(SEARCH, FETCH, {**FETCH, "continuation": True},
+                       {**PROPOSE, "draft": DRAFT}, {"approved": False, "reason": "routine_update",
+                                                   "summary": "The change offers little to talk about."},
+                       {**FETCH, "result": 2},
+                       {**PROPOSE, "result": 2, "draft": "That co-op mechanic might actually settle the logistics debate."},
+                       APPROVED, {**FINISH, "result": 2})
         await self.worker().run_once(self.hints)
-        self.now += INTERVAL
-        self.results(URL + "-fake")
-        self.source(URL + "-fake")
-        self.responses({"story": STORY, "quote": "The developers announced a nonexistent feature.",
-                        "draft": DRAFT})
-        await self.worker().run_once(self.hints)
-        self.assertEqual(self.reasons(), ["unrelated", "unsupported"])
-        self.assertEqual(self.db.execute(
-            "SELECT count(*) FROM discovery_candidates WHERE draft IS NOT NULL",
-        ).fetchone()[0], 0)
+        self.assertEqual(self.reasons(), ["routine_update", "selected"])
+        self.assertEqual(self.reader.execute.call_args_list[1].args[0], {"url": URL, "cursor": "cursor"})
+        self.assertEqual(self.latest()["trace"]["selected_result"], 2)
+        with patch.dict("os.environ", {"DISCORD_SQLITE_PATH": self.path}):
+            buffer = StringIO()
+            with redirect_stdout(buffer):
+                admin.discovery(Namespace(guild_id="1", limit=20, run_id=1, posts=True, json=True))
+            rejected, selected = json.loads(buffer.getvalue())
+            self.assertEqual(rejected["draft"], DRAFT)
+            self.assertEqual(rejected["decision"], "routine_update")
+            self.assertEqual(selected["decision"], "selected")
+            buffer = StringIO()
+            with redirect_stdout(buffer):
+                admin.discovery(Namespace(guild_id=None, limit=20, run_id=1, posts=False, json=True))
+            self.assertEqual(json.loads(buffer.getvalue())["runs"][0]["trace"]["selected_result"], 2)
 
-    async def test_provider_failure_consumes_attempt_and_does_not_retry(self):
-        self.model.side_effect = [self.response(TOPIC), TimeoutError()]
+    async def test_snippet_or_fabricated_evidence_cannot_support_selection(self):
+        self.responses(SEARCH, {**PROPOSE, "draft": DRAFT}, FETCH,
+                       {**PROPOSE, "draft": DRAFT, "quote": "This quote never appears on the page."},
+                       FINISH, {"action": "finish"})
         await self.worker().run_once(self.hints)
-        self.now += INTERVAL
-        self.responses()
-        await self.worker().run_once(self.hints)
-        self.assertEqual(self.reasons(), ["provider_error"])
-        self.assertEqual(self.model.await_count, 3)
-        self.assertEqual(self.db.execute(
-            "SELECT outcome, model_calls FROM discovery_runs ORDER BY id",
-        ).fetchall(), [("provider_error", 2), ("complete", 1)])
+        self.assertEqual(self.reasons(), ["missing_source_evidence"])
+        run = self.latest()
+        self.assertEqual(run["trace"]["events"][4]["decision"], "selection_not_approved")
+        self.assertNotIn("selected_result", run["trace"])
+        self.assertEqual(self.db.execute("SELECT draft FROM discovery_candidates").fetchone()[0], DRAFT)
 
-    async def test_sqlite_rows_serialize_in_topic_and_review(self):
-        old_message = "Lunar Colony has been a regular co-op game for months."
-        self.message(8, old_message, self.now - 80 * 86400)
-        prior_url = URL + "-earlier"
-        prior_story = "Lunar Colony received a new soundtrack."
-        run = self.db.execute(
-            "INSERT INTO discovery_runs(guild_id, channel_id, started_at) VALUES ('1', '2', ?)",
-            (self.now - INTERVAL,),
-        ).lastrowid
+    async def test_duplicate_archive_and_prior_canonical_urls(self):
+        self.message(8, f"Already discussed {URL}?utm_source=chat", self.now - DAY, channel="4")
+        self.hints["1", "4"] = {}
+        self.responses(SEARCH, FETCH, {**PROPOSE, "draft": DRAFT}, {"action": "finish"})
+        await self.worker().run_once(self.hints)
+        self.assertEqual(self.reasons(), ["archived_url"])
+        self.now += INTERVAL
+        del self.hints["1", "4"]
+        self.results(URL + "?utm_source=provider")
+        self.responses(SEARCH, FETCH, {"action": "finish"})
+        await self.worker().run_once(self.hints)
+        self.assertEqual(self.latest()["trace"]["events"][1]["decision"], "duplicate_url")
+        self.reader.execute.assert_awaited_once()
+
+    async def test_review_gets_related_archive_and_prior_suggestions_for_paraphrases(self):
+        previous = URL + "-previous"
+        self.db.execute("INSERT INTO discovery_runs(guild_id, channel_id, started_at) VALUES ('1', '2', ?)",
+                        (self.now - INTERVAL,))
         self.db.execute(
-            """INSERT INTO discovery_candidates (guild_id, url, source_url, run_id, reason, story)
-               VALUES ('1', ?, ?, ?, 'selected', ?)""",
-            (prior_url, prior_url, run, prior_story),
+            """INSERT INTO discovery_candidates(guild_id, url, run_id, reason, story, source_url)
+               VALUES ('1', ?, 1, 'selected', 'Players can now cooperate in Lunar Colony.', ?)""",
+            (previous, previous),
         )
-        self.db.row_factory = sqlite3.Row
-        self.responses({"story": STORY, "quote": QUOTE, "draft": DRAFT}, {"reason": "selected"})
-
+        self.message(9, "We discussed Lunar Colony adding shared missions.", self.now - 500 * DAY)
+        self.responses(SEARCH, FETCH, {**PROPOSE, "draft": DRAFT},
+                       {"approved": False, "reason": "same_story",
+                        "summary": "The shared missions already came up under another link."},
+                       {"action": "finish"})
         await self.worker().run_once(self.hints)
+        review = json.loads(self.model.call_args_list[3].kwargs["input"])
+        self.assertEqual(review["prior_suggestions"], [["Players can now cooperate in Lunar Colony.", previous]])
+        self.assertIn("We discussed Lunar Colony adding shared missions.", review["related_discussion"])
+        self.assertEqual(self.reasons(), ["selected", "same_story"])
 
-        self.assertEqual(self.model.await_count, 3)
-        topic, _, review = [json.loads(call.kwargs["input"]) for call in self.model.call_args_list]
-        self.assertEqual(topic["older"][0][0], old_message)
-        self.assertEqual(review["prior_suggestions"], [[prior_story, prior_url]])
-        self.assertEqual(tuple(self.db.execute(
-            "SELECT reason, draft FROM discovery_candidates WHERE url=?", (URL,),
-        ).fetchone()), ("selected", f"{DRAFT}\n<{URL}>"))
-        self.assertIs(self.db.row_factory, sqlite3.Row)
+    async def test_search_and_model_budgets_bound_provider_loops(self):
+        self.model.return_value = self.response(SEARCH)
+        self.results(*(URL + f"-{n}" for n in range(8)))
+        await self.worker().run_once(self.hints)
+        run = self.latest()
+        self.assertEqual(run["outcome"], "budget_exhausted")
+        self.assertEqual(run["model_calls"], LIMITS["model_calls"])
+        self.assertEqual(run["searches"], LIMITS["searches"])
+        self.assertEqual(len(run["trace"]["events"][0]["results"]), 5)
 
-    async def test_topic_http_rejection_logs_safe_traceback_with_no_usage(self):
+    async def test_page_budget_includes_continuations(self):
+        self.reader.execute.return_value = json.dumps({
+            "ok": True, "final_url": URL, "content": QUOTE, "next_cursor": "cursor",
+        })
+        self.responses(SEARCH, FETCH, *([{**FETCH, "continuation": True}] * 10), {"action": "finish"})
+        await self.worker().run_once(self.hints)
+        self.assertEqual(self.latest()["fetches"], LIMITS["fetches"])
+        self.assertEqual(self.latest()["trace"]["events"][-2]["decision"], "fetch_budget_exhausted")
+
+    async def test_provider_failures_keep_specific_diagnostics_and_draft(self):
+        self.results(URL, URL + "-good")
+        self.reader.execute.side_effect = [
+            json.dumps({"ok": False, "error": {"code": "HTTP_ERROR", "http_status": 403,
+                                                "message": "PRIVATE RESPONSE"}}),
+            json.dumps({"ok": True, "final_url": URL + "-good", "content": QUOTE}),
+        ]
+        self.model.side_effect = [self.response(payload) for payload in
+                                  (SEARCH, FETCH, {**FETCH, "result": 2},
+                                   {**PROPOSE, "result": 2, "draft": DRAFT})]
+        self.model.side_effect = [*self.model.side_effect, TimeoutError("PRIVATE ERROR")]
+        with self.assertLogs(level="WARNING") as logs:
+            await self.worker().run_once(self.hints)
+        run = self.latest()
+        self.assertEqual(run["outcome"], "provider_error")
+        self.assertEqual(run["trace"]["events"][1]["error"], {"code": "HTTP_ERROR", "http_status": 403})
+        self.assertEqual(run["trace"]["events"][3]["draft"], DRAFT)
+        self.assertEqual(run["trace"]["events"][3]["decision"], "review_provider_error")
+        self.assertNotIn("PRIVATE", json.dumps(run["trace"]) + "".join(logs.output))
+        await self.worker().run_once(self.hints)
+        self.assertEqual(self.model.await_count, 5)
+
+    async def test_exploration_http_rejection_logs_safe_traceback_with_no_usage(self):
         private_marker = "synthetic private payload"
         requests = []
 
@@ -251,18 +307,18 @@ class ShadowTests(IsolatedAsyncioTestCase):
         self.assertEqual(request["model"], "test-model")
         self.assertEqual(request["text"], {"format": {"type": "json_object"}})
         self.assertEqual(json.loads(request["input"])["output_instruction"], "Return a JSON object.")
-        self.assertEqual(request["max_output_tokens"], 650)
+        self.assertEqual(request["max_output_tokens"], 1800)
         self.assertFalse(request["store"])
         self.assertNotIn("tools", request)
         logged = "\n".join(logs.output)
-        for expected in ("run=1", "stage=topic", "BadRequestError", "HTTP 400",
+        for expected in ("run=1", "stage=exploration", "BadRequestError", "HTTP 400",
                          "unsupported_parameter", "param=text.format", "Traceback", "in ask"):
             self.assertIn(expected, logged)
         for private in (private_marker, "synthetic-key", "base building", request["instructions"]):
             self.assertNotIn(private, logged)
-        self.assert_topic_failed((0, 0))
+        self.assert_exploration_failed((0, 0))
 
-    async def test_topic_timeout_omits_exception_and_chained_messages(self):
+    async def test_exploration_timeout_omits_exception_and_chained_messages(self):
         async def timeout(**kwargs):
             try:
                 raise OSError("private chained diagnostic")
@@ -274,12 +330,12 @@ class ShadowTests(IsolatedAsyncioTestCase):
             await self.worker().run_once(self.hints)
         self.model.assert_awaited_once()
         logged = "\n".join(logs.output)
-        self.assertIn("stage=topic exception=TimeoutError", logged)
+        self.assertIn("stage=exploration exception=TimeoutError", logged)
         self.assertIn("in timeout", logged)
         self.assertNotIn("private", logged)
-        self.assert_topic_failed((0, 0))
+        self.assert_exploration_failed((0, 0))
 
-    async def test_topic_response_failures_record_reported_usage(self):
+    async def test_exploration_response_failures_record_reported_usage(self):
         cases = [
             ("incomplete", "max_output_tokens", '{"query":', "incomplete_max_output_tokens"),
             ("incomplete", "content_filter", "", "incomplete_content_filter"),
@@ -298,10 +354,10 @@ class ShadowTests(IsolatedAsyncioTestCase):
                     await self.worker().run_once(self.hints)
                 self.assertIn(diagnostic, "\n".join(logs.output))
                 self.assertNotIn("synthetic non-JSON output", "\n".join(logs.output))
-                self.assert_topic_failed((30, 10))
+                self.assert_exploration_failed((30, 10))
                 self.now += INTERVAL
 
-    def assert_topic_failed(self, tokens):
+    def assert_exploration_failed(self, tokens):
         self.assertEqual(self.db.execute(
             """SELECT outcome, model_calls, input_tokens, output_tokens, searches, fetches
                FROM discovery_runs ORDER BY id DESC LIMIT 1""",
@@ -310,57 +366,9 @@ class ShadowTests(IsolatedAsyncioTestCase):
         self.search.execute.assert_not_awaited()
         self.reader.execute.assert_not_awaited()
 
-    async def test_model_budget_and_activity_during_review(self):
-        self.results(URL, URL + "-2", URL + "-3")
-        proposal = {"story": STORY, "quote": QUOTE, "draft": DRAFT}
-        self.responses({}, proposal, {"reason": "not_worth_interrupting"})
-        first_page = self.reader.execute.return_value
-        self.source(URL + "-2")
-        self.reader.execute.side_effect = [first_page, self.reader.execute.return_value]
-        await self.worker().run_once(self.hints)
-        self.assertEqual(self.reasons(), ["weak_source", "not_worth_interrupting"])
-        self.assertEqual(self.db.execute(
-            "SELECT searches, fetches, model_calls, input_tokens, output_tokens FROM discovery_runs",
-        ).fetchone(), (1, 2, 4, 120, 40))
-        self.assertFalse(self.worker().spend(1, "model_calls"))
-
-        self.now += INTERVAL
-        self.results(URL + "-3")
-        self.source(URL + "-3")
-        self.reader.execute.side_effect = None
-
-        async def respond(**request):
-            if "accepted_memories" in request["input"]:
-                payload = TOPIC
-            elif "prior_suggestions" in request["input"]:
-                self.message(4, "New discussion during review", self.now)
-                payload = {"reason": "selected"}
-            else:
-                payload = proposal
-            return SimpleNamespace(status="completed", output_text=json.dumps(payload))
-
-        self.model.side_effect = respond
-        await self.worker().run_once(self.hints)
-        self.assertEqual(self.reasons()[-1], "deferred_active")
-        self.assertIsNone(self.db.execute(
-            "SELECT draft FROM discovery_candidates WHERE url=?", (URL + "-3",),
-        ).fetchone()[0])
-
-    async def test_dynamic_topic_uses_older_context_and_channel_metadata(self):
-        self.message(8, "Lunar Colony co-op nights have been a regular event", self.now - 80 * 86400)
-        self.responses({})
-        await self.worker().run_once(self.hints)
-        context = json.loads(self.model.call_args_list[0].kwargs["input"])
-        self.assertIn("regular event", context["older"][0][0])
-        self.assertEqual(context["channel_hints"], self.hints["1", "2"])
-        self.assertEqual(self.search.execute.call_args.args[0]["query"], TOPIC["query"])
-
-    async def test_stale_discussion_alone_is_insufficient_but_accepted_memory_supports_topic(self):
+    async def test_historical_discussion_and_accepted_memory_can_bootstrap_exploration(self):
         self.db.execute("DELETE FROM messages")
-        self.message(8, "Lunar Colony launch day", self.now - 80 * 86400)
-        await self.worker().run_once(self.hints)
-        self.search.execute.assert_not_awaited()
-        self.model.assert_not_awaited()
+        self.message(8, "Lunar Colony launch day", self.now - 80 * DAY)
         self.db.execute("""
             INSERT INTO extraction_batches
                 (batch_id, guild_id, channel_id, first_message_id, last_message_id,
@@ -372,54 +380,32 @@ class ShadowTests(IsolatedAsyncioTestCase):
                 ('batch', 0, 'fact', 'The group regularly plays Lunar Colony together',
                  '[]', '["8"]', 'high', 'test', 'accepted')
         """)
-        self.now += INTERVAL
-        self.responses({}, topic={"query": "Lunar Colony update", "durable": [0]})
+        self.responses(SEARCH, {"action": "finish"})
         await self.worker().run_once(self.hints)
         context = json.loads(self.model.call_args_list[0].kwargs["input"])
-        self.assertEqual(context["recent"], [])
+        self.assertEqual(context["windows"][0]["messages"][0]["text"], "Lunar Colony launch day")
         self.assertIn("regularly plays", context["accepted_memories"][0])
         self.search.execute.assert_awaited_once()
 
-    async def test_semantic_shortlist_supplies_paraphrased_cross_channel_evidence(self):
-        paraphrase = "Squads can tackle the next add-on's objectives together."
-        self.message(8, paraphrase, self.now - 7200, channel="7")
-        self.hints["1", "7"] = {"name": "another-channel"}
-        self.responses({"story": STORY, "quote": QUOTE, "draft": DRAFT}, {"reason": "same_story"})
+    async def test_activity_during_finish_suppresses_selection(self):
+        responses = iter([SEARCH, FETCH, {**PROPOSE, "draft": DRAFT}, APPROVED, FINISH])
+
+        async def model(**kwargs):
+            action = next(responses)
+            if action == FINISH:
+                self.message(9, "Conversation resumed", self.now)
+            return self.response(action)
+
+        self.model.side_effect = model
         await self.worker().run_once(self.hints)
-        review = json.loads(self.model.call_args.kwargs["input"])
-        self.assertNotIn(paraphrase, review["related_discussion"])
-        self.assertEqual(review["semantic_discussion"][0]["text"], paraphrase)
-        self.assertEqual(self.reasons(), ["same_story"])
-        self.embed.assert_awaited_once()
-        self.assertEqual(self.db.execute(
-            "SELECT embedding_calls, embedding_tokens FROM discovery_runs",
-        ).fetchone(), (1, 35))
+        self.assertEqual(self.latest()["outcome"], "deferred_after_work")
+        self.assertEqual(self.reasons(), ["approved"])
 
-    async def test_quiet_channel_can_use_active_channels_turn(self):
-        self.message(4, "Active discussion", self.now)
-        await self.worker().run_once({**self.hints, ("3", "5"): {"name": "quiet"}})
-        self.assertEqual(self.db.execute(
-            "SELECT channel_id, outcome FROM discovery_runs",
-        ).fetchall(), [("5", "weak_context")])
-
-    async def test_embedding_failure_records_attempt_without_draft(self):
-        self.responses({"story": STORY, "quote": QUOTE, "draft": DRAFT})
-        self.embed.side_effect = TimeoutError()
-        await self.worker().run_once(self.hints)
-        self.assertEqual(self.db.execute(
-            "SELECT reason, draft FROM discovery_candidates",
-        ).fetchone(), ("provider_error", None))
-        self.assertEqual(self.db.execute(
-            "SELECT embedding_calls, model_calls FROM discovery_runs",
-        ).fetchone(), (1, 2))
-
-    async def test_hint_cannot_supply_missing_topic_evidence(self):
-        self.responses(topic={"query": "Unrelated Space Kart news", "recent": [0, 0]})
+    async def test_private_query_format_rejected_before_provider(self):
+        self.responses({**SEARCH, "query": "search for @private_handle"}, {"action": "finish"})
         await self.worker().run_once(self.hints)
         self.search.execute.assert_not_awaited()
-        self.assertEqual(self.db.execute(
-            "SELECT outcome FROM discovery_runs",
-        ).fetchone(), ("weak_context",))
+        self.assertEqual(self.latest()["trace"]["events"][0]["decision"], "invalid_public_query")
 
     async def test_global_interval_and_rotation_survive_restart_and_channel_removal(self):
         self.db.execute("DELETE FROM messages")
@@ -449,34 +435,42 @@ class ShadowTests(IsolatedAsyncioTestCase):
         self.search.execute.assert_not_awaited()
         self.reader.execute.assert_not_awaited()
         self.model.assert_not_awaited()
-        self.embed.assert_not_awaited()
 
-    async def test_review_and_canonical_url_dedupe_are_guild_scoped(self):
-        self.message(8, "Lunar Colony hidden discussion", self.now - 7200, channel="7")
-        self.message(9, "Lunar Colony second guild private discussion", self.now - 7200, guild="3", channel="5")
-        self.message(10, "Lunar Colony strategies", self.now - 7200, guild="3", channel="5")
-        self.hints["3", "5"] = {"name": "other-guild"}
-        proposal = {"story": STORY, "quote": QUOTE, "draft": DRAFT}
-        self.responses(proposal, {"reason": "selected"})
-        await self.worker().run_once(self.hints)
-        first_review = self.model.call_args.kwargs["input"]
-        self.assertNotIn("second guild private", first_review)
-        self.assertNotIn("hidden discussion", first_review)
-        self.assertNotIn("hidden discussion", str(self.embed.call_args.kwargs["input"]))
-        self.now += INTERVAL
-        self.responses(proposal, {"reason": "selected"})
-        await self.worker().run_once(self.hints)
-        second_review = json.loads(self.model.call_args.kwargs["input"])
-        self.assertEqual(second_review["prior_suggestions"], [])
-        self.assertNotIn("base building", str(second_review))
-        self.assertEqual(self.db.execute(
-            "SELECT guild_id, url, reason FROM discovery_candidates ORDER BY run_id",
-        ).fetchall(), [("1", URL, "selected"), ("3", URL, "selected")])
-        with patch.dict("os.environ", {"DISCORD_SQLITE_PATH": self.path}), patch.object(admin, "output") as output:
-            admin.discovery(Namespace(guild_id=None, limit=20))
-            self.assertEqual({row["guild_id"] for row in output.call_args.args[0]["candidates"]}, {"1", "3"})
-            admin.discovery(Namespace(guild_id="3", limit=20))
-            self.assertEqual({row["guild_id"] for row in output.call_args.args[0]["candidates"]}, {"3"})
+    async def test_guild_scope_keeps_context_and_deduplication_separate(self):
+        self.message(9, "Second guild discussion", self.now - DAY, guild="3", channel="5")
+        self.hints["3", "5"] = {}
+        for expected_guild, excluded in (("1", "Second guild discussion"), ("3", "Lunar Colony base building session")):
+            self.responses(SEARCH, FETCH, {**PROPOSE, "draft": DRAFT}, APPROVED, FINISH)
+            await self.worker().run_once(self.hints)
+            self.assertEqual(self.latest()["guild_id"], expected_guild)
+            self.assertNotIn(excluded, self.model.call_args.kwargs["input"])
+            self.now += INTERVAL
+        self.assertEqual(self.reasons(), ["selected", "selected"])
+
+
+class MigrationTests(TestCase):
+    def test_discovery_migration_preserves_legacy_records(self):
+        with TemporaryDirectory() as temporary:
+            path = str(Path(temporary) / "legacy.sqlite")
+            from discord_bot.storage import database
+            with patch.object(database, "MIGRATIONS", MIGRATIONS[:-1]):
+                legacy = Database(path).open()
+                legacy.connection.execute(
+                    "INSERT INTO discovery_runs(guild_id, channel_id, started_at) VALUES ('1', '2', 100)",
+                )
+                legacy.connection.execute(
+                    """INSERT INTO discovery_candidates(guild_id, url, run_id, reason, draft)
+                       VALUES ('1', ?, 1, 'selected', ?)""", (URL, DRAFT),
+                )
+                legacy.close()
+            migrated = Database(path).open()
+            self.addCleanup(migrated.close)
+            self.assertEqual(migrated.connection.execute(
+                "SELECT url, reason, draft, explanation FROM discovery_candidates",
+            ).fetchone(), (URL, "selected", DRAFT, None))
+            self.assertEqual(migrated.connection.execute(
+                "SELECT started_at, trace, duration_ms FROM discovery_runs",
+            ).fetchone(), (100, None, None))
 
 
 class DiscoveryGatewayTests(IsolatedAsyncioTestCase):

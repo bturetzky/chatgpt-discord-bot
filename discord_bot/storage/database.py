@@ -256,6 +256,11 @@ MIGRATIONS = (
         """CREATE INDEX messages_reply ON messages(guild_id, reply_channel_id, reply_message_id, message_id)
             WHERE reply_message_id IS NOT NULL AND reply_message_id != ''""",
     ),
+    (
+        "ALTER TABLE discovery_runs ADD COLUMN trace TEXT",
+        "ALTER TABLE discovery_runs ADD COLUMN duration_ms INTEGER",
+        "ALTER TABLE discovery_candidates ADD COLUMN explanation TEXT",
+    ),
 )
 
 

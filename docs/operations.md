@@ -22,7 +22,7 @@ Global `--json` and `--guild-id` options precede the subcommand. Inspection comm
 
 `status` shows integrity, flags and row counts. `reactions` shows pending windows and scheduling state, rolling model attempts, triggers, window sizes, reasons, token usage, selected emoji and message links, and posting outcomes. Historical shadow rows have no posting outcome. An `attempting` row may represent an interrupted request with an uncertain outcome.
 
-`discovery` reports six-hour budgets, runs, reasons, source URLs and shadow drafts across all guilds by default. `archive` reports coverage and cursors. `memories` reports candidates and extraction usage.
+`discovery` reports six-hour budgets, run traces and shadow drafts across all guilds by default. `archive` reports coverage and cursors. `memories` reports candidates and extraction usage.
 
 ## Two different backfills
 
@@ -79,23 +79,19 @@ The CLI includes Discord message links. Use the first command to inspect cooldow
 
 ## Discovery shadow dev acceptance
 
-After the application rolls out to dev, discovery starts automatically when the gateway is ready and the SQLite archive is available. External search uses the existing Brave credentials. From the dev bot container, inspect runs and candidates across all guilds. Add `--guild-id` before the subcommand to filter to one guild.
+Use a dev guild with an eligible quiet text channel, archived discussion and configured Brave credentials. The worker starts at gateway readiness with a usable SQLite archive. It reserves one run per six hours across all guilds, and a restart preserves the interval. Add `--guild-id` before the subcommand to filter results.
 
 ```bash
-kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin discovery
-kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin --json discovery --limit 20
-kubectl logs deploy/chatgpt-discord-bot --since=24h | grep -i 'discovery'
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin --json discovery --limit 3
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin discovery --run-id 1 --posts
+kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin --json discovery --run-id 1 --posts
 ```
 
-The `started_at` field is a Unix UTC timestamp; compare it with the last deployment rollout and the six-hour reservation interval before concluding a fix has run. `Discovery shadow enabled` only confirms startup. `complete` means evaluation finished, not that a draft was accepted. `provider_error` requires examining the corresponding log stage; `weak_source` and `source_unavailable` are rejected candidates, not drafts. A new pod does not reset the persistent six-hour interval.
+Replace `1` with the run ID under review. Match `started_at` (Unix UTC seconds) against the rollout. Check context window scopes and sizes, search purposes, source read outcomes, rejected drafts and decisions. Compare `duration_ms`, call counts and reported input/output tokens across runs. `complete` includes runs that finish without a selection. A source error reports its provider code and any HTTP status. For `provider_error`, correlate the run ID and stage with the safe traceback in application logs.
 
-The worker checks channel eligibility each minute and reserves at most one attempt per six hours across the bot. If all available channels are active before reservation, `deferred_active` consumes no interval. A `deferred_after_work` run still counts toward the interval. Restarting preserves the reservation and rotation cursor.
-
-1. Start dev with an eligible quiet text channel. On an empty archive, expect `weak_context` and zero provider calls. Restart within six hours and check that there is no new reservation, including for other guilds.
-2. Add a standard text channel or grant the bot View Channel and Read Message History in an existing channel. Confirm it can enter rotation without restarting. Revoke either permission and confirm future runs skip it. An active channel should be skipped in favor of a quiet eligible one.
-3. In an eligible dev channel, discuss a game or project with a recent public announcement across several substantive messages, then let the channel stay quiet for 30 minutes. Inspect the channel, evidence, reason, usage and any proposed draft at its turn. Confirm Discord receives no unsolicited message or reaction.
-
-For a discovery `provider_error`, match the SQLite run ID to the application log. Logs use UTC timestamps and include the discovery stage, exception type and traceback locations. Discovery omits raw exception messages and response bodies.
+1. Discuss base building or logistics in a dev text channel, then leave it quiet for at least 30 minutes. After an eligible run inspect the trace for a public query and an adjacent lead, such as a project with unusual automation mechanics. If selected, the draft should read like a conversational observation and link to a fetched source. An older date should not itself disqualify the find.
+2. Share and discuss a public project link ahead of an eligible later run. If exploration revisits that link or rediscovers the same story, expect a duplicate decision. If sources fail or nothing clears review, expect an inspectable reason and no selected post.
+3. Keep the destination active around a scheduled check. Expect the worker to skip the active channel or suppress selection if conversation resumes during exploration. Check Discord for the absence of autonomous discovery messages throughout the review.
 
 ## Dev Discord smoke test
 
