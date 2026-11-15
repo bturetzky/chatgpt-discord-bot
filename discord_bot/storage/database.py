@@ -261,6 +261,33 @@ MIGRATIONS = (
         "ALTER TABLE discovery_runs ADD COLUMN duration_ms INTEGER",
         "ALTER TABLE discovery_candidates ADD COLUMN explanation TEXT",
     ),
+    (
+        "ALTER TABLE discovery_runs ADD COLUMN cached_input_tokens INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE discovery_candidates RENAME TO discovery_candidates_legacy",
+        """CREATE TABLE discovery_candidates (
+            guild_id TEXT NOT NULL,
+            url TEXT NOT NULL,
+            run_id INTEGER NOT NULL REFERENCES discovery_runs(id),
+            source_url TEXT,
+            reason TEXT NOT NULL DEFAULT 'interrupted',
+            story TEXT,
+            evidence TEXT,
+            draft TEXT,
+            explanation TEXT,
+            PRIMARY KEY (run_id, url)
+        )""",
+        """INSERT INTO discovery_candidates
+           (guild_id, url, run_id, source_url, reason, story, evidence, draft, explanation)
+           SELECT guild_id, url, run_id, source_url, reason, story, evidence, draft, explanation
+           FROM discovery_candidates_legacy""",
+        "DROP TABLE discovery_candidates_legacy",
+        "CREATE INDEX discovery_url ON discovery_candidates(guild_id, url)",
+        "CREATE INDEX discovery_source ON discovery_candidates(guild_id, source_url)",
+        """CREATE INDEX discovery_story ON discovery_candidates(guild_id, story COLLATE NOCASE)
+            WHERE reason='selected'""",
+        "CREATE INDEX discovery_recent ON discovery_candidates(guild_id, reason, run_id DESC)",
+    ),
+
 )
 
 

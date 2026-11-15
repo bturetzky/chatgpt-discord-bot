@@ -23,6 +23,7 @@ QUIET_SECONDS = 30 * 60
 MAX_RESULTS = 5
 LIMITS = {"searches": 10, "fetches": 10, "model_calls": 20, "embedding_calls": 3}
 DAY = 24 * 60 * 60
+CANDIDATE_COOLDOWN = DAY
 CONTEXT_CHARS = 60_000
 LINK = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 
@@ -54,7 +55,15 @@ Return one JSON action per turn:
 Search snippets are leads only. Verify claims in fetched chunks. Use fresh
 searches or additional sections as needed. Avoid repeating searches, and stop
 searching if the provider reports a rate limit. Save a model call to finish.
-A proposal uses one additional model call for independent review.
+A proposal uses one additional model call for independent review. Propose only
+when review_available is true.
+"""
+
+FINAL_SELECTION = """
+The exploration budget now permits only a final selection decision.
+Compare the approved candidates against the destination conversation.
+Return a JSON finish action with the approved result ID worth sharing, or null
+if none is worth sharing. Include a concise public decision summary.
 """
 
 REVIEW = """
@@ -273,30 +282,31 @@ class DiscoveryShadow:
             (guild_id, eligible, channel),
         )]
 
-    def spend(self, run, kind):
+    def spend(self, run, kind, *, reserve=0):
         # Column names come from the internal allowlist.
-        limit = LIMITS[kind]
+        limit = LIMITS[kind] - reserve
         return bool(self.db.execute(
             f"UPDATE discovery_runs SET {kind}={kind}+1 WHERE id=? AND {kind}<?",
             (run, limit),
         ).rowcount)
 
-    async def ask(self, run, instructions, data):
-        if not self.spend(run, "model_calls"):
+    async def ask(self, run, instructions, data, *, reserve=0):
+        if not self.spend(run, "model_calls", reserve=reserve):
             return None
         response = await asyncio.wait_for(self.client.responses.create(
             model=self.model, instructions=instructions,
             # JSON mode validates the input text separately from instructions.
-            input=json.dumps({**data, "output_instruction": "Return a JSON object."},
+            input=json.dumps({"output_instruction": "Return a JSON object.", **data},
                              ensure_ascii=False),
             max_output_tokens=1800,
             text={"format": {"type": "json_object"}}, store=False,
         ), timeout=25)
         usage = getattr(response, "usage", None)
+        cached = getattr(getattr(usage, "input_tokens_details", None), "cached_tokens", 0) or 0
         self.db.execute(
             """UPDATE discovery_runs SET input_tokens=input_tokens+?,
-               output_tokens=output_tokens+? WHERE id=?""",
-            (getattr(usage, "input_tokens", 0) or 0, getattr(usage, "output_tokens", 0) or 0, run),
+               output_tokens=output_tokens+?, cached_input_tokens=cached_input_tokens+? WHERE id=?""",
+            (getattr(usage, "input_tokens", 0) or 0, getattr(usage, "output_tokens", 0) or 0, cached, run),
         )
         if response.status == "incomplete":
             reason = getattr(getattr(response, "incomplete_details", None), "reason", None)
@@ -317,7 +327,7 @@ class DiscoveryShadow:
         self.db.execute("UPDATE discovery_runs SET trace=? WHERE id=?",
                         (json.dumps(trace, ensure_ascii=False), run))
 
-    async def review(self, run, guild_id, eligible, hints, windows, memories, pages, identity, action):
+    async def review(self, run, guild_id, eligible, context, pages, identity, action):
         story, quote, draft = (action.get(key) for key in ("story", "quote", "draft"))
         story = story.strip() if isinstance(story, str) else ""
         quote = quote.strip() if isinstance(quote, str) else ""
@@ -334,7 +344,7 @@ class DiscoveryShadow:
             return proposal, "missing_source_evidence", "The quoted evidence was absent from the fetched sections."
 
         related = self.related(guild_id, eligible, story, source)
-        archive = [message["text"] for window in windows for message in window["messages"]]
+        archive = [message["text"] for window in context["windows"] for message in window["messages"]]
         if any(canonical_url(link.rstrip(".,);]")) in {identity, final_identity}
                for text in archive + related for link in LINK.findall(text)):
             return proposal, "archived_url", "The source URL already appeared in the conversation archive."
@@ -351,12 +361,11 @@ class DiscoveryShadow:
         )]
 
         result = await self.ask(run, REVIEW, {
-            "proposal": proposal, "public_source": pages, "channel_hints": hints,
-            "windows": windows, "related_discussion": related, "accepted_memories": memories,
-            "prior_suggestions": previous,
-        })
+            **context, "prior_suggestions": previous, "proposal": proposal,
+            "public_source": pages, "related_discussion": related,
+        }, reserve=1)
         if result is None:
-            return proposal, "review_budget_exhausted", "No model calls remained for independent review."
+            return proposal, "review_budget_exhausted", "The remaining model call was reserved for final selection."
         summary = result.get("summary")
         if not isinstance(summary, str) or not summary.strip():
             return proposal, "invalid_review", "The reviewer did not supply a decision explanation."
@@ -370,7 +379,9 @@ class DiscoveryShadow:
         return proposal, reason, summary[:500]
 
     async def explore(self, run, guild_id, channel, hints, eligible, windows, memories, trace):
-        hits, pages, approved = {}, {}, set()
+        hits, pages, approved = {}, {}, {}
+        continuations = set()
+        context = {"channel_hints": hints, "windows": windows, "accepted_memories": memories}
         instructions = " ".join(conversational_persona("the Discord bot")) + "\n" + EXPLORE
         budget_keys = ("searches", "fetches", "model_calls")
         for _ in range(LIMITS["model_calls"]):
@@ -379,11 +390,20 @@ class DiscoveryShadow:
             usage = self.db.execute(
                 "SELECT searches, fetches, model_calls FROM discovery_runs WHERE id=?", (run,),
             ).fetchone()
-            action = await self.ask(run, instructions, {
-                "channel_hints": hints, "windows": windows, "accepted_memories": memories,
-                "progress": trace["events"], "results": hits, "pages": pages,
-                "remaining": {key: LIMITS[key] - used for key, used in zip(budget_keys, usage)},
-            })
+            remaining = {key: LIMITS[key] - used for key, used in zip(budget_keys, usage)}
+            finalizing = remaining["model_calls"] == 1
+            if finalizing:
+                if not approved:
+                    return "budget_exhausted"
+                action = await self.ask(run, instructions, {
+                    **context, "approved_candidates": approved,
+                })
+            else:
+                action = await self.ask(run, instructions, {
+                    **context, "progress": trace["events"], "results": hits, "pages": pages,
+                    "remaining": remaining,
+                    "review_available": remaining["model_calls"] >= 3,
+                }, reserve=1)
             if action is None:
                 return "budget_exhausted"
             kind, result = action.get("action"), action.get("result")
@@ -399,6 +419,11 @@ class DiscoveryShadow:
                         event[field] = value[:limit]
             trace["events"].append(event)
             self.record(run, trace)
+            if finalizing:
+                event["final_selection"] = True
+                if kind != "finish":
+                    event["decision"] = "invalid_final_selection"
+                    return "budget_exhausted"
             if kind == "finish":
                 if type(result) is int and result in approved and not self.active(guild_id, channel):
                     trace["selected_result"] = result
@@ -410,6 +435,8 @@ class DiscoveryShadow:
                 if result is not None:
                     event["decision"] = "selection_not_approved"
                     self.record(run, trace)
+                    if finalizing:
+                        return "budget_exhausted"
                     continue
                 return "complete"
             if kind == "search":
@@ -436,31 +463,31 @@ class DiscoveryShadow:
                 else:
                     event["decision"] = "search_budget_exhausted"
             elif kind == "fetch" and type(result) is int and result in hits:
-                await self.fetch(run, guild_id, result, hits, pages, action, event)
+                await self.fetch(run, result, hits, pages, continuations, action, event)
             elif kind == "propose" and type(result) is int and result in pages and result not in approved:
                 identity = canonical_url(hits[result]["url"])
                 try:
                     proposal, reason, explanation = await self.review(
-                        run, guild_id, eligible, hints, windows, memories, pages[result], identity, action,
+                        run, guild_id, eligible, context, pages[result], identity, action,
                     )
                 except Exception:
                     event.update(decision="review_provider_error", explanation="Independent review failed.")
                     self.db.execute(
                         """UPDATE discovery_candidates SET reason=?, explanation=?, story=?, draft=?
-                           WHERE guild_id=? AND url=?""",
+                           WHERE run_id=? AND url=?""",
                         (event["decision"], event["explanation"], event.get("story"),
-                         event.get("draft"), guild_id, identity),
+                         event.get("draft"), run, identity),
                     )
                     raise
                 self.db.execute(
                     """UPDATE discovery_candidates SET reason=?, explanation=?, story=?, evidence=?, draft=?
-                       WHERE guild_id=? AND url=?""",
+                       WHERE run_id=? AND url=?""",
                     (reason, explanation, proposal["story"], proposal["quote"], proposal["draft"],
-                     guild_id, identity),
+                     run, identity),
                 )
                 event.update(proposal, decision=reason, explanation=explanation)
                 if reason == "approved":
-                    approved.add(result)
+                    approved[result] = {**proposal, "explanation": explanation}
             elif kind == "propose":
                 event.update(decision="invalid_proposal_source",
                              explanation="Proposals require a fetched source that has not already been approved.")
@@ -488,7 +515,24 @@ class DiscoveryShadow:
             return {"ok": False, "error": {"code": "TIMEOUT" if isinstance(error, TimeoutError)
                                            else "PROVIDER_ERROR"}}
 
-    async def fetch(self, run, guild_id, result, hits, pages, action, event):
+    def candidate_block(self, run, identity, *, exclude=None):
+        return self.db.execute(
+            """SELECT CASE
+                   WHEN c.reason='selected' OR c.run_id=current.id THEN 'duplicate_url'
+                   ELSE 'candidate_cooldown' END
+               FROM discovery_runs current
+               JOIN discovery_candidates c ON c.guild_id=current.guild_id
+               JOIN discovery_runs prior ON prior.id=c.run_id
+               WHERE current.id=? AND (c.url=? OR c.source_url=?)
+                 AND (c.run_id<>current.id OR ? IS NULL OR c.url<>?)
+                 AND (c.reason='selected' OR c.run_id=current.id
+                      OR (prior.channel_id=current.channel_id AND prior.started_at>current.started_at-?
+                          AND c.reason NOT IN ('duplicate_redirect', 'redirect_cooldown')))
+               ORDER BY (c.reason='selected' OR c.run_id=current.id) DESC LIMIT 1""",
+            (run, identity, identity, exclude, exclude, CANDIDATE_COOLDOWN),
+        ).fetchone()
+
+    async def fetch(self, run, result, hits, pages, continuations, action, event):
         url = hits[result]["url"]
         identity = canonical_url(url)
         args = {"url": url}
@@ -498,46 +542,50 @@ class DiscoveryShadow:
             if action.get("continuation") is not True or not cursor:
                 event["decision"] = "no_unread_section"
                 return
+            if (identity, cursor) in continuations:
+                event["decision"] = "duplicate_continuation"
+                return
             args["cursor"] = cursor
-        elif self.db.execute(
-            "SELECT 1 FROM discovery_candidates WHERE guild_id=? AND (url=? OR source_url=?)",
-            (guild_id, identity, identity),
-        ).fetchone():
-            event["decision"] = "duplicate_url"
-            return
+        else:
+            blocked = self.candidate_block(run, identity)
+            if blocked:
+                event["decision"] = blocked[0]
+                return
         if not self.spend(run, "fetches"):
             event["decision"] = "fetch_budget_exhausted"
             return
-        if result not in pages:
+        if result in pages:
+            continuations.add((identity, cursor))
+        else:
             self.db.execute(
-                "INSERT INTO discovery_candidates(guild_id, url, run_id) VALUES (?, ?, ?)",
-                (guild_id, identity, run),
+                """INSERT INTO discovery_candidates(guild_id, url, run_id)
+                   SELECT guild_id, ?, id FROM discovery_runs WHERE id=?""",
+                (identity, run),
             )
         page = await self.tool(run, "fetch", self.reader, args)
         final = canonical_url(page.get("final_url"))
         if not page.get("ok") or not final or not isinstance(page.get("content"), str) or not page["content"].strip():
             event["error"] = self.tool_error(page) or {"code": "INVALID_SOURCE_RESPONSE"}
-        elif self.db.execute(
-            """SELECT 1 FROM discovery_candidates WHERE guild_id=? AND url<>?
-               AND (url=? OR source_url=?) LIMIT 1""",
-            (guild_id, identity, final, final),
-        ).fetchone():
-            event["decision"] = "duplicate_redirect"
         else:
-            pages.setdefault(result, []).append(page)
-            event.update(decision="fetched", source_url=page["final_url"],
-                         start_char=page.get("start_char"), end_char=page.get("end_char"),
-                         has_more=bool(page.get("next_cursor")))
+            blocked = self.candidate_block(run, final, exclude=identity) if result not in pages else None
+            if blocked:
+                event["decision"] = "duplicate_redirect" if blocked[0] == "duplicate_url" else "redirect_cooldown"
+            else:
+                pages.setdefault(result, []).append(page)
+                event.update(decision="fetched", source_url=page["final_url"],
+                             start_char=page.get("start_char"), end_char=page.get("end_char"),
+                             has_more=bool(page.get("next_cursor")))
         if result not in pages:
             reason = event.get("decision") or str(event["error"].get("code", "source_unavailable")).lower()
             self.db.execute(
-                "UPDATE discovery_candidates SET reason=?, explanation=? WHERE guild_id=? AND url=?",
-                (reason, json.dumps(event.get("error") or {"decision": reason}), guild_id, identity),
+                """UPDATE discovery_candidates SET reason=?, explanation=?, source_url=?
+                   WHERE run_id=? AND url=?""",
+                (reason, json.dumps(event.get("error") or {"decision": reason}), final, run, identity),
             )
         elif len(pages[result]) == 1 and event.get("decision") == "fetched":
             self.db.execute(
-                "UPDATE discovery_candidates SET source_url=?, reason='fetched' WHERE guild_id=? AND url=?",
-                (final, guild_id, identity),
+                "UPDATE discovery_candidates SET source_url=?, reason='fetched' WHERE run_id=? AND url=?",
+                (final, run, identity),
             )
 
     async def run_once(self, channel_hints):

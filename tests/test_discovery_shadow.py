@@ -19,7 +19,7 @@ from discord_bot.handlers.discord_handler import DiscordHandler
 
 from discord_bot.storage.database import Database, MIGRATIONS
 from discord_bot.storage.discovery_shadow import (
-    DAY, DiscoveryShadow, INTERVAL, LIMITS, canonical_url,
+    CANDIDATE_COOLDOWN, DAY, DiscoveryShadow, INTERVAL, LIMITS, canonical_url,
 )
 from discord_bot.storage.message_archive import utc_iso
 
@@ -219,8 +219,131 @@ class ShadowTests(IsolatedAsyncioTestCase):
         self.results(URL + "?utm_source=provider")
         self.responses(SEARCH, FETCH, {"action": "finish"})
         await self.worker().run_once(self.hints)
-        self.assertEqual(self.latest()["trace"]["events"][1]["decision"], "duplicate_url")
+        self.assertEqual(self.latest()["trace"]["events"][1]["decision"], "candidate_cooldown")
         self.reader.execute.assert_awaited_once()
+
+    async def test_transient_fetch_retries_after_cooldown_and_keeps_attempts(self):
+        self.reader.execute.return_value = json.dumps({"ok": False, "error": {"code": "TIMEOUT"}})
+        self.responses(SEARCH, FETCH, FETCH, {"action": "finish"})
+        await self.worker().run_once(self.hints)
+        first = self.latest()
+        self.assertEqual(first["trace"]["events"][2]["decision"], "duplicate_url")
+        self.reader.execute.assert_awaited_once()
+
+        self.now += CANDIDATE_COOLDOWN
+        self.source(URL)
+        self.responses(SEARCH, FETCH, {**PROPOSE, "draft": DRAFT}, APPROVED, FINISH)
+        await self.worker().run_once(self.hints)
+        self.assertEqual(self.reasons(), ["timeout", "selected"])
+        self.assertEqual(self.reader.execute.await_count, 2)
+
+        self.now += 4 * CANDIDATE_COOLDOWN
+        self.hints = {("1", "4"): {}}
+        self.message(80, "Co-op building games", self.now - DAY, channel="4")
+        self.results(URL + "?utm_source=provider")
+        self.responses(SEARCH, FETCH, {"action": "finish"})
+        await self.worker().run_once(self.hints)
+        self.assertEqual(self.latest()["trace"]["events"][1]["decision"], "duplicate_url")
+        self.assertEqual(self.reasons(), ["timeout", "selected"])
+        self.assertEqual(self.reader.execute.await_count, 2)
+
+    async def test_channel_rejection_can_be_reconsidered_in_another_channel(self):
+        self.responses(SEARCH, FETCH, {**PROPOSE, "draft": DRAFT},
+                       {"approved": False, "reason": "unrelated",
+                        "summary": "This channel mostly talks about music."},
+                       {"action": "finish"})
+        await self.worker().run_once(self.hints)
+
+        self.now += INTERVAL
+        self.hints["1", "4"] = {}
+        self.message(80, "Co-op building games", self.now - DAY, channel="4")
+        self.responses(SEARCH, FETCH, {**PROPOSE, "draft": DRAFT}, APPROVED, FINISH)
+        await self.worker().run_once(self.hints)
+        self.assertEqual(self.latest()["channel_id"], "4")
+        self.assertEqual(self.reasons(), ["unrelated", "selected"])
+
+    async def test_redirects_respect_permanent_and_within_run_deduplication(self):
+        alias = URL + "-alias"
+        self.results(alias, URL)
+        self.responses(SEARCH, FETCH, {**FETCH, "result": 2},
+                       {**PROPOSE, "draft": DRAFT}, APPROVED, FINISH)
+        await self.worker().run_once(self.hints)
+        self.assertEqual(self.latest()["trace"]["events"][2]["decision"], "duplicate_url")
+        self.reader.execute.assert_awaited_once()
+
+        self.now += CANDIDATE_COOLDOWN
+        self.results(URL + "-new-alias")
+        self.responses(SEARCH, FETCH, {"action": "finish"})
+        await self.worker().run_once(self.hints)
+        self.assertEqual(self.reasons(), ["selected", "duplicate_redirect"])
+        self.assertEqual(self.reader.execute.await_count, 2)
+
+    async def test_failed_continuation_is_not_repeated(self):
+        self.reader.execute.side_effect = [
+            json.dumps({"ok": True, "final_url": URL, "content": QUOTE, "next_cursor": "cursor"}),
+            json.dumps({"ok": False, "error": {"code": "TIMEOUT"}}),
+        ]
+        continuation = {**FETCH, "continuation": True}
+        self.responses(SEARCH, FETCH, continuation, continuation, {"action": "finish"})
+        await self.worker().run_once(self.hints)
+        self.assertEqual(self.latest()["trace"]["events"][3]["decision"], "duplicate_continuation")
+        self.assertEqual(self.reader.execute.await_count, 2)
+
+    async def test_final_model_call_is_reserved_when_late_proposal_would_use_it(self):
+        second = URL + "-second"
+        self.results(URL, second)
+        self.reader.execute.side_effect = [
+            json.dumps({"ok": True, "final_url": url, "content": QUOTE}) for url in (URL, second)
+        ]
+        self.responses(SEARCH, FETCH, {**PROPOSE, "draft": DRAFT}, APPROVED, {**FETCH, "result": 2},
+                       *([{"action": "unknown"}] * 13),
+                       {**PROPOSE, "result": 2, "draft": DRAFT + " Another opener."}, FINISH)
+        await self.worker().run_once(self.hints)
+        run = self.latest()
+        self.assertEqual(run["model_calls"], LIMITS["model_calls"])
+        self.assertEqual(run["trace"]["events"][-2]["decision"], "review_budget_exhausted")
+        self.assertTrue(run["trace"]["events"][-1]["final_selection"])
+        final_request = self.model.call_args.kwargs
+        self.assertEqual(final_request["instructions"], self.model.call_args_list[0].kwargs["instructions"])
+        final_input = json.loads(final_request["input"])
+        self.assertEqual(list(final_input["approved_candidates"]), ["1"])
+        self.assertEqual(run["trace"]["selected_result"], 1)
+
+    async def test_reserved_selection_can_choose_silence(self):
+        self.responses(SEARCH, FETCH, {**PROPOSE, "draft": DRAFT}, APPROVED,
+                       *([{"action": "unknown"}] * 15),
+                       {"action": "finish", "result": None})
+        await self.worker().run_once(self.hints)
+        run = self.latest()
+        self.assertEqual(run["model_calls"], LIMITS["model_calls"])
+        self.assertEqual(run["outcome"], "complete")
+        self.assertNotIn("selected_result", run["trace"])
+        self.assertEqual(self.reasons(), ["approved"])
+
+    async def test_stable_prompt_prefix_and_cached_usage_are_visible_in_cli(self):
+        def response(payload, cached=None):
+            result = self.response(payload)
+            if cached is not None:
+                result.usage.input_tokens_details = SimpleNamespace(cached_tokens=cached)
+            return result
+
+        self.model.side_effect = [
+            response(SEARCH), response(FETCH, 14), response({**PROPOSE, "draft": DRAFT}, 8),
+            response(APPROVED, 9), response(FINISH),
+        ]
+        await self.worker().run_once(self.hints)
+        inputs = [json.loads(call.kwargs["input"]) for call in self.model.call_args_list]
+        stable_keys = ["output_instruction", "channel_hints", "windows", "accepted_memories"]
+        for model_input in inputs:
+            self.assertEqual(list(model_input)[:4], stable_keys)
+            self.assertEqual([model_input[key] for key in stable_keys], [inputs[0][key] for key in stable_keys])
+        with patch.dict("os.environ", {"DISCORD_SQLITE_PATH": self.path}):
+            buffer = StringIO()
+            with redirect_stdout(buffer):
+                admin.discovery(Namespace(guild_id=None, limit=20, run_id=1, posts=False, json=True))
+        run = json.loads(buffer.getvalue())["runs"][0]
+        self.assertEqual((run["input_tokens"], run["cached_input_tokens"], run["output_tokens"]), (150, 31, 50))
+        self.assertEqual((run["embedding_calls"], run["embedding_tokens"], run["model_calls"]), (0, 0, 5))
 
     async def test_review_gets_related_archive_and_prior_suggestions_for_paraphrases(self):
         previous = URL + "-previous"
@@ -248,14 +371,15 @@ class ShadowTests(IsolatedAsyncioTestCase):
         await self.worker().run_once(self.hints)
         run = self.latest()
         self.assertEqual(run["outcome"], "budget_exhausted")
-        self.assertEqual(run["model_calls"], LIMITS["model_calls"])
+        self.assertEqual(run["model_calls"], LIMITS["model_calls"] - 1)
         self.assertEqual(run["searches"], LIMITS["searches"])
         self.assertEqual(len(run["trace"]["events"][0]["results"]), 5)
 
     async def test_page_budget_includes_continuations(self):
-        self.reader.execute.return_value = json.dumps({
-            "ok": True, "final_url": URL, "content": QUOTE, "next_cursor": "cursor",
-        })
+        self.reader.execute.side_effect = [
+            json.dumps({"ok": True, "final_url": URL, "content": QUOTE, "next_cursor": f"cursor-{index}"})
+            for index in range(LIMITS["fetches"])
+        ]
         self.responses(SEARCH, FETCH, *([{**FETCH, "continuation": True}] * 10), {"action": "finish"})
         await self.worker().run_once(self.hints)
         self.assertEqual(self.latest()["fetches"], LIMITS["fetches"])
@@ -469,8 +593,8 @@ class MigrationTests(TestCase):
                 "SELECT url, reason, draft, explanation FROM discovery_candidates",
             ).fetchone(), (URL, "selected", DRAFT, None))
             self.assertEqual(migrated.connection.execute(
-                "SELECT started_at, trace, duration_ms FROM discovery_runs",
-            ).fetchone(), (100, None, None))
+                "SELECT started_at, trace, duration_ms, cached_input_tokens FROM discovery_runs",
+            ).fetchone(), (100, None, None, 0))
 
 
 class DiscoveryGatewayTests(IsolatedAsyncioTestCase):
