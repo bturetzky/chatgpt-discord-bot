@@ -9,6 +9,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import discord
 import httpx
@@ -19,7 +20,8 @@ from discord_bot.handlers.discord_handler import DiscordHandler
 
 from discord_bot.storage.database import Database, MIGRATIONS
 from discord_bot.storage.discovery_shadow import (
-    CANDIDATE_COOLDOWN, DAY, FINAL_SELECTION, DiscoveryShadow, INTERVAL, LIMITS, canonical_url,
+    CANDIDATE_COOLDOWN, DAY, DEFAULT_INTERVAL, FINAL_SELECTION, LIMITS, REVIEW, DiscoveryShadow,
+    canonical_url, discovery_allowed, discovery_interval_seconds,
 )
 from discord_bot.storage.message_archive import utc_iso
 
@@ -36,7 +38,36 @@ FINISH = {"action": "finish", "result": 1}
 DRAFT = "Co-op missions sound like the right next step for Lunar Colony. Who's in?"
 
 
+def request_data(request):
+    context, _, state = request["input"]
+    return {**json.loads(context["content"][0]["text"]), **json.loads(state["content"])}
+
+
+def pacific_timestamp(hour, minute=0, *, month=1):
+    return datetime(2027, month, 15, hour, minute, tzinfo=ZoneInfo("America/Los_Angeles")).timestamp()
+
+
 class ConfigTests(TestCase):
+    def test_interval_configuration(self):
+        with patch.dict("os.environ", clear=True):
+            self.assertEqual(discovery_interval_seconds(), DAY)
+        with patch.dict("os.environ", {"DISCOVERY_INTERVAL_HOURS": "6"}):
+            self.assertEqual(discovery_interval_seconds(), 6 * 3600)
+        for invalid in ("0", "-2", "invalid", "1.5"):
+            with self.subTest(invalid=invalid), patch.dict(
+                "os.environ", {"DISCOVERY_INTERVAL_HOURS": invalid},
+            ), self.assertLogs(level="WARNING"):
+                self.assertEqual(discovery_interval_seconds(), DAY)
+
+    def test_pacific_boundaries_use_standard_and_daylight_time(self):
+        for month, opening_utc, closing_utc in ((1, 16, 6), (7, 15, 5)):
+            opens = datetime(2027, month, 15, opening_utc, tzinfo=timezone.utc).timestamp()
+            closes = datetime(2027, month, 16, closing_utc, tzinfo=timezone.utc).timestamp()
+            self.assertFalse(discovery_allowed(opens - 1))
+            self.assertTrue(discovery_allowed(opens))
+            self.assertTrue(discovery_allowed(closes - 1))
+            self.assertFalse(discovery_allowed(closes))
+
     def test_canonical_identity(self):
         self.assertEqual(canonical_url("http://EXAMPLE.org/releases/lunar/?utm_source=x#top"), URL)
         self.assertNotEqual(canonical_url(URL + "?edition=deluxe"), URL)
@@ -50,7 +81,7 @@ class ShadowTests(IsolatedAsyncioTestCase):
         self.path = str(Path(temporary.name) / "archive.sqlite")
         self.database = Database(self.path).open()
         self.addCleanup(self.database.close)
-        self.now = 1_800_000_000
+        self.now = pacific_timestamp(12)
         self.search = SimpleNamespace(execute=AsyncMock())
         self.reader = SimpleNamespace(execute=AsyncMock())
         self.model = AsyncMock(return_value=self.response({"action": "finish"}))
@@ -133,7 +164,7 @@ class ShadowTests(IsolatedAsyncioTestCase):
         self.assertEqual(self.search.execute.call_args.args[0], {
             "query": "automation game cooperative colony", "max_results": 5,
         })
-        self.assertIn("sharp, laid-back", self.model.call_args.kwargs["instructions"])
+        self.assertIn("sharp, laid-back", self.model.call_args.kwargs["input"][1]["content"])
         self.assertEqual(self.db.execute("SELECT draft FROM discovery_candidates").fetchone()[0],
                          f"{draft}\n<{URL}>")
         self.assertIsInstance(run["duration_ms"], int)
@@ -151,7 +182,7 @@ class ShadowTests(IsolatedAsyncioTestCase):
         self.db.execute("UPDATE messages SET author_id='4' WHERE message_id LIKE '%-4-29'")
         self.db.execute("COMMIT")
         await self.worker().run_once(self.hints)
-        context = json.loads(self.model.call_args.kwargs["input"])["windows"]
+        context = request_data(self.model.call_args.kwargs)["windows"]
         self.assertEqual(len(context), 10)
         for window in context:
             times = [message["at"] for message in window["messages"]]
@@ -214,11 +245,12 @@ class ShadowTests(IsolatedAsyncioTestCase):
         self.responses(SEARCH, FETCH, {**PROPOSE, "draft": DRAFT}, {"action": "finish"})
         await self.worker().run_once(self.hints)
         self.assertEqual(self.reasons(), ["archived_url"])
-        self.now += INTERVAL
+        self.now += 6 * 3600
         del self.hints["1", "4"]
         self.results(URL + "?utm_source=provider")
         self.responses(SEARCH, FETCH, {"action": "finish"})
-        await self.worker().run_once(self.hints)
+        with patch.dict("os.environ", {"DISCOVERY_INTERVAL_HOURS": "6"}):
+            await self.worker().run_once(self.hints)
         self.assertEqual(self.latest()["trace"]["events"][1]["decision"], "candidate_cooldown")
         self.reader.execute.assert_awaited_once()
 
@@ -254,7 +286,7 @@ class ShadowTests(IsolatedAsyncioTestCase):
                        {"action": "finish"})
         await self.worker().run_once(self.hints)
 
-        self.now += INTERVAL
+        self.now += DEFAULT_INTERVAL
         self.hints["1", "4"] = {}
         self.message(80, "Co-op building games", self.now - DAY, channel="4")
         self.responses(SEARCH, FETCH, {**PROPOSE, "draft": DRAFT}, APPROVED, FINISH)
@@ -304,9 +336,9 @@ class ShadowTests(IsolatedAsyncioTestCase):
         self.assertEqual(run["trace"]["events"][-2]["decision"], "review_budget_exhausted")
         self.assertTrue(run["trace"]["events"][-1]["final_selection"])
         final_request = self.model.call_args.kwargs
-        self.assertEqual(final_request["instructions"], FINAL_SELECTION)
-        self.assertIn("The only available action is finish", final_request["instructions"])
-        final_input = json.loads(final_request["input"])
+        self.assertEqual(final_request["input"][1]["content"], FINAL_SELECTION)
+        self.assertIn("The only available action is finish", final_request["input"][1]["content"])
+        final_input = request_data(final_request)
         self.assertEqual(list(final_input["approved_candidates"]), ["1"])
         self.assertEqual(run["trace"]["selected_result"], 1)
 
@@ -345,34 +377,69 @@ class ShadowTests(IsolatedAsyncioTestCase):
                 self.now += CANDIDATE_COOLDOWN
 
     async def test_stable_prompt_prefix_and_cached_usage_are_visible_in_cli(self):
-        def response(payload, cached=None):
-            result = self.response(payload)
-            if cached is not None:
-                result.usage.input_tokens_details = SimpleNamespace(cached_tokens=cached)
-            return result
+        requests = []
+        actions = iter([
+            (SEARCH, 0), (FETCH, 14), ({**PROPOSE, "draft": DRAFT}, 8),
+            (APPROVED, 9), (FINISH, 0),
+        ])
 
-        self.model.side_effect = [
-            response(SEARCH), response(FETCH, 14), response({**PROPOSE, "draft": DRAFT}, 8),
-            response(APPROVED, 9), response(FINISH),
-        ]
-        await self.worker().run_once(self.hints)
-        inputs = [json.loads(call.kwargs["input"]) for call in self.model.call_args_list]
-        stable_keys = ["output_instruction", "channel_hints", "windows", "accepted_memories"]
-        for model_input in inputs:
-            self.assertEqual(list(model_input)[:4], stable_keys)
-            self.assertEqual([model_input[key] for key in stable_keys], [inputs[0][key] for key in stable_keys])
-        with patch.dict("os.environ", {"DISCORD_SQLITE_PATH": self.path}):
+        def respond(request):
+            requests.append(json.loads(request.content))
+            action, cached = next(actions)
+            return httpx.Response(200, json={
+                "status": "completed",
+                "output": [{
+                    "type": "message", "role": "assistant", "content": [
+                        {"type": "output_text", "text": json.dumps(action), "annotations": []},
+                    ],
+                }],
+                "usage": {"input_tokens": 30, "output_tokens": 10, "total_tokens": 40,
+                          "input_tokens_details": {"cached_tokens": cached},
+                          "output_tokens_details": {"reasoning_tokens": 0}},
+            })
+
+        async with AsyncOpenAI(
+            api_key="synthetic-key", max_retries=0,
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+        ) as client:
+            worker = self.worker()
+            worker.model = "gpt-6.1-terra"
+            worker.client = client
+            with patch.dict(LIMITS, model_calls=5):
+                await worker.run_once(self.hints)
+
+        self.assertEqual(len(requests), 5)
+        first = requests[0]
+        for request in requests:
+            self.assertEqual(request["instructions"], first["instructions"])
+            self.assertEqual(request["input"][0], first["input"][0])
+            self.assertEqual(request["prompt_cache_options"], {"mode": "explicit"})
+            self.assertEqual(request["model"], first["model"])
+            self.assertEqual(request["text"], first["text"])
+            self.assertFalse(request["store"])
+        self.assertEqual(first["input"][0]["content"][0]["prompt_cache_breakpoint"], {"mode": "explicit"})
+        self.assertNotEqual(first["input"][2], requests[1]["input"][2])
+        self.assertEqual(requests[3]["input"][1], {"role": "developer", "content": REVIEW})
+        self.assertNotIn("progress", request_data(requests[3]))
+        self.assertEqual(requests[4]["input"][1], {"role": "developer", "content": FINAL_SELECTION})
+        self.assertEqual(self.reasons(), ["selected"])
+        with patch.dict("os.environ", {"DISCORD_SQLITE_PATH": self.path, "DISCOVERY_INTERVAL_HOURS": "6"}):
             buffer = StringIO()
             with redirect_stdout(buffer):
                 admin.discovery(Namespace(guild_id=None, limit=20, run_id=1, posts=False, json=True))
-        run = json.loads(buffer.getvalue())["runs"][0]
+        status = json.loads(buffer.getvalue())
+        self.assertEqual(status["interval_seconds"], 21600)
+        self.assertEqual(status["quiet_hours"], {
+            "start": "22:00", "end": "08:00", "timezone": "America/Los_Angeles",
+        })
+        run = status["runs"][0]
         self.assertEqual((run["input_tokens"], run["cached_input_tokens"], run["output_tokens"]), (150, 31, 50))
         self.assertEqual((run["embedding_calls"], run["embedding_tokens"], run["model_calls"]), (0, 0, 5))
 
     async def test_review_gets_related_archive_and_prior_suggestions_for_paraphrases(self):
         previous = URL + "-previous"
         self.db.execute("INSERT INTO discovery_runs(guild_id, channel_id, started_at) VALUES ('1', '2', ?)",
-                        (self.now - INTERVAL,))
+                        (self.now - DEFAULT_INTERVAL,))
         self.db.execute(
             """INSERT INTO discovery_candidates(guild_id, url, run_id, reason, story, source_url)
                VALUES ('1', ?, 1, 'selected', 'Players can now cooperate in Lunar Colony.', ?)""",
@@ -384,7 +451,7 @@ class ShadowTests(IsolatedAsyncioTestCase):
                         "summary": "The shared missions already came up under another link."},
                        {"action": "finish"})
         await self.worker().run_once(self.hints)
-        review = json.loads(self.model.call_args_list[3].kwargs["input"])
+        review = request_data(self.model.call_args_list[3].kwargs)
         self.assertEqual(review["prior_suggestions"], [["Players can now cooperate in Lunar Colony.", previous]])
         self.assertIn("We discussed Lunar Colony adding shared missions.", review["related_discussion"])
         self.assertEqual(self.reasons(), ["selected", "same_story"])
@@ -454,10 +521,12 @@ class ShadowTests(IsolatedAsyncioTestCase):
         request = requests[0]
         self.assertEqual(request["model"], "test-model")
         self.assertEqual(request["text"], {"format": {"type": "json_object"}})
-        self.assertEqual(json.loads(request["input"])["output_instruction"], "Return a JSON object.")
+        self.assertEqual(request_data(request)["output_instruction"], "Return a JSON object.")
         self.assertEqual(request["max_output_tokens"], 1800)
         self.assertFalse(request["store"])
         self.assertNotIn("tools", request)
+        self.assertNotIn("prompt_cache_options", request)
+        self.assertNotIn("prompt_cache_breakpoint", request["input"][0]["content"][0])
         logged = "\n".join(logs.output)
         for expected in ("run=1", "stage=exploration", "BadRequestError", "HTTP 400",
                          "unsupported_parameter", "param=text.format", "Traceback", "in ask"):
@@ -503,7 +572,7 @@ class ShadowTests(IsolatedAsyncioTestCase):
                 self.assertIn(diagnostic, "\n".join(logs.output))
                 self.assertNotIn("synthetic non-JSON output", "\n".join(logs.output))
                 self.assert_exploration_failed((30, 10))
-                self.now += INTERVAL
+                self.now += DEFAULT_INTERVAL
 
     def assert_exploration_failed(self, tokens):
         self.assertEqual(self.db.execute(
@@ -530,7 +599,7 @@ class ShadowTests(IsolatedAsyncioTestCase):
         """)
         self.responses(SEARCH, {"action": "finish"})
         await self.worker().run_once(self.hints)
-        context = json.loads(self.model.call_args_list[0].kwargs["input"])
+        context = request_data(self.model.call_args_list[0].kwargs)
         self.assertEqual(context["windows"][0]["messages"][0]["text"], "Lunar Colony launch day")
         self.assertIn("regularly plays", context["accepted_memories"][0])
         self.search.execute.assert_awaited_once()
@@ -555,6 +624,56 @@ class ShadowTests(IsolatedAsyncioTestCase):
         self.search.execute.assert_not_awaited()
         self.assertEqual(self.latest()["trace"]["events"][0]["decision"], "invalid_public_query")
 
+    async def test_overdue_overnight_run_reserves_once_at_opening_after_restart(self):
+        self.db.execute("INSERT INTO discovery_runs(guild_id, channel_id, started_at) VALUES ('1', '2', ?)",
+                        (pacific_timestamp(22) - 3 * DAY,))
+        self.now = pacific_timestamp(8) - 1
+        self.db.execute("DELETE FROM messages")
+        self.message(50, "Archived discussion", self.now - DAY)
+        await self.worker().run_once(self.hints)
+        self.model.assert_not_awaited()
+        self.assertEqual(self.latest()["id"], 1)
+        self.database.close()
+        self.database.open()
+        self.now += 1
+        for _ in range(3):
+            await self.worker().run_once(self.hints)
+        self.assertEqual(self.latest()["id"], 2)
+        self.model.assert_awaited_once()
+
+    async def test_custom_interval_controls_due_time(self):
+        with patch.dict("os.environ", {"DISCOVERY_INTERVAL_HOURS": "3"}):
+            await self.worker().run_once(self.hints)
+            self.now += 3 * 3600 - 1
+            await self.worker().run_once(self.hints)
+            self.model.assert_awaited_once()
+            self.now += 1
+            await self.worker().run_once(self.hints)
+        self.assertEqual(self.model.await_count, 2)
+
+    async def test_quiet_hours_prevent_selection_before_and_after_final_request(self):
+        for boundary_action, expected_calls in ((APPROVED, 4), (FINISH, 5)):
+            with self.subTest(expected_calls=expected_calls):
+                self.db.execute("DELETE FROM discovery_candidates")
+                self.db.execute("DELETE FROM discovery_runs")
+                self.now = pacific_timestamp(22) - 1
+                actions = iter([SEARCH, FETCH, {**PROPOSE, "draft": DRAFT}, APPROVED, FINISH])
+
+                async def respond(**kwargs):
+                    action = next(actions)
+                    if action is boundary_action:
+                        self.now += 1
+                    return self.response(action)
+
+                self.model.reset_mock()
+                self.model.side_effect = respond
+                with patch.dict(LIMITS, model_calls=5):
+                    await self.worker().run_once(self.hints)
+                self.assertEqual(self.model.await_count, expected_calls)
+                self.assertEqual(self.latest()["outcome"], "deferred_quiet_hours")
+                self.assertNotIn("selected_url", self.latest()["trace"])
+                self.assertEqual(self.reasons(), ["approved"])
+
     async def test_global_interval_and_rotation_survive_restart_and_channel_removal(self):
         self.db.execute("DELETE FROM messages")
         await self.worker().run_once({})
@@ -567,13 +686,13 @@ class ShadowTests(IsolatedAsyncioTestCase):
         channels = {("3", "6"): {}, ("3", "5"): {}, ("1", "1"): {}}
         self.database.close()
         self.database.open()
-        self.now += INTERVAL - 1
+        self.now += DEFAULT_INTERVAL - 1
         await self.worker().run_once(channels)
         self.assertEqual(self.db.execute("SELECT count(*) FROM discovery_runs").fetchone()[0], 1)
         self.now += 1
         for _ in range(4):
             await self.worker().run_once(channels)
-            self.now += INTERVAL
+            self.now += DEFAULT_INTERVAL
         self.assertEqual(self.db.execute(
             "SELECT guild_id, channel_id, outcome FROM discovery_runs WHERE id>1 ORDER BY id",
         ).fetchall(), [
@@ -591,8 +710,8 @@ class ShadowTests(IsolatedAsyncioTestCase):
             self.responses(SEARCH, FETCH, {**PROPOSE, "draft": DRAFT}, APPROVED, FINISH)
             await self.worker().run_once(self.hints)
             self.assertEqual(self.latest()["guild_id"], expected_guild)
-            self.assertNotIn(excluded, self.model.call_args.kwargs["input"])
-            self.now += INTERVAL
+            self.assertNotIn(excluded, json.dumps(self.model.call_args.kwargs["input"]))
+            self.now += DEFAULT_INTERVAL
         self.assertEqual(self.reasons(), ["selected", "selected"])
 
 

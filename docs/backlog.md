@@ -32,7 +32,7 @@ Dev Discord acceptance is pending for hourly quiet-channel evaluation, the 10-me
 
 ### Proactive external discovery — finish shadow review, then live posting
 
-**Pending operator verification:** Review the contextual exploration worker in dev before considering a separate live-posting PR. Use the [dev acceptance procedure](operations.md#discovery-shadow-dev-acceptance) to assess conversational relevance, novelty, source grounding, privacy, duration and cost. Include an older find or an adjacent interest, an already-discussed item under different wording, and a run that ends without a selected post. Confirm durable scheduling and inspect rejection explanations alongside drafts. CI and rollout checks cover deployment and startup.
+**Pending operator verification:** Review the contextual exploration worker in dev before considering a separate live-posting PR. Use the [dev acceptance procedure](operations.md#discovery-shadow-dev-acceptance) to assess conversational relevance, novelty, source grounding, privacy, duration and cost. Include an older find or an adjacent interest, an already-discussed item under different wording, and a run that ends without a selected post. Confirm durable scheduling and morning deferral, compare reported within-run cache reuse on post-rollout runs, and inspect rejection explanations alongside drafts. CI and rollout checks cover deployment and startup.
 
 ### Phase 2 — guarded live posting (separate approval and PR)
 
