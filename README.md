@@ -57,6 +57,7 @@ Runtime settings:
 | `REACTION_SHADOW_TEST_PREFIX` | Dev-only prefix to trigger an immediate conversation evaluation; unset in production |
 | `AUTONOMOUS_MEMORY_ENABLED` | Opt-in background extraction/evaluation/publication, default `false` |
 | `AUTONOMOUS_MEMORY_GUILD_ID` | Target guild for worker; falls back to shadow guild setting |
+| `DISCOVERY_INTERVAL_HOURS` | Positive whole hours between autonomous discovery reservations (default `24`). Invalid values fall back to the default. Discovery runs from 8 AM up to 10 PM Pacific. |
 | `OPENAI_MODEL` | Main Responses model override |
 | `DISCORD_CONTEXT_LIMIT` | Recent Discord context limit, default 30 |
 | `MEMORY_SEMANTIC_CANDIDATES` | Retrieval pool, default 16, range 1–50 |

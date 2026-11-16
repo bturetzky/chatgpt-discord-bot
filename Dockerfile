@@ -11,7 +11,7 @@ ENV PYTHONUNBUFFERED=1
 
 # Install system dependencies for lxml
 RUN apt-get update \
-    && apt-get install -y libxml2-dev libxslt1-dev \
+    && apt-get install -y libxml2-dev libxslt1-dev tzdata \
     && apt-get clean
 
 # Set the working directory in the container

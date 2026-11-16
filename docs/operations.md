@@ -22,7 +22,7 @@ Global `--json` and `--guild-id` options precede the subcommand. Inspection comm
 
 `status` shows integrity, flags and row counts. `reactions` shows pending windows and scheduling state, rolling model attempts, triggers, window sizes, reasons, token usage, selected emoji and message links, and posting outcomes. Historical shadow rows have no posting outcome. An `attempting` row may represent an interrupted request with an uncertain outcome.
 
-`discovery` reports six-hour budgets, run traces and shadow drafts across all guilds by default. `archive` reports coverage and cursors. `memories` reports candidates and extraction usage.
+`discovery` reports the effective reservation interval, Pacific quiet hours, per-run budgets, run traces and shadow drafts across all guilds by default. `archive` reports coverage and cursors. `memories` reports candidates and extraction usage.
 
 ## Two different backfills
 
@@ -79,7 +79,7 @@ The CLI includes Discord message links. Use the first command to inspect cooldow
 
 ## Discovery shadow dev acceptance
 
-Use a dev guild with an eligible quiet text channel, archived discussion and configured Brave credentials. The worker starts at gateway readiness with a usable SQLite archive. It reserves one run per six hours across all guilds, and a restart preserves the interval. Add `--guild-id` before the subcommand to filter results.
+Use a dev guild with an eligible quiet text channel, archived discussion and configured Brave credentials. The worker starts at gateway readiness with a usable SQLite archive. It reserves at most one attempt per configured interval across all guilds. A restart preserves the last reservation. A due run can start at 8 AM Pacific after overnight quiet hours, with one reservation even if several intervals elapsed. A run that crosses 10 PM before selection records `deferred_quiet_hours` and consumes its reservation. Add `--guild-id` before the subcommand to filter results.
 
 ```bash
 kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin --json discovery --limit 3
@@ -92,6 +92,8 @@ Replace `1` with the run ID under review. Match `started_at` (Unix UTC seconds) 
 1. Discuss base building or logistics in a dev text channel, then leave it quiet for at least 30 minutes. After an eligible run inspect the trace for a public query and an adjacent lead, such as a project with unusual automation mechanics. If selected, the draft should read like a conversational observation and link to a fetched source. An older date should not itself disqualify the find.
 2. Share and discuss a public project link ahead of an eligible later run. If exploration revisits that link or rediscovers the same story, expect a duplicate decision for a previously selected source or a story the group already discussed. Unselected sources may retry after 24 hours in the same channel or on the next eligible run for another channel. If sources fail or nothing clears review, expect an inspectable reason and no selected post.
 3. Keep the destination active around a scheduled check. Expect the worker to skip the active channel or suppress selection if conversation resumes during exploration. Check Discord for the absence of autonomous discovery messages throughout the review.
+
+After rollout, inspect several new multi-call runs using the JSON command above. Compare `cached_input_tokens / input_tokens` alongside model call counts and context size. Expect reuse within a run with at least 1,024 eligible prefix tokens when the provider reports a cache hit. Daily runs can sample different contexts and begin with a cold cache. The SDK regression test verifies serialized requests and usage accounting with synthetic responses. Provider cache hits and shadow draft quality require deployment observation. If eligible multi-call runs still show zero cache reads, compare OpenAI project cache metrics and confirm the effective model before changing retention or routing. [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)
 
 ## Dev Discord smoke test
 

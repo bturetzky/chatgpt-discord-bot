@@ -103,7 +103,10 @@ def reactions(args):
         output(rows, args)
 
 def discovery(args):
-    from .storage.discovery_shadow import INTERVAL, LIMITS, MAX_RESULTS
+    from .storage.discovery_shadow import (
+        DISCOVERY_END_HOUR, DISCOVERY_START_HOUR, DISCOVERY_TIMEZONE,
+        LIMITS, MAX_RESULTS, discovery_interval_seconds,
+    )
 
     gid = args.guild_id
     if gid is not None and not gid.isdecimal():
@@ -146,7 +149,11 @@ def discovery(args):
                 if not posts:
                     print("No proposed posts.")
             return
-        output({"interval_seconds": INTERVAL, "limits_per_run": LIMITS,
+        output({"interval_seconds": discovery_interval_seconds(),
+                "quiet_hours": {"start": f"{DISCOVERY_END_HOUR:02}:00",
+                                "end": f"{DISCOVERY_START_HOUR:02}:00",
+                                "timezone": DISCOVERY_TIMEZONE.key},
+                "limits_per_run": LIMITS,
                 "results_per_search": MAX_RESULTS,
                 "runs": runs, "candidates": candidates}, args)
 
