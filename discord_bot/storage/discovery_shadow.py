@@ -681,7 +681,7 @@ class DiscoveryShadow:
                             (run, trace["selected_url"]),
                         ).fetchone()
                         if candidate and candidate[0] and candidate[1]:
-                            content = candidate[0] + "\\n" + candidate[1]
+                            content = candidate[0] + "\n" + candidate[1]
                             if len(content) <= 2000:
                                 # Record intent before sending; never replay an uncertain send.
                                 trace["delivery"] = {"status": "attempting"}
