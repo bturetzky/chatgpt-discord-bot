@@ -760,7 +760,7 @@ class DiscoveryGatewayTests(IsolatedAsyncioTestCase):
         client.event.side_effect = lambda callback: callback
         client.close = AsyncMock()
         archive = SimpleNamespace(db=object())
-        with patch.dict("os.environ", {}, clear=True), \
+        with patch.dict("os.environ", {"DISCOVERY_ENABLED": "true"}, clear=True), \
              patch("discord_bot.handlers.discord_handler.discord.Client", return_value=client), \
              patch("discord_bot.handlers.discord_handler.VectorHandler") as vector, \
              patch("discord_bot.handlers.discord_handler.ChatGPTHandler"), \

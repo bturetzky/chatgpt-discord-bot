@@ -56,7 +56,8 @@ class DiscordHandler:
                     reconcile_recent(self.client, self.archive), name='discord-history-reconcile'
                 )
 
-            if self.archive is not None and self._discovery_task is None:
+            if (self.archive is not None and self._discovery_task is None
+                    and os.getenv('DISCOVERY_ENABLED', 'false').lower() == 'true'):
                 self.start_discovery(openai_key)
         
         @self.client.event
@@ -200,6 +201,12 @@ class DiscordHandler:
                     }
         return hints
 
+    async def send_discovery(self, channel_id, content):
+        channel = self.client.get_channel(int(channel_id))
+        if channel is None:
+            raise ValueError('Discovery destination channel unavailable')
+        await channel.send(content)
+
     def start_discovery(self, api_key):
         async def run_discovery():
             if self._reconcile_task is not None:
@@ -209,10 +216,11 @@ class DiscordHandler:
                     logging.warning("Discovery shadow starting after history reconciliation failed")
             await DiscoveryShadow.run_configured(
                 self.archive.db, api_key, str(self.client.user.id), self.discovery_channel_hints,
+                sender=self.send_discovery,
             )
 
         self._discovery_task = asyncio.create_task(run_discovery(), name="discovery-shadow")
-        logging.info("Discovery shadow enabled")
+        logging.info("Discovery live posting enabled")
 
     async def shutdown(self):
         # Close any resources, db connections, etc.
