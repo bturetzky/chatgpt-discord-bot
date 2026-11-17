@@ -161,7 +161,7 @@ def canonical_url(url):
 
 class DiscoveryShadow:
     def __init__(self, db, client, model, bot_id, *,
-                 search=None, reader=None, clock=time.time):
+                 search=None, reader=None, clock=time.time, sender=None):
         self.db = db
         self.client = client
         self.model = model
@@ -170,12 +170,13 @@ class DiscoveryShadow:
         self.reader = reader or GetWebPageContents()
         self.clock = clock
         self.interval = discovery_interval_seconds()
+        self.sender = sender
 
     @classmethod
-    async def run_configured(cls, db, api_key, bot_id, channel_hints):
+    async def run_configured(cls, db, api_key, bot_id, channel_hints, *, sender=None):
         async with AsyncOpenAI(api_key=api_key, max_retries=0, timeout=25) as client:
             worker = cls(db, client,
-                         os.getenv("OPENAI_MODEL", "gpt-6.1-terra"), bot_id)
+                         os.getenv("OPENAI_MODEL", "gpt-6.1-terra"), bot_id, sender=sender)
             await worker.run_forever(channel_hints)
 
     def reserve(self, channel_hints):
@@ -667,6 +668,37 @@ class DiscoveryShadow:
                     run, guild_id, channel, channel_hints[guild_id, channel],
                     eligible, windows, memories, trace,
                 )
+                if outcome == "complete" and trace.get("selected_url") and self.sender is not None:
+                    stage = "delivery"
+                    if not discovery_allowed(self.clock()):
+                        outcome = "deferred_quiet_hours"
+                    elif self.active(guild_id, channel):
+                        outcome = "deferred_after_work"
+                    else:
+                        candidate = self.db.execute(
+                            """SELECT draft, COALESCE(source_url, url)
+                               FROM discovery_candidates WHERE run_id=? AND url=?""",
+                            (run, trace["selected_url"]),
+                        ).fetchone()
+                        if candidate and candidate[0] and candidate[1]:
+                            content = candidate[0] + "\\n" + candidate[1]
+                            if len(content) <= 2000:
+                                # Record intent before sending; never replay an uncertain send.
+                                trace["delivery"] = {"status": "attempting"}
+                                self.record(run, trace)
+                                try:
+                                    await self.sender(channel, content)
+                                except Exception as error:
+                                    logging.warning("Discovery delivery failed: run=%s type=%s",
+                                                    run, type(error).__name__)
+                                    trace["delivery"] = {"status": "uncertain",
+                                                         "error_type": type(error).__name__}
+                                else:
+                                    trace["delivery"] = {"status": "sent"}
+                            else:
+                                trace["delivery"] = {"status": "invalid_length"}
+                        else:
+                            trace["delivery"] = {"status": "missing_draft"}
         except asyncio.CancelledError:
             outcome = "interrupted"
             raise
