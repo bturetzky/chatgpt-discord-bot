@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 import aiohttp
 from PIL import Image, UnidentifiedImageError
+from yarl import URL
 
 MAX_IMAGES = 2
 MAX_MEDIA_INSPECTED = 20
@@ -46,12 +47,14 @@ def normalized_mime(value):
 
 
 def attachment_url_allowed(url):
+    if not isinstance(url, str) or any(ord(char) <= 32 or ord(char) == 127 for char in url):
+        return False
     try:
         parsed = urlsplit(url)
         return (parsed.scheme == "https" and parsed.hostname in CDN_HOSTS
                 and parsed.username is None and parsed.password is None
                 and parsed.port in (None, 443))
-    except (TypeError, ValueError):
+    except ValueError:
         return False
 
 
@@ -105,9 +108,12 @@ class ImageContextBuilder:
             release_deferred = False
             try:
                 timeout = aiohttp.ClientTimeout(total=DOWNLOAD_TIMEOUT)
+                # Discord signs the escaped proxy path. Aiohttp would requote a string URL.
+                request_url = URL(url, encoded=True)
                 async with aiohttp.ClientSession(timeout=timeout, trust_env=False, auto_decompress=False) as session:
-                    async with session.get(url, allow_redirects=False, headers={"Accept-Encoding": "identity"}) as response:
+                    async with session.get(request_url, allow_redirects=False, headers={"Accept-Encoding": "identity"}) as response:
                         if response.status != 200:
+                            logging.info("Discord image download returned HTTP %d", response.status)
                             raise ImageFailure("download_unavailable")
                         response_type = normalized_mime(response.headers.get("Content-Type"))
                         if response.headers.get("Content-Encoding", "identity").lower().strip() not in ("", "identity"):

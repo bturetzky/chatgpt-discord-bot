@@ -108,6 +108,8 @@ A healthy Deployment or gateway-ready log is not a substitute for a real Discord
 
 For image ingestion failures, the `attachment_mime` field counts inspected attachments by sanitized MIME category and whether the filename had a recognized image extension. For example, `generic/recognized_extension=true:1` records one attachment with a generic MIME and a recognized extension. The field contains no filenames, URLs, or raw MIME values.
 
+The image downloader preserves the encoding of Discord proxy URLs, including escaped origin query parameters. A non-200 proxy response produces `download_unavailable` and logs only the HTTP status. If Discord's proxy refuses the image, the bot still answers from text context.
+
 When a decoded image disagrees with an attachment or CDN MIME header, the `Image MIME mismatch` line records the detected supported format and two mismatch flags. The bot uses the decoded format.
 
 ## Linked message dev acceptance
