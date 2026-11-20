@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 from discord import Embed
 from PIL import Image
+from yarl import URL
 
 from discord_bot.handlers.image_context import (
     ImageContextBuilder, ImageFailure, MAX_IMAGE_BYTES, attachment_url_allowed, validate_image,
@@ -36,9 +37,13 @@ def message(attachments=(), reference=None):
                            channel=SimpleNamespace(id=12, fetch_message=AsyncMock()))
 
 
-def external_jpeg_embed(field="thumbnail", host="images-ext-1.discordapp.net"):
+def external_jpeg_embed(field="thumbnail", host="images-ext-1.discordapp.net", signed=False):
     url = "https://example.test/photos/image.jpg"
-    proxy_url = f"https://{host}/external/opaque/https/example.test/photos/image.jpg?format=webp&width=512"
+    proxy_path = "https/example.test/photos/image.jpg"
+    if signed:
+        url += "?size=large&token=mock-signature="
+        proxy_path = f"%3Fsize%3Dlarge%26token%3Dmock-signature%3D/{proxy_path}"
+    proxy_url = f"https://{host}/external/opaque/{proxy_path}?format=webp&width=512"
     embed = Embed.from_dict({"type": "image", "url": url, field: {"url": url, "proxy_url": proxy_url}})
     return embed, proxy_url
 
@@ -193,7 +198,7 @@ class ImageBuilderTests(unittest.IsolatedAsyncioTestCase):
             result = await self.builder.build(msg)
         self.assertIn("Sam", result["content"][0]["text"])
         self.assertEqual(result["content"][1]["type"], "input_image")
-        self.assertEqual(session.get.call_args.args, (proxy_url,))
+        self.assertEqual(str(session.get.call_args.args[0]), proxy_url)
 
     async def test_embed_ignores_article_thumbnail_and_rejects_direct_external_image(self):
         msg = message()
@@ -450,12 +455,12 @@ class ImageBuilderTests(unittest.IsolatedAsyncioTestCase):
 
 
 class DiscordImageRoutingTests(unittest.IsolatedAsyncioTestCase):
-    async def test_mentioned_message_with_external_jpeg_embed_sends_proxied_webp(self):
+    async def test_mentioned_signed_jpeg_embed_preserves_proxy_encoding_and_sends_webp(self):
         for field in ("image", "thumbnail"):
             with self.subTest(field=field):
                 handler, msg = make_handler(), make_message()
                 handler.image_context_builder = ImageContextBuilder()
-                embed, proxy_url = external_jpeg_embed(field)
+                embed, proxy_url = external_jpeg_embed(field, signed=True)
                 msg.content += f" {embed.url}"
                 msg.attachments = []
                 msg.embeds = [embed]
@@ -463,26 +468,29 @@ class DiscordImageRoutingTests(unittest.IsolatedAsyncioTestCase):
                 with patch("discord_bot.handlers.image_context.aiohttp.ClientSession", return_value=session), \
                      patch("discord_bot.handlers.discord_handler.asyncio.sleep", new_callable=AsyncMock):
                     await handler.process_message(msg)
-                session.get.assert_called_once_with(proxy_url, allow_redirects=False,
+                session.get.assert_called_once_with(URL(proxy_url, encoded=True), allow_redirects=False,
                                                     headers={"Accept-Encoding": "identity"})
                 context = handler.chatgpt_handler.get_response.await_args.args[0][-1]
                 self.assertTrue(context["content"][1]["image_url"].startswith("data:image/webp;base64,"))
 
-    async def test_unavailable_external_image_preserves_text_response(self):
+    async def test_rejected_signed_proxy_preserves_text_response_and_logs_only_status(self):
         handler, msg = make_handler(), make_message()
         handler.image_context_builder = ImageContextBuilder()
-        embed, proxy_url = external_jpeg_embed()
+        embed, proxy_url = external_jpeg_embed(signed=True)
         msg.embeds = [embed]
-        session = image_session(b"", "image/webp", status=404)
-        with patch("discord_bot.handlers.image_context.aiohttp.ClientSession", return_value=session), \
+        session = image_session(b"", "image/webp", status=401)
+        with self.assertLogs(level="INFO") as logs, patch("discord_bot.handlers.image_context.aiohttp.ClientSession", return_value=session), \
              patch("discord_bot.handlers.discord_handler.asyncio.sleep", new_callable=AsyncMock):
             await handler.process_message(msg)
-        session.get.assert_called_once_with(proxy_url, allow_redirects=False,
+        session.get.assert_called_once_with(URL(proxy_url, encoded=True), allow_redirects=False,
                                             headers={"Accept-Encoding": "identity"})
         messages = handler.chatgpt_handler.get_response.await_args.args[0]
         self.assertIn({"role": "user", "content": "hi"}, messages)
         self.assertEqual(len(messages[-1]["content"]), 1)
         self.assertIn("download_unavailable", messages[-1]["content"][0]["text"])
+        self.assertIn("INFO:root:Discord image download returned HTTP 401", logs.output)
+        self.assertNotIn("mock-signature", "\n".join(logs.output))
+        self.assertNotIn("example.test", "\n".join(logs.output))
         msg.channel.send.assert_awaited_once_with("Hello\n")
 
     async def test_unmentioned_messages_do_not_ingest_images(self):
