@@ -23,7 +23,12 @@ REPLY_TIMEOUT = 5
 FORMAT_MIME = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 GENERIC_TYPES = {"", "application/octet-stream", "binary/octet-stream"}
-CDN_HOSTS = {"cdn.discordapp.com", "media.discordapp.net"}
+CDN_HOSTS = {
+    "cdn.discordapp.com",
+    "media.discordapp.net",
+    "images-ext-1.discordapp.net",
+    "images-ext-2.discordapp.net",
+}
 
 
 class ImageFailure(Exception):

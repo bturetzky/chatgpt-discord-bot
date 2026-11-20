@@ -36,11 +36,18 @@ def message(attachments=(), reference=None):
                            channel=SimpleNamespace(id=12, fetch_message=AsyncMock()))
 
 
-def image_session(data, mime):
+def external_jpeg_embed(field="thumbnail", host="images-ext-1.discordapp.net"):
+    url = "https://example.test/photos/image.jpg"
+    proxy_url = f"https://{host}/external/opaque/https/example.test/photos/image.jpg?format=webp&width=512"
+    embed = Embed.from_dict({"type": "image", "url": url, field: {"url": url, "proxy_url": proxy_url}})
+    return embed, proxy_url
+
+
+def image_session(data, mime, status=200):
     async def stream(_size):
         yield data
 
-    response = MagicMock(status=200, headers={"Content-Type": mime})
+    response = MagicMock(status=status, headers={"Content-Type": mime})
     response.__aenter__ = AsyncMock(return_value=response)
     response.__aexit__ = AsyncMock(return_value=None)
     response.content.iter_chunked = stream
@@ -68,7 +75,14 @@ class ImageValidationTests(unittest.TestCase):
         self.assertTrue(attachment_url_allowed("https://media.discordapp.net/attachments/a/b/c"))
         for url in ["http://cdn.discordapp.com/a", "https://cdn.discordapp.com.evil.test/a",
                     "https://user@cdn.discordapp.com/a", "https://127.0.0.1/a",
-                    "https://cdn.discordapp.com:444/a", "https://evil.test/a"]:
+                    "https://cdn.discordapp.com:444/a", "https://evil.test/a",
+                    "https://images-ext-1.discordapp.net.evil.test/external/a",
+                    "https://images-ext-1.discordapp.net@evil.test/external/a",
+                    "https://user@images-ext-1.discordapp.net/external/a",
+                    "https://images-ext-2.discordapp.net:bad/external/a",
+                    "http://images-ext-2.discordapp.net/external/a",
+                    "https://images-ext-3.discordapp.net/external/a",
+                    "https://[images-ext-1.discordapp.net/external/a"]:
             with self.subTest(url=url):
                 self.assertFalse(attachment_url_allowed(url))
 
@@ -169,15 +183,12 @@ class ImageBuilderTests(unittest.IsolatedAsyncioTestCase):
         session.assert_not_called()
 
     async def test_replied_to_image_embed_uses_discord_proxy(self):
-        proxy_url = "https://media.discordapp.net/external/opaque/image.png"
-        embed = Embed.from_dict({"type": "image", "thumbnail": {
-            "url": "https://example.test/image.png", "proxy_url": proxy_url,
-        }})
+        embed, proxy_url = external_jpeg_embed(host="images-ext-2.discordapp.net")
         reply = message()
         reply.author = SimpleNamespace(display_name="Sam")
         reply.embeds = [embed]
         msg = message(reference=SimpleNamespace(resolved=reply, channel_id=12))
-        session = image_session(image_bytes(), "image/png")
+        session = image_session(image_bytes("JPEG"), "image/jpeg")
         with patch("discord_bot.handlers.image_context.aiohttp.ClientSession", return_value=session):
             result = await self.builder.build(msg)
         self.assertIn("Sam", result["content"][0]["text"])
@@ -439,16 +450,40 @@ class ImageBuilderTests(unittest.IsolatedAsyncioTestCase):
 
 
 class DiscordImageRoutingTests(unittest.IsolatedAsyncioTestCase):
-    async def test_mentioned_message_with_only_embed_sends_image_context(self):
+    async def test_mentioned_message_with_external_jpeg_embed_sends_proxied_webp(self):
+        for field in ("image", "thumbnail"):
+            with self.subTest(field=field):
+                handler, msg = make_handler(), make_message()
+                handler.image_context_builder = ImageContextBuilder()
+                embed, proxy_url = external_jpeg_embed(field)
+                msg.content += f" {embed.url}"
+                msg.attachments = []
+                msg.embeds = [embed]
+                session = image_session(image_bytes("WEBP"), "image/webp")
+                with patch("discord_bot.handlers.image_context.aiohttp.ClientSession", return_value=session), \
+                     patch("discord_bot.handlers.discord_handler.asyncio.sleep", new_callable=AsyncMock):
+                    await handler.process_message(msg)
+                session.get.assert_called_once_with(proxy_url, allow_redirects=False,
+                                                    headers={"Accept-Encoding": "identity"})
+                context = handler.chatgpt_handler.get_response.await_args.args[0][-1]
+                self.assertTrue(context["content"][1]["image_url"].startswith("data:image/webp;base64,"))
+
+    async def test_unavailable_external_image_preserves_text_response(self):
         handler, msg = make_handler(), make_message()
         handler.image_context_builder = ImageContextBuilder()
-        msg.embeds = [Embed().set_image(url="https://cdn.discordapp.com/attachments/a/b/image.png")]
-        session = image_session(image_bytes(), "image/png")
+        embed, proxy_url = external_jpeg_embed()
+        msg.embeds = [embed]
+        session = image_session(b"", "image/webp", status=404)
         with patch("discord_bot.handlers.image_context.aiohttp.ClientSession", return_value=session), \
              patch("discord_bot.handlers.discord_handler.asyncio.sleep", new_callable=AsyncMock):
             await handler.process_message(msg)
-        context = handler.chatgpt_handler.get_response.await_args.args[0][-1]
-        self.assertEqual(context["content"][1]["type"], "input_image")
+        session.get.assert_called_once_with(proxy_url, allow_redirects=False,
+                                            headers={"Accept-Encoding": "identity"})
+        messages = handler.chatgpt_handler.get_response.await_args.args[0]
+        self.assertIn({"role": "user", "content": "hi"}, messages)
+        self.assertEqual(len(messages[-1]["content"]), 1)
+        self.assertIn("download_unavailable", messages[-1]["content"][0]["text"])
+        msg.channel.send.assert_awaited_once_with("Hello\n")
 
     async def test_unmentioned_messages_do_not_ingest_images(self):
         handler, msg = make_handler(), make_message()
