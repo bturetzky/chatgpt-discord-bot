@@ -81,6 +81,9 @@ class ShadowTests(IsolatedAsyncioTestCase):
         self.path = str(Path(temporary.name) / "archive.sqlite")
         self.database = Database(self.path).open()
         self.addCleanup(self.database.close)
+        self.random_slot = patch('discord_bot.storage.discovery_shadow.secrets.randbelow', return_value=0)
+        self.random_slot.start()
+        self.addCleanup(self.random_slot.stop)
         self.now = pacific_timestamp(12)
         self.search = SimpleNamespace(execute=AsyncMock())
         self.reader = SimpleNamespace(execute=AsyncMock())
@@ -624,6 +627,37 @@ class ShadowTests(IsolatedAsyncioTestCase):
         self.search.execute.assert_not_awaited()
         self.assertEqual(self.latest()["trace"]["events"][0]["decision"], "invalid_public_query")
 
+    async def test_daily_slot_is_random_and_persists_across_restart(self):
+        self.now = pacific_timestamp(8)
+        self.random_slot.stop()
+        with patch('discord_bot.storage.discovery_shadow.secrets.randbelow', return_value=3 * 3600) as draw:
+            await self.worker().run_once(self.hints)
+            self.assertEqual(self.db.execute("SELECT count(*) FROM discovery_runs").fetchone()[0], 0)
+            self.assertEqual(self.db.execute(
+                "SELECT scheduled_at FROM discovery_daily_schedule",
+            ).fetchone()[0], int(pacific_timestamp(11)))
+            self.database.close()
+            self.database.open()
+            self.now = pacific_timestamp(10, 59)
+            await self.worker().run_once(self.hints)
+            self.assertEqual(self.db.execute("SELECT count(*) FROM discovery_runs").fetchone()[0], 0)
+            self.now = pacific_timestamp(11)
+            await self.worker().run_once(self.hints)
+            self.assertEqual(self.db.execute("SELECT count(*) FROM discovery_runs").fetchone()[0], 1)
+            draw.assert_called_once()
+        self.random_slot.start()
+
+    async def test_delivery_includes_source_url_once(self):
+        sender = AsyncMock()
+        self.responses(SEARCH, FETCH, {**PROPOSE, "draft": DRAFT}, APPROVED, FINISH)
+        worker = self.worker()
+        worker.sender = sender
+        await worker.run_once(self.hints)
+        sender.assert_awaited_once()
+        content = sender.await_args.args[1]
+        self.assertEqual(content.count(URL), 1)
+        self.assertEqual(content, f"{DRAFT}\n<{URL}>")
+
     async def test_overdue_overnight_run_reserves_once_at_opening_after_restart(self):
         self.db.execute("INSERT INTO discovery_runs(guild_id, channel_id, started_at) VALUES ('1', '2', ?)",
                         (pacific_timestamp(22) - 3 * DAY,))
@@ -686,10 +720,12 @@ class ShadowTests(IsolatedAsyncioTestCase):
         channels = {("3", "6"): {}, ("3", "5"): {}, ("1", "1"): {}}
         self.database.close()
         self.database.open()
-        self.now += DEFAULT_INTERVAL - 1
+        # Same-day calls remain blocked; a new Pacific day is eligible even
+        # when fewer than 24 elapsed hours have passed.
+        self.now = pacific_timestamp(21, 59)
         await self.worker().run_once(channels)
         self.assertEqual(self.db.execute("SELECT count(*) FROM discovery_runs").fetchone()[0], 1)
-        self.now += 1
+        self.now = pacific_timestamp(12) + DAY
         for _ in range(4):
             await self.worker().run_once(channels)
             self.now += DEFAULT_INTERVAL

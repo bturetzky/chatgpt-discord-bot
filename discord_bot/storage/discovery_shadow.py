@@ -7,6 +7,7 @@ import os
 import json
 import logging
 import re
+import secrets
 import time
 import traceback
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -195,12 +196,45 @@ class DiscoveryShadow:
     def reserve_locked(self, channel_hints, now):
         if not discovery_allowed(now):
             return None
+        # One durable random opportunity per Pacific calendar day. The unique
+        # date key prevents restarts or multiple workers from rerolling the slot.
+        # Custom sub-day intervals retain their existing cadence.
+        if self.interval == DEFAULT_INTERVAL:
+            local = datetime.fromtimestamp(now, DISCOVERY_TIMEZONE)
+            day = local.date().isoformat()
+            self.db.execute(
+                """CREATE TABLE IF NOT EXISTS discovery_daily_schedule (
+                       pacific_day TEXT PRIMARY KEY, scheduled_at INTEGER NOT NULL
+                   )"""
+            )
+            scheduled = self.db.execute(
+                "SELECT scheduled_at FROM discovery_daily_schedule WHERE pacific_day=?", (day,),
+            ).fetchone()
+            if scheduled is None:
+                opening = local.replace(hour=DISCOVERY_START_HOUR, minute=0, second=0, microsecond=0)
+                closing = local.replace(hour=DISCOVERY_END_HOUR, minute=0, second=0, microsecond=0)
+                earliest = max(now, int(opening.timestamp()))
+                latest = int(closing.timestamp()) - 1
+                if earliest > latest:
+                    return None
+                slot = secrets.randbelow(latest - earliest + 1) + earliest
+                self.db.execute(
+                    "INSERT INTO discovery_daily_schedule(pacific_day, scheduled_at) VALUES (?, ?)",
+                    (day, slot),
+                )
+                scheduled = (slot,)
+            if now < scheduled[0]:
+                return None
         previous = self.db.execute(
             """SELECT started_at, guild_id, channel_id FROM discovery_runs
                WHERE outcome<>'deferred_active' ORDER BY id DESC LIMIT 1""",
         ).fetchone()
-        if previous and now - previous[0] < self.interval:
-            return None
+        if previous:
+            if self.interval == DEFAULT_INTERVAL:
+                if datetime.fromtimestamp(previous[0], DISCOVERY_TIMEZONE).date() == local.date():
+                    return None
+            elif now - previous[0] < self.interval:
+                return None
 
         channels = sorted(channel_hints)
         # A stable cursor also advances when the last channel is no longer eligible.
@@ -681,7 +715,7 @@ class DiscoveryShadow:
                             (run, trace["selected_url"]),
                         ).fetchone()
                         if candidate and candidate[0] and candidate[1]:
-                            content = candidate[0] + "\n" + candidate[1]
+                            content = candidate[0]  # Reviewed draft already includes the source link.
                             if len(content) <= 2000:
                                 # Record intent before sending; never replay an uncertain send.
                                 trace["delivery"] = {"status": "attempting"}
