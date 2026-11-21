@@ -229,8 +229,12 @@ class DiscoveryShadow:
             """SELECT started_at, guild_id, channel_id FROM discovery_runs
                WHERE outcome<>'deferred_active' ORDER BY id DESC LIMIT 1""",
         ).fetchone()
-        if previous and now - previous[0] < self.interval:
-            return None
+        if previous:
+            if self.interval == DEFAULT_INTERVAL:
+                if datetime.fromtimestamp(previous[0], DISCOVERY_TIMEZONE).date() == local.date():
+                    return None
+            elif now - previous[0] < self.interval:
+                return None
 
         channels = sorted(channel_hints)
         # A stable cursor also advances when the last channel is no longer eligible.
