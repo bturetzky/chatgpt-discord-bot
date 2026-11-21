@@ -656,7 +656,7 @@ class ShadowTests(IsolatedAsyncioTestCase):
         sender.assert_awaited_once()
         content = sender.await_args.args[1]
         self.assertEqual(content.count(URL), 1)
-        self.assertEqual(content, f"{DRAFT}\\n<{URL}>")
+        self.assertEqual(content, f"{DRAFT}\n<{URL}>")
 
     async def test_overdue_overnight_run_reserves_once_at_opening_after_restart(self):
         self.db.execute("INSERT INTO discovery_runs(guild_id, channel_id, started_at) VALUES ('1', '2', ?)",
@@ -720,10 +720,12 @@ class ShadowTests(IsolatedAsyncioTestCase):
         channels = {("3", "6"): {}, ("3", "5"): {}, ("1", "1"): {}}
         self.database.close()
         self.database.open()
-        self.now += DEFAULT_INTERVAL - 1
+        # Same-day calls remain blocked; a new Pacific day is eligible even
+        # when fewer than 24 elapsed hours have passed.
+        self.now = pacific_timestamp(21, 59)
         await self.worker().run_once(channels)
         self.assertEqual(self.db.execute("SELECT count(*) FROM discovery_runs").fetchone()[0], 1)
-        self.now += 1
+        self.now = pacific_timestamp(12) + DAY
         for _ in range(4):
             await self.worker().run_once(channels)
             self.now += DEFAULT_INTERVAL
