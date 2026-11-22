@@ -258,6 +258,62 @@ class WindowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sample("reaction_decisions_total", **labels), ignored + 1)
         self.assertEqual(sample("reaction_delivery_attempts_total", source="proactive"), attempts)
 
+    async def test_reaction_evaluator_gauges_belong_to_the_lock_holder(self):
+        labels = {"worker": "reaction_evaluator"}
+        cancelled = sample("worker_cycles_total", **labels, outcome="cancelled")
+        completed = sample("worker_cycles_total", **labels, outcome="success")
+        first_started, next_started = asyncio.Event(), asyncio.Event()
+        release_first, release_next = asyncio.Event(), asyncio.Event()
+
+        async def evaluate(**_kwargs):
+            if self.create.await_count == 1:
+                first_started.set()
+                await release_first.wait()
+            else:
+                next_started.set()
+                await release_next.wait()
+            return model_response()
+
+        self.create.side_effect = evaluate
+        for channel in (2, 3, 4):
+            self.ingest(channel, channel=channel)
+        self.worker._schedule("2", force=True)
+        first = self.worker.pending[("2", None)]
+        try:
+            await asyncio.wait_for(first_started.wait(), timeout=2)
+            active_since = sample("worker_cycle_started_timestamp_seconds", **labels)
+            self.assertGreater(active_since, 0)
+
+            self.worker._schedule("3", force=True)
+            following = self.worker.pending[("3", None)]
+            self.worker._schedule("4", force=True)
+            waiter = self.worker.pending[("4", None)]
+            await asyncio.sleep(0)
+            self.assertEqual(self.create.await_count, 1)
+            self.assertEqual(sample("worker_running", **labels), 1)
+            self.assertEqual(sample("worker_cycle_started_timestamp_seconds", **labels), active_since)
+
+            waiter.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await waiter
+            self.assertEqual(sample("worker_running", **labels), 1)
+            self.assertEqual(sample("worker_cycle_started_timestamp_seconds", **labels), active_since)
+            self.assertEqual(sample("worker_cycles_total", **labels, outcome="cancelled"), cancelled)
+
+            release_first.set()
+            await asyncio.wait_for(next_started.wait(), timeout=2)
+            await first
+            self.assertEqual(sample("worker_running", **labels), 1)
+            self.assertGreater(sample("worker_cycle_started_timestamp_seconds", **labels), 0)
+            release_next.set()
+            await following
+            self.assertEqual(sample("worker_running", **labels), 0)
+            self.assertEqual(sample("worker_cycle_started_timestamp_seconds", **labels), 0)
+            self.assertEqual(sample("worker_cycles_total", **labels, outcome="success"), completed + 2)
+        finally:
+            release_first.set()
+            release_next.set()
+
     async def test_cancelled_reaction_send_is_uncertain(self):
         guild = SimpleNamespace(id=1)
         message = SimpleNamespace(

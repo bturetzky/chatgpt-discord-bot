@@ -157,6 +157,7 @@ class ReactionShadow:
     async def _process(self, channel_id, message_id, trigger, force):
         try:
             async with self.lock:
+                # The lock holder owns both gauges until it leaves this scope.
                 with metrics.worker_running("reaction_evaluator"), metrics.worker_cycle(
                     "reaction_evaluator"
                 ) as finish:
