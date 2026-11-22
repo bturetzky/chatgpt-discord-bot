@@ -23,6 +23,8 @@ from ..functions.get_webpage_contents import GetWebPageContents
 from ..functions.search_web import SearchWeb
 from .message_archive import utc_iso
 
+DISCOVERY_TOOL_NAMES = {"search": SearchWeb.name, "fetch": GetWebPageContents.name}
+
 DISCOVERY_TIMEZONE = ZoneInfo("America/Los_Angeles")
 DISCOVERY_START_HOUR = 8
 DISCOVERY_END_HOUR = 22
@@ -599,7 +601,7 @@ class DiscoveryShadow:
     async def tool(self, run, stage, provider, args):
         try:
             return await metrics.run_tool(
-                self._tool_result(provider, args), tool={"search": "search_web", "fetch": "get_webpage_contents"}[stage],
+                self._tool_result(provider, args), tool=DISCOVERY_TOOL_NAMES[stage],
                 source="discovery",
                 timeout=30,
             )

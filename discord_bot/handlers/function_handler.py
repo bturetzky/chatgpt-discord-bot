@@ -19,7 +19,8 @@ class FunctionHandler:
         self.functions = self.load_functions()
         self.api_functions = self.get_api_functions()
 
-    def load_functions(self):
+    @staticmethod
+    def load_functions():
         # Dynamically import all modules in the 'functions' package
         package_name = 'discord_bot.functions'
         package = importlib.import_module(package_name)
@@ -27,10 +28,7 @@ class FunctionHandler:
         for _, module_name, _ in pkgutil.iter_modules(package.__path__):
             importlib.import_module(f"{package_name}.{module_name}")
 
-        # Logic to load all function classes
-        loaded_functions = {cls().name: cls for cls in BaseFunction.__subclasses__() if cls != BaseFunction}
-
-        return loaded_functions
+        return {cls.name: cls for cls in BaseFunction.__subclasses__()}
 
     async def execute_function(self, function_name, args, context=None):
         function_class = self.functions.get(function_name)
