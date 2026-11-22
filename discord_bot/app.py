@@ -1,5 +1,6 @@
 import asyncio, os, logging
 from .handlers.discord_handler import DiscordHandler
+from .metrics import start_metrics_server
 from .storage import Database
 from .storage.message_archive import MessageArchive
 from .handlers.reaction_shadow import ReactionShadow
@@ -14,8 +15,15 @@ async def _main():
     OPENAI_API_KEY = os.environ['OPENAI_API_KEY']
     PINECONE_API_KEY = os.environ['PINECONE_API_KEY']
 
-    # Initialize the main DiscordHandler
-    discord_bot = DiscordHandler(DISCORD_TOKEN, OPENAI_API_KEY, PINECONE_API_KEY)
+    runner = await start_metrics_server()
+    try:
+        await _run_bot(DISCORD_TOKEN, OPENAI_API_KEY, PINECONE_API_KEY)
+    finally:
+        await runner.cleanup()
+
+
+async def _run_bot(discord_token, openai_api_key, pinecone_api_key):
+    discord_bot = DiscordHandler(discord_token, openai_api_key, pinecone_api_key)
 
     # Opt-in until the persistent volume is mounted in each environment.
     # Never silently fall back to a database in the container filesystem.
@@ -32,7 +40,7 @@ async def _main():
                 if not guild_id.isdecimal():
                     raise ValueError('REACTION_SHADOW_GUILD_ID must be numeric')
                 discord_bot.reaction_shadow = ReactionShadow(
-                    database.connection, guild_id=guild_id, api_key=OPENAI_API_KEY,
+                    database.connection, guild_id=guild_id, api_key=openai_api_key,
                     discord_client=discord_bot.client)
                 logging.info('Live reactions configured')
         await discord_bot.start()

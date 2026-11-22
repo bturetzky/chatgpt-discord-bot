@@ -14,6 +14,7 @@ from .function_handler import CONTEXT_TOOLS, TOOL_TIMEOUT, FunctionHandler
 from .personality_prompt import build_system_prompt
 from .tool_output import bound_tool_output
 from .usage_metrics import ChatUsage
+from .. import metrics
 
 GPT_MODEL = os.getenv("OPENAI_MODEL", "gpt-6.1-terra")
 MAX_FUNCTION_CALLS = 16
@@ -45,6 +46,10 @@ def combine_youtube_pages(first, second):
     return merged
 
 
+class FallbackReply(str):
+    """A user-visible fallback with the same string interface as a normal reply."""
+
+
 class ChatGPTHandler:
     def __init__(self, openai_apikey, send_interim_message_callback=None):
         self.bot_mention = None
@@ -54,6 +59,19 @@ class ChatGPTHandler:
 
     def get_response_system_prompt_content(self, bot_mention):
         return build_system_prompt(bot_mention, datetime.now())
+
+    async def _execute_tool(self, name, arguments, *, context=None, timeout=None):
+        call = self.function_handler.execute_function(
+            name, arguments, **({"context": context} if name in CONTEXT_TOOLS else {}),
+        )
+        return await metrics.run_tool(call, tool=self._tool_label(name), source="reply",
+                                      timeout=timeout)
+
+    def _tool_label(self, name):
+        return name if any(item["name"] == name for item in self.function_handler.api_functions) else "unknown"
+
+    def _reject_tool(self, name, reason):
+        metrics.increment(metrics.TOOL_REJECTIONS, self._tool_label(name), "reply", reason)
 
     async def get_response(self, messages, channel, discord_context=None, *, triggering_message=None):
         # Discord history and retrieved memories are already ordinary role/content
@@ -128,13 +146,16 @@ class ChatGPTHandler:
                     reply = response.output_text or ""
                     if self.bot_mention:
                         reply = reply.replace(f"{self.bot_mention}: ", "")
-                    return reply.strip() or "Sorry, I couldn't generate a response."
+                    return reply.strip() or FallbackReply("Sorry, I couldn't generate a response.")
 
                 if not remaining:
-                    return "Sorry, I reached the limit for tool calls."
+                    for call in calls:
+                        self._reject_tool(call.name, "budget")
+                    return FallbackReply("Sorry, I reached the limit for tool calls.")
 
                 for call in calls:
                     if function_calls >= MAX_FUNCTION_CALLS:
+                        self._reject_tool(call.name, "budget")
                         conversation.append({
                             "type": "function_call_output",
                             "call_id": call.call_id,
@@ -143,6 +164,7 @@ class ChatGPTHandler:
                         continue
                     function_calls += 1
                     url = None
+                    dispatched = False
                     try:
                         arguments = json.loads(call.arguments)
                         if not isinstance(arguments, dict):
@@ -161,15 +183,18 @@ class ChatGPTHandler:
                         if call.name == "read_youtube" and cursor is not None and isinstance(url, str):
                             cursor_key = (url, json.dumps(cursor, sort_keys=True))
                         if call.name == "read_youtube" and invalid_youtube_calls >= MAX_INVALID_YOUTUBE_CALLS:
+                            self._reject_tool(call.name, "budget")
                             result = tool_error("VALIDATION_LIMIT", "YouTube validation allowance exhausted. Use gathered evidence or another source.")
                         elif cursor_key is not None and cursor_key not in issued_youtube_cursors:
                             invalid_youtube_calls += 1
+                            self._reject_tool(call.name, "invalid_cursor")
                             result = tool_error(
                                 "INVALID_ARGUMENT",
                                 "Use an exact next_cursor returned for this URL in this response, or omit cursor for a fresh read.",
                                 retryable=True,
                             )
                         elif call.name in ("get_webpage_contents", "read_youtube") and read_limit_reached:
+                            self._reject_tool(call.name, "budget")
                             result = tool_error("READ_LIMIT", "Page read limit reached for this response. Use gathered evidence or an available tool.")
                         else:
                             update = arguments.get("quick_update")
@@ -182,10 +207,9 @@ class ChatGPTHandler:
                                 webpage_continuations += 1
                             elif call.name in ("get_webpage_contents", "read_youtube"):
                                 page_reads += 1
-                            result = await self.function_handler.execute_function(
-                                call.name, arguments, context=discord_context
-                            ) if call.name in CONTEXT_TOOLS else await self.function_handler.execute_function(
-                                call.name, arguments
+                            dispatched = True
+                            result = await self._execute_tool(
+                                call.name, arguments, context=discord_context,
                             )
                             if is_webpage:
                                 try:
@@ -223,15 +247,18 @@ class ChatGPTHandler:
                                     page_reads += 1
                                     function_calls += 1
                                     try:
-                                        followup = await asyncio.wait_for(
-                                            self.function_handler.execute_function("read_youtube", {
-                                                "url": arguments.get("url"), "cursor": first["next_cursor"]
-                                            }), timeout=YOUTUBE_CONTINUATION_TIMEOUT)
+                                        followup = await self._execute_tool(
+                                            "read_youtube", {"url": arguments.get("url"),
+                                                             "cursor": first["next_cursor"]},
+                                            timeout=YOUTUBE_CONTINUATION_TIMEOUT,
+                                        )
                                         second = json.loads(followup)
                                     except (asyncio.TimeoutError, TypeError, ValueError):
                                         second = None
                                     result = json.dumps(combine_youtube_pages(first, second))
                     except ValueError:
+                        if not dispatched:
+                            self._reject_tool(call.name, "invalid_arguments")
                         result = tool_error("INVALID_ARGUMENT", "Invalid tool arguments. Provide an object matching the tool schema.", retryable=True)
                     output = bound_tool_output(call.name, result)
                     if call.name == "read_youtube":
@@ -248,10 +275,10 @@ class ChatGPTHandler:
                         "call_id": call.call_id,
                         "output": output,
                     })
-            return "Sorry, I reached the limit for tool calls."
+            return FallbackReply("Sorry, I reached the limit for tool calls.")
         except (OpenAIError, asyncio.TimeoutError) as exc:
             logging.warning('OpenAI request failed: error_type=%s', type(exc).__name__)
-            return "Sorry, there was an error processing your request with OpenAI. Please try again later."
+            return FallbackReply("Sorry, there was an error processing your request with OpenAI. Please try again later.")
         finally:
             usage_metrics.log(elapsed_seconds=time.monotonic() - started)
 

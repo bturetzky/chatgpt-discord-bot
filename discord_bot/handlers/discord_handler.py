@@ -1,8 +1,8 @@
-import discord, asyncio, logging, os
+import discord, asyncio, logging, os, time
 from collections import Counter
 
-from .. import memory_selection
-from .chatgpt_handler import ChatGPTHandler
+from .. import memory_selection, metrics
+from .chatgpt_handler import ChatGPTHandler, FallbackReply
 from .vector_handler import VectorHandler
 from .image_context import ImageContextBuilder
 from ..storage.discovery_shadow import DiscoveryShadow
@@ -36,6 +36,7 @@ class DiscordHandler:
         # Register Discord event callbacks
         @self.client.event
         async def on_ready():
+            metrics.set_gauge(metrics.GATEWAY_CONNECTED, 1)
             logging.info('Discord gateway ready: bot_id=%s guilds=%d message_content_intent=%s', self.client.user.id, len(self.client.guilds), self.client.intents.message_content)
             if self.reaction_shadow is not None:
                 self.reaction_shadow.start()
@@ -163,10 +164,12 @@ class DiscordHandler:
 
         @self.client.event
         async def on_disconnect():
+            metrics.set_gauge(metrics.GATEWAY_CONNECTED, 0)
             logging.warning('Discord gateway disconnected')
 
         @self.client.event
         async def on_resumed():
+            metrics.set_gauge(metrics.GATEWAY_CONNECTED, 1)
             logging.info('Discord gateway session resumed')
     
     async def start(self):
@@ -226,6 +229,7 @@ class DiscordHandler:
         # Close any resources, db connections, etc.
         logging.info('Shutting down Discord client')
         self.shutdown_event.set()
+        metrics.set_gauge(metrics.GATEWAY_CONNECTED, 0)
         discovery_task = getattr(self, "_discovery_task", None)
         if discovery_task is not None:
             discovery_task.cancel()
@@ -269,86 +273,113 @@ class DiscordHandler:
         if self.chatgpt_handler.bot_mention is None:
             self.chatgpt_handler.bot_mention = self.client.user.mention
         
-        if self.client.user.mentioned_in(message) and message.mention_everyone is False or message.guild is None:
-            # Do all the work here
-            logging.info('Processing Discord message: guild=%s author_id=%s', getattr(message.guild, 'id', None), message.author.id)
-            author_id = str(message.author.id)
+        mentioned = self.client.user.mentioned_in(message) and message.mention_everyone is False
+        if not (mentioned or message.guild is None):
+            return
+
+        route = "dm" if message.guild is None else "mention"
+        started = time.monotonic()
+        finished = False
+
+        def finish(outcome):
+            nonlocal finished
+            if not finished:
+                finished = True
+                metrics.increment(metrics.REQUESTS, route, outcome)
+                metrics.observe(metrics.REQUEST_DURATION, started, route)
+
+        try:
+            await self._reply(message, channel, finish)
+        except asyncio.CancelledError:
+            finish("cancelled")
+            raise
+        finally:
+            finish("internal_error")
+
+    async def _reply(self, message, channel, finish):
+        logging.info('Processing Discord message: guild=%s author_id=%s', getattr(message.guild, 'id', None), message.author.id)
+        author_id = str(message.author.id)
+        participant_ids = [author_id]
+        # Tweak the limit here to get more or less context
+        try:
+            messages = await self.get_message_history(
+                channel, limit=CONTEXT_LIMIT, participant_ids=participant_ids,
+            )
+        except Exception:
+            logging.exception("Unable to retrieve Discord history; using current message")
             participant_ids = [author_id]
-            # Tweak the limit here to get more or less context
-            try:
-                messages = await self.get_message_history(
-                    channel, limit=CONTEXT_LIMIT, participant_ids=participant_ids,
-                )
-            except Exception:
-                logging.exception("Unable to retrieve Discord history; using current message")
-                participant_ids = [author_id]
-                messages = [{"role": "user", "content": f"{message.author.display_name} (Discord ID {message.author.id}): {message.content}"}]
+            messages = [{"role": "user", "content": f"{message.author.display_name} (Discord ID {message.author.id}): {message.content}"}]
 
-            logging.debug('Retrieving memories')
-            memory_query = self.build_memory_query(messages) if message.content.strip() else ""
+        logging.debug('Retrieving memories')
+        memory_query = self.build_memory_query(messages) if message.content.strip() else ""
+        try:
+            context, decisions = await asyncio.to_thread(
+                memory_selection.retrieve_and_select, self.vector_handler,
+                memory_query, participant_ids,
+            )
+        except Exception as exc:
+            logging.warning("Memory retrieval failed: error_type=%s", type(exc).__name__)
+        else:
+            if context:
+                messages.insert(0, {"role": "system", "content": context})
+            counts = Counter(item["reason"] for item in decisions)
+            selected = counts.pop("selected", 0)
+            logging.info(
+                "Memory retrieval: retrieved=%d selected=%d rejected=%d reasons=%s context_chars=%d",
+                len(decisions), selected, len(decisions) - selected, dict(counts), len(context),
+            )
+            for item in decisions:
+                logging.debug("Memory selection: %s", item)
+
+        if (getattr(message, "attachments", None) or getattr(message, "embeds", None)
+                or getattr(message, "reference", None)):
             try:
-                context, decisions = await asyncio.to_thread(
-                    memory_selection.retrieve_and_select, self.vector_handler,
-                    memory_query, participant_ids,
-                )
+                image_context = await self.image_context_builder.build(message)
+                if image_context:
+                    messages.append(image_context)
             except Exception as exc:
-                logging.warning("Memory retrieval failed: error_type=%s", type(exc).__name__)
-            else:
-                if context:
-                    messages.insert(0, {"role": "system", "content": context})
-                counts = Counter(item["reason"] for item in decisions)
-                selected = counts.pop("selected", 0)
-                logging.info(
-                    "Memory retrieval: retrieved=%d selected=%d rejected=%d reasons=%s context_chars=%d",
-                    len(decisions), selected, len(decisions) - selected, dict(counts), len(context),
-                )
-                for item in decisions:
-                    logging.debug("Memory selection: %s", item)
+                logging.warning("Image ingestion failed: category=internal_error error_type=%s", type(exc).__name__)
+                messages.append({"role": "user", "content": [{"type": "input_text", "text": "Image processing failed. Do not claim to have seen the images."}]})
 
-            if (getattr(message, "attachments", None) or getattr(message, "embeds", None)
-                    or getattr(message, "reference", None)):
-                try:
-                    image_context = await self.image_context_builder.build(message)
-                    if image_context:
-                        messages.append(image_context)
-                except Exception as exc:
-                    logging.warning("Image ingestion failed: category=internal_error error_type=%s", type(exc).__name__)
-                    messages.append({"role": "user", "content": [{"type": "input_text", "text": "Image processing failed. Do not claim to have seen the images."}]})
-
+        try:
+            response = await self.chatgpt_handler.get_response(
+                messages, channel, triggering_message=message, discord_context={
+                    'archive': getattr(self, 'archive', None), 'guild': message.guild,
+                    'member': message.author, 'channel_id': str(channel.id),
+                })
+        except Exception:
+            logging.exception('Discord message processing failed')
             try:
-                response = await self.chatgpt_handler.get_response(
-                    messages, channel, triggering_message=message, discord_context={
-                        'archive': getattr(self, 'archive', None), 'guild': message.guild, 'member': message.author, 'channel_id': str(message.channel.id)
-                    })
-            except Exception:
-                logging.exception('Discord message processing failed')
-
-                await message.channel.send(
+                await channel.send(
                     f"{message.author.display_name} Sorry, there was an error processing your request. Please try again later."
                 )
-                return
-            split_response = self.split_message(response.replace("chatgpt:", "").strip())
-            try:
-                # Send the ACTUAL message...            
-                for message_part in split_response:
-                    await message.channel.send(message_part)
-                    await asyncio.sleep(3)  # Add a 3-second delay between messages
             except Exception:
-                logging.exception('Discord message send failed')
-                await message.channel.send(
+                finish("delivery_error")
+                raise
+            finish("fallback")
+            return
+
+        parts = self.split_message(response.replace("chatgpt:", "").strip())
+        sent = 0
+        try:
+            for index, part in enumerate(parts):
+                if index:
+                    await asyncio.sleep(3)
+                await channel.send(part)
+                sent += 1
+        except Exception:
+            logging.exception('Discord message send failed')
+            try:
+                await channel.send(
                     f"{message.author.display_name} Sorry, there was an error with sending the message itself. Please try again later."
                 )
-                return
+            finally:
+                finish("partial_delivery" if sent else "delivery_error")
+            return
+        finish("fallback" if isinstance(response, FallbackReply) else "answered")
+        if parts:
+            await asyncio.sleep(3)
 
-            # Skipping this in lieu of memory function
-            #try:
-            #    summary = await self.chatgpt_handler.get_summary(messages)
-            #except Exception as e:
-            #    print(f"Error occurred while summarizing the messages: {e}")
-            #    return
-            #
-            #self.vector_handler.store_additional_data(summary.content, author_id)  # Update the vector store with the summary
-            
     @staticmethod
     def build_memory_query(messages, max_turns=6, max_chars=2400):
         """Bounded, speaker-attributed user turns for semantic retrieval."""
