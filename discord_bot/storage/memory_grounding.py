@@ -1,5 +1,5 @@
 """Independent, read-only grounding check for proposed memories."""
-import asyncio
+from ..handlers.usage_metrics import model_call
 import json
 import re
 
@@ -47,14 +47,16 @@ def adjacent_human_context(connection, entry, *, bot_author_id, limit=12):
             and row[1] != str(bot_author_id)][:limit]
 
 
-async def verify_proposal(client, model, proposal, evidence, context):
+async def verify_proposal(client, model, proposal, evidence, context, *, usage_totals=None):
     summaries = proposal["splits"] if proposal["operation"] == "split" else [proposal["summary"]]
     if any(re.search(r"<@!?\d+>", summary) for summary in summaries):
         return {"supported": False, "rationale": "Discord mention markup in canonical summary"}
-    response = await asyncio.wait_for(client.responses.create(
+    response, _ = await model_call(client.responses.create(
         model=model, instructions=VERIFY_INSTRUCTIONS,
         input=json.dumps({"proposed_summaries": summaries,
                           "human_source_messages": evidence,
                           "adjacent_human_context": context}, ensure_ascii=False),
-        max_output_tokens=350), timeout=45)
+        max_output_tokens=350), model=model,
+        operation="memory_evaluation" if usage_totals is not None else None,
+        timeout=45, usage_totals=usage_totals)
     return parse_verification(response.output_text)

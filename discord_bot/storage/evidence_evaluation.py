@@ -1,7 +1,7 @@
 """Evidence-aware, bounded operator-only evaluation. No vector writes or scheduler."""
-import asyncio
 import json
 
+from ..handlers.usage_metrics import model_call
 from openai import AsyncOpenAI
 
 from .extraction_prompt import EXTRACTOR_VERSION
@@ -95,7 +95,7 @@ def candidates(connection, *, guild_id, limit, selected_keys=None):
 
 
 async def evaluate_evidence(connection, *, guild_id, bot_author_id, model,
-                            limit=20, client=None, selected_keys=None):
+                            limit=20, client=None, selected_keys=None, usage_totals=None):
     """Bounded model-assisted preview. No DB writes or Pinecone calls."""
     if not model or not 1 <= limit <= 100:
         raise ValueError("model and limit (1..100) required")
@@ -117,10 +117,11 @@ async def evaluate_evidence(connection, *, guild_id, bot_author_id, model,
                 "participant_ids": json.loads(entry["participant_ids"]),
                 "human_source_messages": evidence,
             }
-            response = await asyncio.wait_for(client.responses.create(
+            response, _ = await model_call(client.responses.create(
                 model=model, instructions=INSTRUCTIONS,
                 input=json.dumps(payload, ensure_ascii=False), max_output_tokens=500,
-            ), timeout=45)
+            ), model=model, operation="memory_evaluation" if usage_totals is not None else None,
+                timeout=45, usage_totals=usage_totals)
             entry["evaluation"] = parse_decision(response.output_text)
             entry["evaluation_version"] = EVALUATOR_VERSION
     finally:

@@ -30,7 +30,7 @@ class ChatUsageTests(unittest.TestCase):
     def test_terra_default_rates(self):
         with patch.dict(os.environ, {}, clear=True):
             usage = ChatUsage("gpt-6.1-terra")
-            usage.add(SimpleNamespace(input_tokens=1000, output_tokens=200, input_tokens_details=SimpleNamespace(cached_tokens=300)))
+            usage.add(SimpleNamespace(input_tokens=1000, output_tokens=200, input_tokens_details=SimpleNamespace(cached_tokens=300, cache_write_tokens=0)))
             self.assertAlmostEqual(usage.estimated_cost_usd(), (700 * 1 + 300 * .05 + 200 * 5) / 1_000_000)
 
     def test_unknown_model_is_unconfigured(self):

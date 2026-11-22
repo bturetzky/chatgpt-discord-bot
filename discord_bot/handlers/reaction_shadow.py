@@ -9,6 +9,7 @@ import time
 from uuid import uuid4
 
 import discord
+from .usage_metrics import model_call
 from openai import AsyncOpenAI
 
 from ..reaction_emoji import usable_guild_emoji
@@ -252,7 +253,7 @@ class ReactionShadow:
     async def _evaluate(self, evaluation_id, channel_id, candidate_ids, context, trigger):
         decision = emoji = message_id = None
         try:
-            response = await asyncio.wait_for(self.client.responses.create(
+            response, usage = await model_call(self.client.responses.create(
                 model=self.model,
                 instructions=(
                     "You are a participant in a small casual Discord server. Look for a moment "
@@ -274,7 +275,7 @@ class ReactionShadow:
                 max_output_tokens=400,
                 text={"format": {"type": "json_object"}},
                 store=False,
-            ), timeout=25)
+            ), model=self.model, operation="reaction", timeout=25)
         except Exception as exc:
             reason = type(exc).__name__
             self.db.execute(
@@ -285,9 +286,8 @@ class ReactionShadow:
                             trigger, channel_id, len(candidate_ids), reason)
             return
 
-        usage = getattr(response, "usage", None)
-        input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
-        output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+        input_tokens = usage.input_tokens if usage is not None else 0
+        output_tokens = usage.output_tokens if usage is not None else 0
         try:
             parsed = json.loads(response.output_text)
         except (AttributeError, ValueError, TypeError, RecursionError):

@@ -13,7 +13,7 @@ from ..functions.react_to_message import ReactToMessage, ReplyReactions
 from .function_handler import CONTEXT_TOOLS, TOOL_TIMEOUT, FunctionHandler
 from .personality_prompt import build_system_prompt
 from .tool_output import bound_tool_output
-from .usage_metrics import ChatUsage
+from .usage_metrics import ChatUsage, model_call
 from .. import metrics
 
 GPT_MODEL = os.getenv("OPENAI_MODEL", "gpt-6.1-terra")
@@ -124,14 +124,14 @@ class ChatGPTHandler:
                     budget_instructions += " Answer now using gathered evidence."
                 else:
                     budget_instructions += " If further research is blocked, answer using gathered evidence."
-                response = await self.client.responses.create(
+                response, usage = await model_call(self.client.responses.create(
                     model=GPT_MODEL,
                     instructions=instructions + budget_instructions,
                     input=conversation,
                     tools=tools,
                     tool_choice="auto" if remaining else "none",
-                )
-                usage_metrics.add(getattr(response, "usage", None))
+                ), model=GPT_MODEL, operation="reply")
+                usage_metrics.add(usage, tier=getattr(response, "service_tier", None))
                 # Retain all model output, including reasoning items and tool calls,
                 # so subsequent tool results have the context they require.
                 conversation.extend(
