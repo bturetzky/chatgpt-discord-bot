@@ -2,6 +2,7 @@
 import asyncio
 import json
 
+from ..handlers.usage_metrics import model_call
 from openai import AsyncOpenAI
 
 from .evidence_evaluation import evaluate_evidence, source_evidence
@@ -92,14 +93,16 @@ def _matches(result, guild_id, scope, participants):
 
 
 async def preview_consolidation(connection, *, guild_id, bot_author_id, model,
-                                limit=20, openai_client=None, index=None, selected_keys=None):
+                                limit=20, openai_client=None, index=None, selected_keys=None,
+                                usage_totals=None):
     """Evaluate evidence and propose operations. No writes of any kind."""
     owns_client = openai_client is None
     client = openai_client or AsyncOpenAI()
     try:
         entries = await evaluate_evidence(
             connection, guild_id=guild_id, bot_author_id=bot_author_id,
-            model=model, limit=limit, client=client, selected_keys=selected_keys)
+            model=model, limit=limit, client=client, selected_keys=selected_keys,
+            usage_totals=usage_totals)
         for entry in entries:
             assessment = entry["evaluation"]
             entry["consolidation_version"] = VERSION
@@ -128,8 +131,10 @@ async def preview_consolidation(connection, *, guild_id, bot_author_id, model,
             # Search read-only but never permit mutation based on unscoped hits.
             matches = []
             if index is not None:
-                embedding = await asyncio.wait_for(client.embeddings.create(
-                    model=EMBEDDING_MODEL, input=[entry["summary"]]), timeout=30)
+                embedding, _ = await model_call(client.embeddings.create(
+                    model=EMBEDDING_MODEL, input=[entry["summary"]]), model=EMBEDDING_MODEL,
+                    operation="memory_evaluation_embedding" if usage_totals is not None else None,
+                    timeout=30, embeddings=True, usage_totals=usage_totals)
                 result = await asyncio.to_thread(
                     index.query, vector=embedding.data[0].embedding, top_k=8,
                     include_metadata=True, include_values=False)
@@ -149,10 +154,12 @@ async def preview_consolidation(connection, *, guild_id, bot_author_id, model,
                        "human_source_messages": evidence,
                        "adjacent_human_context": context,
                        "evaluation_caveat": assessment["rationale"]}
-            response = await asyncio.wait_for(client.responses.create(
+            response, _ = await model_call(client.responses.create(
                 model=model, instructions=INSTRUCTIONS,
                 input=json.dumps(payload, ensure_ascii=False),
-                max_output_tokens=750), timeout=45)
+                max_output_tokens=750), model=model,
+                operation="memory_evaluation" if usage_totals is not None else None,
+                timeout=45, usage_totals=usage_totals)
             proposal = parse_proposal(
                 response.output_text, {match["id"] for match in matches if match["targetable"]})
             if proposal["operation"] == "create" and any(
@@ -164,7 +171,7 @@ async def preview_consolidation(connection, *, guild_id, bot_author_id, model,
                             "rationale": "Strong legacy/unscoped Pinecone match requires manual review"}
             if proposal["operation"] in {"create", "update", "merge", "split"}:
                 verification = await verify_proposal(
-                    client, model, proposal, evidence, context)
+                    client, model, proposal, evidence, context, usage_totals=usage_totals)
                 entry["grounding_verification"] = verification
                 if not verification["supported"]:
                     proposal = {"operation": "review", "summary": "",

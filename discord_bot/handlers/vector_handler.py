@@ -1,6 +1,7 @@
 """Embeddings used for the existing 1536-dimensional Pinecone index."""
 from openai import OpenAI
 
+from .usage_metrics import recall_embedding
 from .vectore_store import VectorStore
 
 EMBEDDING_MODEL = "text-embedding-ada-002"
@@ -19,8 +20,8 @@ class VectorHandler:
         return cls._instance
 
     def encode_message(self, message):
-        response = self.client.embeddings.create(
-            input=[message], model=EMBEDDING_MODEL
+        response = recall_embedding(
+            self.client.embeddings.create, input=[message], model=EMBEDDING_MODEL
         )
         return response.data[0].embedding
 

@@ -10,6 +10,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
+from ..handlers.usage_metrics import model_call
 from openai import AsyncOpenAI
 
 from .extraction_dry_run import dry_run
@@ -121,29 +122,6 @@ def record_evaluation(connection, guild_id, candidate, fingerprint, decision):
          fingerprint, decision),
     )
 
-class MeteredEndpoint:
-    def __init__(self, endpoint, usage, name):
-        self.endpoint, self.usage, self.name = endpoint, usage, name
-
-    async def create(self, **kwargs):
-        response = await self.endpoint.create(**kwargs)
-        self.usage[self.name + "_requests"] += 1
-        tokens = getattr(response, "usage", None)
-        if tokens is not None:
-            if self.name == "responses":
-                self.usage["input_tokens"] += int(getattr(tokens, "input_tokens", 0) or 0)
-                self.usage["output_tokens"] += int(getattr(tokens, "output_tokens", 0) or 0)
-            else:
-                self.usage["embedding_tokens"] += int(getattr(tokens, "total_tokens", 0) or 0)
-        return response
-
-
-class MeteredClient:
-    def __init__(self, client, usage):
-        self.responses = MeteredEndpoint(client.responses, usage, "responses")
-        self.embeddings = MeteredEndpoint(client.embeddings, usage, "embeddings")
-
-
 def empty_usage():
     return {"responses_requests": 0, "embeddings_requests": 0,
             "input_tokens": 0, "output_tokens": 0, "embedding_tokens": 0}
@@ -181,7 +159,7 @@ async def run_once(connection, *, guild_id, bot_author_id, model, vector_handler
     counts = await dry_run(
         connection, guild_id=guild_id, since=since, until=until,
         max_windows=50, max_rows=1000, max_messages=40,
-        model=model, bot_author_id=bot_author_id, client=client,
+        model=model, bot_author_id=bot_author_id, client=client, observe_usage=True,
     )
     owns_client = client is None
     client = client or AsyncOpenAI()
@@ -193,14 +171,13 @@ async def run_once(connection, *, guild_id, bot_author_id, model, vector_handler
         return {**counts, "published": 0, "skipped_publication": 0,
                 "publication_decisions": {}, "idle_checkpoint_hit": True,
                 "evaluation_usage": usage, "pending_evaluations": 0}
-    metered = MeteredClient(client, usage)
     published = 0
     skipped = 0
     decisions = {"discard": 0, "review": 0, "blocked_create": 0, "duplicate": 0, "published": 0, "failed": 0}
     try:
         entries = await preview_consolidation(
             connection, guild_id=guild_id, bot_author_id=bot_author_id,
-            model=model, limit=20, selected_keys=[key for key, _ in pending], openai_client=metered,
+            model=model, limit=20, selected_keys=[key for key, _ in pending], openai_client=client, usage_totals=usage,
             index=vector_handler.vector_store.index,
         )
         plans = plan_entries(connection, entries, guild_id=guild_id,
@@ -227,8 +204,10 @@ async def run_once(connection, *, guild_id, bot_author_id, model, vector_handler
                 from .memory_publication_ledger import _source_snapshot
                 _source_snapshot(connection, str(guild_id), memory["source_channel_id"],
                                  participants, memory["source_message_ids"], bot_author_id)
-                embedding = await asyncio.wait_for(metered.embeddings.create(
-                    model=EMBEDDING_MODEL, input=[summary]), timeout=30)
+                embedding, _ = await model_call(client.embeddings.create(
+                    model=EMBEDDING_MODEL, input=[summary]), model=EMBEDDING_MODEL,
+                    operation="memory_publication_embedding", timeout=30, embeddings=True,
+                    usage_totals=usage)
                 vector = embedding.data[0].embedding
                 # Similar memories are deliberately not blindly overwritten.
                 result = await asyncio.to_thread(

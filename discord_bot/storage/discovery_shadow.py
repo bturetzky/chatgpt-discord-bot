@@ -1,6 +1,7 @@
 """Bounded external discovery with durable, at-most-once shadow attempts."""
 
 from .. import metrics
+from ..handlers.usage_metrics import model_call
 
 import asyncio
 from bisect import bisect_right
@@ -369,7 +370,7 @@ class DiscoveryShadow:
             # can still use automatic prefix caching with the same message layout.
             context_block["prompt_cache_breakpoint"] = {"mode": "explicit"}
             cache_options["prompt_cache_options"] = {"mode": "explicit"}
-        response = await asyncio.wait_for(self.client.responses.create(
+        response, usage = await model_call(self.client.responses.create(
             model=self.model, instructions=SHARED_INSTRUCTIONS,
             input=[
                 {"role": "user", "content": [context_block]},
@@ -382,13 +383,12 @@ class DiscoveryShadow:
             max_output_tokens=1800,
             text={"format": {"type": "json_object"}}, store=False,
             **cache_options,
-        ), timeout=25)
-        usage = getattr(response, "usage", None)
-        cached = getattr(getattr(usage, "input_tokens_details", None), "cached_tokens", 0) or 0
+        ), model=self.model, operation="discovery", timeout=25)
         self.db.execute(
             """UPDATE discovery_runs SET input_tokens=input_tokens+?,
                output_tokens=output_tokens+?, cached_input_tokens=cached_input_tokens+? WHERE id=?""",
-            (getattr(usage, "input_tokens", 0) or 0, getattr(usage, "output_tokens", 0) or 0, cached, run),
+            (usage.input_tokens, usage.output_tokens, usage.cached_input_tokens, run)
+            if usage is not None else (0, 0, 0, run),
         )
         if response.status == "incomplete":
             reason = getattr(getattr(response, "incomplete_details", None), "reason", None)

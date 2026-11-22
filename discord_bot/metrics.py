@@ -108,3 +108,26 @@ async def start_metrics_server(host="0.0.0.0", port=METRICS_PORT, *, registry=RE
         await runner.cleanup()
         raise
     return runner
+
+
+MODEL_CALLS = Counter(
+    PREFIX + "model_calls_total", "Terminal logical OpenAI SDK calls.",
+    ("operation", "model", "outcome"), registry=REGISTRY,
+)
+MODEL_DURATION = Histogram(
+    PREFIX + "model_call_duration_seconds", "Elapsed time of logical OpenAI SDK calls.",
+    ("operation",), buckets=(0.1, 0.5, 1, 2, 5, 10, 15, 25, 30, 45, 60, 120),
+    registry=REGISTRY,
+)
+MODEL_TOKENS = Counter(
+    PREFIX + "model_tokens_total", "OpenAI-reported tokens. Cached input is included in input.",
+    ("operation", "model", "kind"), registry=REGISTRY,
+)
+MODEL_COST = Counter(
+    PREFIX + "model_estimated_cost_usd_total", "Estimated OpenAI token charges in USD.",
+    ("operation", "model"), registry=REGISTRY,
+)
+MODEL_COST_COVERAGE = Counter(
+    PREFIX + "model_cost_coverage_total", "Availability of a cost estimate by logical call.",
+    ("operation", "model", "status"), registry=REGISTRY,
+)

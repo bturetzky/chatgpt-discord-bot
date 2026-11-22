@@ -1,11 +1,11 @@
 """Explicit, bounded extraction dry-run. No Pinecone or Discord writes."""
-import asyncio
 import json
 import logging
 import re
 import unicodedata
 from datetime import datetime, timezone
 
+from ..handlers.usage_metrics import model_call
 from openai import AsyncOpenAI
 
 from .extraction import discover_windows, register_windows
@@ -68,7 +68,7 @@ def _canonical(summary):
 
 async def dry_run(
     connection, *, guild_id, since, until, max_windows=5, max_rows=1000,
-    max_messages=40, model, bot_author_id=None, api_key=None, client=None,
+    max_messages=40, model, bot_author_id=None, api_key=None, client=None, observe_usage=False,
 ):
     """Explicit bounded slice; stores proposed candidates locally only.
 
@@ -112,14 +112,14 @@ async def dry_run(
                    attempts=attempts+1 WHERE batch_id=?""", (window.batch_id,),
             )
             try:
-                response = await asyncio.wait_for(client.responses.create(
+                response, usage = await model_call(client.responses.create(
                     model=model, instructions=EXTRACTION_INSTRUCTIONS,
                     input=_input(window, bot_author_id), max_output_tokens=1200,
-                ), timeout=45)
+                ), model=model, operation="memory_extraction" if observe_usage else None,
+                    timeout=45)
                 candidates = parse_candidates(response.output_text, window, bot_author_id)
-                usage = getattr(response, "usage", None)
-                input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
-                output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+                input_tokens = usage.input_tokens if usage is not None else 0
+                output_tokens = usage.output_tokens if usage is not None else 0
                 # Exact normalized local dedup, not semantic or Pinecone dedup.
                 existing = {_canonical(row[0]) for row in connection.execute(
                     """SELECT c.summary FROM extraction_candidates c

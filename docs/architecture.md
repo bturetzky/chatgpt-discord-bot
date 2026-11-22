@@ -76,6 +76,8 @@ SQLite retains bounded public search metadata, fetch diagnostics, drafts and con
 
 The bot serves one process-local Prometheus endpoint at `GET /metrics` on port 9100. The listener starts before the Discord client. A bind failure aborts startup. Scrapes read only the in-memory registry and standard process metrics. The gateway gauge reflects Discord ready, disconnect, and resume events. The request and tool series track terminal outcomes and caller-observed timings. Reply timing ends at terminal delivery and excludes the trailing pacing sleep. A delivered fallback is counted separately from an answer. Tool rejections have their own counter.
 
+Model metrics count logical OpenAI SDK invocations, including their retry waits. The usage decoder supplies the existing chat logs and SQLite/cycle accounting as well as the counters. Cached input is included in total input. The cost counter sums estimates for supported Standard prices and the bot's default cache lifetime. The coverage counter identifies missing usage, unknown prices, and unsupported pricing details. Use both series when interpreting spend. Standalone operator CLIs retain their own accounting.
+
 ## Operational boundaries
 
 This is one small trusted production guild and a separate dev environment. No new service, database cluster or generalized tenant authorization is planned without a demonstrated need. External content and Discord messages are untrusted model input. Logs and documentation must not contain raw private memories, message bodies, tokens or real guild IDs. Use [operations](operations.md) for safe diagnostics and [deployment](deployment.md) for release gates.
