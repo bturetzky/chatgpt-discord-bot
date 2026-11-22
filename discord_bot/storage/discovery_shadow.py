@@ -1,5 +1,7 @@
 """Bounded external discovery with durable, at-most-once shadow attempts."""
 
+from .. import metrics
+
 import asyncio
 from bisect import bisect_right
 from datetime import datetime, timezone
@@ -590,14 +592,22 @@ class DiscoveryShadow:
 
     async def tool(self, run, stage, provider, args):
         try:
-            response = json.loads(await asyncio.wait_for(provider.execute(args), timeout=30))
-            if not isinstance(response, dict):
-                raise DiscoveryResponseError("non_object_tool_output")
-            return response
+            return await metrics.run_tool(
+                self._tool_result(provider, args), tool={"search": "search_web", "fetch": "get_webpage_contents"}[stage],
+                source="discovery",
+                timeout=30,
+            )
         except Exception as error:
             log_run_failure(run, stage, error)
             return {"ok": False, "error": {"code": "TIMEOUT" if isinstance(error, TimeoutError)
                                            else "PROVIDER_ERROR"}}
+
+    @staticmethod
+    async def _tool_result(provider, args):
+        response = json.loads(await provider.execute(args))
+        if not isinstance(response, dict):
+            raise DiscoveryResponseError("non_object_tool_output")
+        return response
 
     def candidate_block(self, run, identity, *, exclude=None):
         return self.db.execute(

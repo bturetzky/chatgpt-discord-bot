@@ -72,6 +72,10 @@ Search snippets and dates guide exploration. A proposal must cite a verbatim exc
 
 SQLite retains bounded public search metadata, fetch diagnostics, drafts and concise decision explanations alongside usage and context window metadata. The trace does not copy full conversations, accepted memories or fetched pages. The model requests place shared conversation context in a user message ahead of the stage-specific developer instructions and inputs. GPT-6.1 Terra requests explicitly cache at the end of that shared message. Independent review receives the proposal, fetched evidence and novelty inputs separately from exploration state. Usage includes cached input tokens reported by the API. Interrupted runs consume their reservation. Discovery operates exclusively in shadow mode. Any future Discord send must recheck the discovery time window at send time. See [operations](operations.md#discovery-shadow-dev-acceptance).
 
+## Prometheus metrics
+
+The bot serves one process-local Prometheus endpoint at `GET /metrics` on port 9100. The listener starts before the Discord client. A bind failure aborts startup. Scrapes read only the in-memory registry and standard process metrics. The gateway gauge reflects Discord ready, disconnect, and resume events. The request and tool series track terminal outcomes and caller-observed timings. Reply timing ends at terminal delivery and excludes the trailing pacing sleep. A delivered fallback is counted separately from an answer. Tool rejections have their own counter.
+
 ## Operational boundaries
 
 This is one small trusted production guild and a separate dev environment. No new service, database cluster or generalized tenant authorization is planned without a demonstrated need. External content and Discord messages are untrusted model input. Logs and documentation must not contain raw private memories, message bodies, tokens or real guild IDs. Use [operations](operations.md) for safe diagnostics and [deployment](deployment.md) for release gates.
