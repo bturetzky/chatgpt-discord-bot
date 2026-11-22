@@ -360,13 +360,15 @@ class DiscordHandler:
             return
 
         parts = self.split_message(response.replace("chatgpt:", "").strip())
+        reply_outcome = "fallback" if isinstance(response, FallbackReply) else "answered"
         sent = 0
         try:
-            for index, part in enumerate(parts):
-                if index:
-                    await asyncio.sleep(3)
+            for part in parts:
                 await channel.send(part)
                 sent += 1
+                if sent == len(parts):
+                    finish(reply_outcome)
+                await asyncio.sleep(3)
         except Exception:
             logging.exception('Discord message send failed')
             try:
@@ -376,9 +378,7 @@ class DiscordHandler:
             finally:
                 finish("partial_delivery" if sent else "delivery_error")
             return
-        finish("fallback" if isinstance(response, FallbackReply) else "answered")
-        if parts:
-            await asyncio.sleep(3)
+        finish(reply_outcome)
 
     @staticmethod
     def build_memory_query(messages, max_turns=6, max_chars=2400):
