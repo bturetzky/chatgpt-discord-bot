@@ -6,6 +6,7 @@ import re
 import discord
 import emoji
 
+from .. import metrics
 from .base import BaseFunction, tool_error
 from ..reaction_emoji import usable_guild_emoji
 
@@ -44,20 +45,31 @@ class ReplyReactions:
     async def add(self, value):
         async with self.lock:
             if self.successes >= MAX_REPLY_REACTIONS:
+                metrics.increment(metrics.REACTION_DELIVERIES, "reply_tool", "suppressed")
                 return "reaction_limit"
             resolved = resolve_emoji(self.message.guild, value)
             if resolved is None:
+                metrics.increment(metrics.REACTION_DELIVERIES, "reply_tool", "suppressed")
                 return "emoji_unavailable"
+            metrics.increment(metrics.REACTION_ATTEMPTS, "reply_tool")
+            outcome = "uncertain"
             try:
                 await self.message.add_reaction(resolved)
             except discord.NotFound:
+                outcome = "failed"
                 return "message_or_emoji_unavailable"
             except discord.Forbidden:
+                outcome = "failed"
                 return "forbidden"
             except discord.HTTPException:
+                outcome = "failed"
                 return "discord_api_error"
-            self.successes += 1
-            return None
+            else:
+                self.successes += 1
+                outcome = "emitted"
+                return None
+            finally:
+                metrics.increment(metrics.REACTION_DELIVERIES, "reply_tool", outcome)
 
 
 class ReactToMessage(BaseFunction):

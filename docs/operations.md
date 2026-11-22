@@ -79,7 +79,7 @@ The CLI includes Discord message links. Use the first command to inspect cooldow
 
 ## Discovery shadow dev acceptance
 
-Use a dev guild with an eligible quiet text channel, archived discussion and configured Brave credentials. The worker starts at gateway readiness with a usable SQLite archive. It reserves at most one attempt per configured interval across all guilds. A restart preserves the last reservation. A due run can start at 8 AM Pacific after overnight quiet hours, with one reservation even if several intervals elapsed. A run that crosses 10 PM before selection records `deferred_quiet_hours` and consumes its reservation. Add `--guild-id` before the subcommand to filter results.
+Use a dev guild with `DISCOVERY_ENABLED=true`, persistent SQLite, an eligible quiet text channel, archived discussion, and configured Brave credentials. The default randomized Pacific-day opportunity survives restart. A custom interval uses elapsed time after the last reservation. Discovery runs from 8 AM up to 10 PM Pacific. A reserved run that crosses 10 PM before selection or delivery records `deferred_quiet_hours`. Add `--guild-id` before the subcommand to filter results.
 
 ```bash
 kubectl exec deploy/chatgpt-discord-bot -- python -m discord_bot.admin --json discovery --limit 3
@@ -91,9 +91,17 @@ Replace `1` with the run ID under review. Match `started_at` (Unix UTC seconds) 
 
 1. Discuss base building or logistics in a dev text channel, then leave it quiet for at least 30 minutes. After an eligible run inspect the trace for a public query and an adjacent lead, such as a project with unusual automation mechanics. If selected, the draft should read like a conversational observation and link to a fetched source. An older date should not itself disqualify the find.
 2. Share and discuss a public project link ahead of an eligible later run. If exploration revisits that link or rediscovers the same story, expect a duplicate decision for a previously selected source or a story the group already discussed. Unselected sources may retry after 24 hours in the same channel or on the next eligible run for another channel. If sources fail or nothing clears review, expect an inspectable reason and no selected post.
-3. Keep the destination active around a scheduled check. Expect the worker to skip the active channel or suppress selection if conversation resumes during exploration. Check Discord for the absence of autonomous discovery messages throughout the review.
+3. Keep the destination active around a scheduled check. Expect the worker to skip the active channel or suppress selection if conversation resumes during exploration. If selection succeeds, verify that Discord receives the reviewed text with one source link. If the destination is active at send time, expect suppression.
 
-After rollout, inspect several new multi-call runs using the JSON command above. Compare `cached_input_tokens / input_tokens` alongside model call counts and context size. Expect reuse within a run with at least 1,024 eligible prefix tokens when the provider reports a cache hit. Daily runs can sample different contexts and begin with a cold cache. The SDK regression test verifies serialized requests and usage accounting with synthetic responses. Provider cache hits and shadow draft quality require deployment observation. If eligible multi-call runs still show zero cache reads, compare OpenAI project cache metrics and confirm the effective model before changing retention or routing. [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)
+After rollout, inspect several new multi-call runs using the JSON command above. Compare `cached_input_tokens / input_tokens` alongside model call counts and context size. Expect reuse within a run with at least 1,024 eligible prefix tokens when the provider reports a cache hit. Daily runs can sample different contexts and begin with a cold cache. The SDK regression test verifies serialized requests and usage accounting with synthetic responses. Provider cache hits and discovery draft quality require deployment observation. If eligible multi-call runs still show zero cache reads, compare OpenAI project cache metrics and confirm the effective model before changing retention or routing. [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)
+
+## Prometheus dev acceptance
+
+After a dev rollout, scrape the bot's port 9100 from an authorized local or internal connection. Expect `process_start_time_seconds` and a connected gateway. For worker checks, use an environment where the relevant worker is already enabled.
+
+1. DM the dev bot a short calculation. Expect one successful DM request and reply model usage. Send an ordinary unmentioned guild message and confirm that reply counts stay unchanged.
+2. Mention the dev bot and ask it to use web search to find the official Python documentation. With Brave configured, expect a reply, a registered search tool execution, and model metrics for the reply. If the tool reports a provider failure, expect the tool error outcome and an honest fallback or answer from available context.
+3. During an eligible discovery or reaction cycle, compare decision, delivery-attempt, and confirmed-delivery deltas with the existing operator CLI and the Discord result. A healthy idle poll should advance the worker's last-success timestamp without a delivery attempt.
 
 ## Dev Discord smoke test
 

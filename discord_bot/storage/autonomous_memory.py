@@ -10,8 +10,10 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
-from ..handlers.usage_metrics import model_call
 from openai import AsyncOpenAI
+
+from .. import metrics
+from ..handlers.usage_metrics import model_call
 
 from .extraction_dry_run import dry_run
 from .memory_consolidation import preview_consolidation, VERSION as CONSOLIDATION_VERSION
@@ -159,7 +161,7 @@ async def run_once(connection, *, guild_id, bot_author_id, model, vector_handler
     counts = await dry_run(
         connection, guild_id=guild_id, since=since, until=until,
         max_windows=50, max_rows=1000, max_messages=40,
-        model=model, bot_author_id=bot_author_id, client=client, observe_usage=True,
+        model=model, bot_author_id=bot_author_id, client=client, autonomous=True,
     )
     owns_client = client is None
     client = client or AsyncOpenAI()
@@ -194,6 +196,7 @@ async def run_once(connection, *, guild_id, bot_author_id, model, vector_handler
                 skipped += 1
                 # Preserve blocked/review proposals, but do not reevaluate unchanged evidence.
                 record_evaluation(connection, guild_id, candidate, fingerprints[key], category)
+                metrics.increment(metrics.MEMORY_CANDIDATES, category)
                 continue
             memory = plan["memory"]
             participants = memory["participant_ids"]
@@ -232,6 +235,7 @@ async def run_once(connection, *, guild_id, bot_author_id, model, vector_handler
                     decisions["duplicate"] += 1
                     skipped += 1
                     record_evaluation(connection, guild_id, candidate, fingerprints[key], "duplicate")
+                    metrics.increment(metrics.MEMORY_CANDIDATES, "duplicate")
                     continue
                 metadata = {
                     "summary": summary, "memory_type": "relationship" if memory["scope"] == "collective" else "fact",
@@ -249,8 +253,10 @@ async def run_once(connection, *, guild_id, bot_author_id, model, vector_handler
                 published += 1
                 decisions["published"] += 1
                 record_evaluation(connection, guild_id, candidate, fingerprints[key], "published")
+                metrics.increment(metrics.MEMORY_CANDIDATES, "published")
             except Exception as exc:
                 decisions["failed"] += 1
+                metrics.increment(metrics.MEMORY_CANDIDATES, "failed")
                 LOG.warning("Autonomous memory publication failed: error_type=%s",
                             type(exc).__name__)
         if decisions["failed"] == 0:
@@ -269,20 +275,26 @@ async def run_once(connection, *, guild_id, bot_author_id, model, vector_handler
 
 async def run_forever(archive, vector_handler, *, guild_id, bot_author_id, model, stop_event):
     """Run after gateway ready; failures never crash the Discord bot."""
-    while not stop_event.is_set():
-        try:
-            counts = await run_once(
-                archive.db, guild_id=str(guild_id),
-                bot_author_id=str(bot_author_id), model=model,
-                vector_handler=vector_handler,
-            )
-            LOG.info("Autonomous memory cycle: %s", counts)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            LOG.warning("Autonomous memory cycle failed: error_type=%s",
-                        type(exc).__name__)
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=INTERVAL_SECONDS)
-        except asyncio.TimeoutError:
-            pass
+    with metrics.worker_running("autonomous_memory"):
+        while not stop_event.is_set():
+            try:
+                with metrics.worker_cycle("autonomous_memory") as finish:
+                    counts = await run_once(
+                        archive.db, guild_id=str(guild_id),
+                        bot_author_id=str(bot_author_id), model=model,
+                        vector_handler=vector_handler,
+                    )
+                    if counts["failed"] or counts["publication_decisions"].get("failed"):
+                        finish("partial_failure")
+                    elif counts["idle_checkpoint_hit"]:
+                        finish("idle")
+                LOG.info("Autonomous memory cycle: %s", counts)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                LOG.warning("Autonomous memory cycle failed: error_type=%s",
+                            type(exc).__name__)
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=INTERVAL_SECONDS)
+            except asyncio.TimeoutError:
+                pass

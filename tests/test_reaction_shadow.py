@@ -12,6 +12,7 @@ import discord
 from discord_bot.storage import Database
 from discord_bot.storage.database import MIGRATIONS
 from discord_bot.handlers.reaction_shadow import ReactionShadow
+from tests.test_prometheus_metrics import sample
 
 
 def model_response(action="ignore", message_id=None, emoji=None):
@@ -230,15 +231,51 @@ class WindowTests(unittest.IsolatedAsyncioTestCase):
         channel = SimpleNamespace(guild=guild, fetch_message=AsyncMock(return_value=message))
         self.worker.discord_client.get_channel.return_value = channel
         self.create.return_value = model_response("react", "4", "unicode:🔥")
+        react = sample("reaction_decisions_total", trigger="conversation_window", outcome="react")
+        attempts = sample("reaction_delivery_attempts_total", source="proactive")
+        emitted = sample("reaction_deliveries_total", source="proactive", outcome="emitted")
         for n in range(1, 11):
             self.ingest(n)
         await self.drain()
+        self.assertEqual(sample("reaction_decisions_total", trigger="conversation_window",
+                                outcome="react"), react + 1)
+        self.assertEqual(sample("reaction_delivery_attempts_total", source="proactive"), attempts + 1)
+        self.assertEqual(sample("reaction_deliveries_total", source="proactive", outcome="emitted"),
+                         emitted + 1)
         channel.fetch_message.assert_awaited_once_with(4)
         message.add_reaction.assert_awaited_once_with("🔥")
         self.assertEqual(tuple(self.db.execute(
             """SELECT selected_message_id, new_message_count, posting_outcome, input_tokens
                FROM shadow_evaluations"""
         ).fetchone()), ("4", 10, "posted", 42))
+
+    async def test_ignore_counts_as_decision_without_a_delivery_attempt(self):
+        labels = {"trigger": "conversation_window", "outcome": "ignore"}
+        ignored = sample("reaction_decisions_total", **labels)
+        attempts = sample("reaction_delivery_attempts_total", source="proactive")
+        self.ingest(1)
+        await self.worker._process("2", None, "conversation_window", True)
+        self.assertEqual(sample("reaction_decisions_total", **labels), ignored + 1)
+        self.assertEqual(sample("reaction_delivery_attempts_total", source="proactive"), attempts)
+
+    async def test_cancelled_reaction_send_is_uncertain(self):
+        guild = SimpleNamespace(id=1)
+        message = SimpleNamespace(
+            author=SimpleNamespace(id=3, bot=False), guild=guild, webhook_id=None, reactions=[],
+            add_reaction=AsyncMock(side_effect=asyncio.CancelledError),
+        )
+        self.worker.discord_client.get_channel.return_value = SimpleNamespace(
+            guild=guild, fetch_message=AsyncMock(return_value=message),
+        )
+        self.create.return_value = model_response("react", "1", "unicode:🔥")
+        self.ingest(1)
+        attempts = sample("reaction_delivery_attempts_total", source="proactive")
+        uncertain = sample("reaction_deliveries_total", source="proactive", outcome="uncertain")
+        with self.assertRaises(asyncio.CancelledError):
+            await self.worker._process("2", None, "conversation_window", True)
+        self.assertEqual(sample("reaction_delivery_attempts_total", source="proactive"), attempts + 1)
+        self.assertEqual(sample("reaction_deliveries_total", source="proactive", outcome="uncertain"),
+                         uncertain + 1)
 
     async def test_invalid_model_responses_are_recorded_and_not_retried(self):
         self.ingest(1, live=False)
