@@ -97,7 +97,7 @@ After rollout, inspect several new multi-call runs using the JSON command above.
 
 ## Prometheus dev acceptance
 
-After a dev rollout, scrape the bot's port 9100 from an authorized local or internal connection. Expect `process_start_time_seconds` and a connected gateway. For worker checks, use an environment where the relevant worker is already enabled.
+After a dev rollout, scrape the bot's port 9100 from an authorized local or internal connection. Expect `process_start_time_seconds` and a connected gateway. For worker checks, use an environment where the relevant worker is already enabled. Before sending Discord prompts, confirm Prometheus has scraped the new process and record the DM answered and reply search success counters. Expect a zero for either series that has had no events in this process. Check the next scrape for the expected deltas.
 
 1. DM the dev bot a short calculation. Expect one successful DM request and reply model usage. Send an ordinary unmentioned guild message and confirm that reply counts stay unchanged.
 2. Mention the dev bot and ask it to use web search to find the official Python documentation. With Brave configured, expect a reply, a registered search tool execution, and model metrics for the reply. If the tool reports a provider failure, expect the tool error outcome and an honest fallback or answer from available context.

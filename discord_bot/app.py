@@ -1,7 +1,13 @@
 import asyncio, os, logging
+from .functions.read_youtube import ReadYouTube
+from .handlers.chatgpt_handler import GPT_MODEL
 from .handlers.discord_handler import DiscordHandler
-from .metrics import start_metrics_server
+from .handlers.function_handler import FunctionHandler
+from .handlers.usage_metrics import TERRA, model_label
+from .handlers.vector_handler import EMBEDDING_MODEL
+from .metrics import initialize_counters, initialize_model_counters, start_metrics_server
 from .storage import Database
+from .storage.discovery_shadow import DISCOVERY_TOOL_NAMES
 from .storage.message_archive import MessageArchive
 from .handlers.reaction_shadow import ReactionShadow
 
@@ -14,6 +20,19 @@ async def _main():
     DISCORD_TOKEN = os.environ['DISCORD_TOKEN']
     OPENAI_API_KEY = os.environ['OPENAI_API_KEY']
     PINECONE_API_KEY = os.environ['PINECONE_API_KEY']
+
+    initialize_counters(FunctionHandler.load_functions(), DISCOVERY_TOOL_NAMES.values(),
+                        youtube_tool=ReadYouTube.name)
+    shared_model = os.getenv("OPENAI_MODEL", TERRA)
+    reaction_model = os.getenv("REACTION_SHADOW_MODEL", shared_model)
+    for operation, model in (
+        ("reply", GPT_MODEL), ("reaction", reaction_model), ("discovery", shared_model),
+        ("memory_extraction", shared_model), ("memory_evaluation", shared_model),
+    ):
+        initialize_model_counters(operation, model_label(model))
+    for operation in ("reply_recall_embedding", "memory_evaluation_embedding",
+                      "memory_publication_embedding"):
+        initialize_model_counters(operation, model_label(EMBEDDING_MODEL), embeddings=True)
 
     runner = await start_metrics_server()
     try:

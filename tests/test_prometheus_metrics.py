@@ -2,6 +2,9 @@ import asyncio
 import json
 import os
 import socket
+import subprocess
+import sys
+import textwrap
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -58,6 +61,119 @@ class EndpointTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(OSError):
                     await app._main()
                 bot.assert_not_called()
+
+
+class StartupMetricsTests(unittest.TestCase):
+    def test_first_scrape_contains_zero_counters_and_first_event_counts_once(self):
+        # The registry is process-local. Start fresh regardless of test order.
+        result = subprocess.run([sys.executable, "-c", textwrap.dedent("""
+            import asyncio
+            import json
+            from types import SimpleNamespace
+            from unittest.mock import patch
+
+            import aiohttp
+
+            from discord_bot import app, metrics
+            from discord_bot.handlers.usage_metrics import model_call
+
+            async def test_startup():
+                snapshots = []
+
+                async def start_metrics_server():
+                    runner = await metrics.start_metrics_server("127.0.0.1", 0)
+                    url = f"http://127.0.0.1:{runner.addresses[0][1]}/metrics"
+                    async with aiohttp.ClientSession() as client:
+                        async with client.get(url) as response:
+                            response.raise_for_status()
+                            snapshots.append(await response.text())
+                    return runner
+
+                async def run_bot(*_credentials):
+                    if len(snapshots) == 1:
+                        await metrics.run_tool(
+                            asyncio.sleep(0, result={"ok": True}),
+                            tool="search_web", source="reply",
+                        )
+                        for model in ("gpt-6.1-terra", "unrecognized-test-model"):
+                            await model_call(asyncio.sleep(0, result=SimpleNamespace()),
+                                             model=model, operation="reply")
+
+                with (patch.object(app, "start_metrics_server", start_metrics_server),
+                      patch.object(app, "_run_bot", run_bot)):
+                    await app._main()
+                    await app._main()
+                print(json.dumps(snapshots))
+
+            asyncio.run(test_startup())
+        """)], env={**os.environ, "DISCORD_TOKEN": "test", "OPENAI_API_KEY": "test",
+                   "PINECONE_API_KEY": "test", "OPENAI_MODEL": "gpt-6.1-terra",
+                   "REACTION_SHADOW_MODEL": "unrecognized-test-model"},
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        before, after = json.loads(result.stdout)
+
+        def samples(scrape):
+            families = list(text_string_to_metric_families(scrape))
+            names = [family.name for family in families]
+            self.assertEqual(len(names), len(set(names)))
+            values = {}
+            for family in families:
+                for item in family.samples:
+                    key = (item.name, frozenset(item.labels.items()))
+                    self.assertNotIn(key, values)
+                    values[key] = item.value
+            return values
+
+        def key(name, **labels):
+            return "discord_bot_" + name, frozenset(labels.items())
+
+        initial = samples(before)
+        final = samples(after)
+        expected = (
+            key("requests_total", route="dm", outcome="answered"),
+            key("model_calls_total", operation="reply", model="gpt-6.1-terra", outcome="success"),
+            key("model_tokens_total", operation="reply_recall_embedding",
+                model="text-embedding-ada-002", kind="input"),
+            key("model_estimated_cost_usd_total", operation="discovery", model="gpt-6.1-terra"),
+            key("model_cost_coverage_total", operation="reaction", model="other",
+                status="unknown_price"),
+            key("tool_executions_total", tool="weather_lookup", source="reply", outcome="success"),
+            key("tool_executions_total", tool="get_webpage_contents", source="discovery",
+                outcome="timeout"),
+            key("tool_rejections_total", tool="read_youtube", source="reply", reason="invalid_cursor"),
+            key("tool_rejections_total", tool="unknown", source="reply", reason="unknown_tool"),
+            key("discovery_runs_total", outcome="complete"),
+            key("discovery_selections_total"),
+            key("discovery_delivery_attempts_total"),
+            key("discovery_deliveries_total", outcome="sent"),
+            key("discovery_deferrals_total", reason="active"),
+            key("reaction_decisions_total", trigger="pile_on", outcome="react"),
+            key("reaction_skips_total", trigger="conversation_window", reason="not_due"),
+            key("reaction_delivery_attempts_total", source="reply_tool"),
+            key("reaction_deliveries_total", source="proactive", outcome="emitted"),
+            key("memory_extraction_windows_total", outcome="processed"),
+            key("memory_candidate_outcomes_total", outcome="published"),
+            key("worker_cycles_total", worker="archive_reconciliation", outcome="partial_failure"),
+        )
+        for series in expected:
+            with self.subTest(series=series):
+                self.assertEqual(initial.get(series), 0)
+        tool = key("tool_executions_total", tool="search_web", source="reply", outcome="success")
+        self.assertEqual(initial.get(tool), 0)
+        self.assertEqual(final.get(tool), 1)
+        model_call = key("model_calls_total", operation="reply", model="gpt-6.1-terra",
+                         outcome="success")
+        self.assertEqual(final.get(model_call), 1)
+
+        dynamic = key("model_calls_total", operation="reply", model="other", outcome="success")
+        self.assertNotIn(dynamic, initial)
+        self.assertEqual(final.get(dynamic), 1)
+        self.assertNotIn("unrecognized-test-model", before + after)
+        self.assertNotIn(key("tool_executions_total", tool="weather_lookup",
+                             source="discovery", outcome="success"), initial)
+        self.assertNotIn(key("model_tokens_total", operation="reply_recall_embedding",
+                             model="text-embedding-ada-002", kind="output"), initial)
 
 
 class ReplyAndToolMetricsTests(unittest.IsolatedAsyncioTestCase):

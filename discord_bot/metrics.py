@@ -170,10 +170,81 @@ WORKER_CYCLE_STARTED = Gauge(
     ("worker",), registry=REGISTRY,
 )
 
-for worker in ("discovery", "autonomous_memory", "reaction_poller", "reaction_evaluator",
-               "archive_reconciliation"):
+WORKERS = ("discovery", "autonomous_memory", "reaction_poller", "reaction_evaluator",
+           "archive_reconciliation")
+
+for worker in WORKERS:
     for gauge in (WORKER_RUNNING, WORKER_LAST_SUCCESS, WORKER_CYCLE_STARTED):
         gauge.labels(worker)
+
+
+def initialize_counters(reply_tools, discovery_tools, *, youtube_tool):
+    """Expose bounded startup series without recording any activity."""
+    for route in ("dm", "mention"):
+        for outcome in ("answered", "fallback", "partial_delivery", "delivery_error",
+                        "internal_error", "cancelled"):
+            REQUESTS.labels(route, outcome)
+
+    for source, tools in (("reply", reply_tools), ("discovery", discovery_tools)):
+        for tool in tools:
+            for outcome in ("success", "error", "timeout", "cancelled"):
+                TOOL_EXECUTIONS.labels(tool, source, outcome)
+            if source == "reply":
+                TOOL_REJECTIONS.labels(tool, source, "budget")
+                TOOL_REJECTIONS.labels(tool, source, "invalid_arguments")
+    for reason in ("budget", "invalid_arguments", "unknown_tool"):
+        TOOL_REJECTIONS.labels("unknown", "reply", reason)
+    TOOL_REJECTIONS.labels(youtube_tool, "reply", "invalid_cursor")
+
+    for counter, labels in (
+        (DISCOVERY_RUNS, ("complete", "weak_context", "budget_exhausted",
+                          "deferred_quiet_hours", "deferred_after_work", "interrupted",
+                          "provider_error", "storage_error")),
+        (DISCOVERY_DELIVERIES, ("sent", "suppressed", "failed", "uncertain", "invalid_draft")),
+        (DISCOVERY_DEFERRALS, ("active",)),
+        (MEMORY_WINDOWS, ("processed", "skipped", "failed")),
+        (MEMORY_CANDIDATES, ("discard", "review", "blocked_create", "duplicate",
+                             "published", "failed")),
+    ):
+        for label in labels:
+            counter.labels(label)
+
+    for trigger in ("conversation_window", "pile_on"):
+        for outcome in ("ignore", "react", "invalid", "failed", "cancelled"):
+            REACTION_DECISIONS.labels(trigger, outcome)
+        for reason in ("model_retry_delay", "pending", "queue_full", "no_new_messages",
+                       "evaluation_budget"):
+            REACTION_SKIPS.labels(trigger, reason)
+    REACTION_SKIPS.labels("conversation_window", "not_due")
+    for reason in ("not_archived", "message_deleted", "already_evaluated", "archive_only"):
+        REACTION_SKIPS.labels("pile_on", reason)
+    for source in ("proactive", "reply_tool"):
+        REACTION_ATTEMPTS.labels(source)
+        for outcome in ("emitted", "suppressed", "failed", "uncertain"):
+            REACTION_DELIVERIES.labels(source, outcome)
+
+    for worker in WORKERS:
+        for outcome in ("success", "failed", "cancelled"):
+            WORKER_CYCLES.labels(worker, outcome)
+        if worker != "archive_reconciliation":
+            WORKER_CYCLES.labels(worker, "idle")
+        if worker != "reaction_poller":
+            WORKER_CYCLES.labels(worker, "partial_failure")
+
+
+def initialize_model_counters(operation, model, *, embeddings=False):
+    outcomes = ("success", "error", "timeout", "rate_limited")
+    if operation != "reply_recall_embedding":
+        outcomes += ("cancelled",)
+    if not embeddings:
+        outcomes += ("incomplete", "provider_error")
+    for outcome in outcomes:
+        MODEL_CALLS.labels(operation, model, outcome)
+    for kind in (("input",) if embeddings else ("input", "cached_input", "output")):
+        MODEL_TOKENS.labels(operation, model, kind)
+    for status in ("estimated", "missing_usage", "unknown_price", "unsupported_pricing"):
+        MODEL_COST_COVERAGE.labels(operation, model, status)
+    MODEL_COST.labels(operation, model)
 
 
 @contextmanager
