@@ -3,6 +3,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import httpx
+from openai import AsyncOpenAI
 from openai.types.responses.response_usage import ResponseUsage
 
 from discord_bot import metrics
@@ -32,6 +34,43 @@ class ModelMetricsTests(unittest.IsolatedAsyncioTestCase):
         expected_usd = (500 + 300 * 0.05 + 200 * 1.25 + 40 * 5) / 1_000_000
         self.assertAlmostEqual(sample("model_estimated_cost_usd_total", **labels), cost + expected_usd)
         create.assert_awaited_once()
+
+    async def test_sdk_response_without_optional_cache_writes_is_priced_for_ordinary_calls(self):
+        model = "gpt-6.1-terra"
+
+        def transport(_request):
+            return httpx.Response(200, json={
+                "id": "resp_test", "object": "response", "created_at": 0,
+                "status": "completed", "model": model, "service_tier": "default",
+                "output": [],
+                "usage": {
+                    "input_tokens": 1500, "output_tokens": 40, "total_tokens": 1540,
+                    "input_tokens_details": {"cached_tokens": 300},
+                    "output_tokens_details": {"reasoning_tokens": 0},
+                },
+            })
+
+        http = httpx.AsyncClient(transport=httpx.MockTransport(transport))
+        async with AsyncOpenAI(api_key="test", http_client=http) as client:
+            for operation, options, status in (
+                ("reaction", {}, "estimated"),
+                ("discovery", {"prompt_cache_options": {"mode": "explicit"}}, "unsupported_pricing"),
+            ):
+                with self.subTest(operation=operation):
+                    labels = {"operation": operation, "model": model}
+                    coverage = sample("model_cost_coverage_total", **labels, status=status)
+                    cost = sample("model_estimated_cost_usd_total", **labels)
+                    response, usage = await model_call(
+                        client.responses.create(model=model, input="test", **options),
+                        model=model, operation=operation, explicit_cache=bool(options),
+                    )
+                    self.assertIsInstance(response.usage, ResponseUsage)
+                    self.assertIsNone(usage.cache_write_tokens)
+                    self.assertEqual(sample("model_cost_coverage_total", **labels, status=status),
+                                     coverage + 1)
+                    expected = (1200 + 300 * .05 + 40 * 5) / 1_000_000 if not options else 0
+                    self.assertAlmostEqual(sample("model_estimated_cost_usd_total", **labels),
+                                           cost + expected)
 
     async def test_unknown_model_never_appears_and_remains_unpriced(self):
         labels = {"operation": "reaction", "model": "other"}

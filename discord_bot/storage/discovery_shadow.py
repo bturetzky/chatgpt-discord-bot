@@ -383,7 +383,8 @@ class DiscoveryShadow:
             max_output_tokens=1800,
             text={"format": {"type": "json_object"}}, store=False,
             **cache_options,
-        ), model=self.model, operation="discovery", timeout=25)
+        ), model=self.model, operation="discovery", timeout=25,
+            explicit_cache=bool(cache_options))
         self.db.execute(
             """UPDATE discovery_runs SET input_tokens=input_tokens+?,
                output_tokens=output_tokens+?, cached_input_tokens=cached_input_tokens+? WHERE id=?""",

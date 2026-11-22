@@ -47,6 +47,7 @@ class TokenUsage:
     cached_input_tokens: int = 0
     output_tokens: int = 0
     cache_write_tokens: int | None = None
+    cache_reads_reported: bool = True
     # The bot uses the provider's default cache lifetime.
     default_cache_lifetime: bool = True
 
@@ -63,14 +64,20 @@ def decode_usage(usage, *, embeddings=False):
     if input_count is None or output is None:
         return None
     details = getattr(usage, "input_tokens_details", None)
-    cached = _tokens(getattr(details, "cached_tokens", None)) or 0
+    cached = _tokens(getattr(details, "cached_tokens", None))
     writes = _tokens(getattr(details, "cache_write_tokens", None))
     lifetimes = getattr(details, "cache_write_tokens_details", None)
-    long_writes = _tokens(getattr(lifetimes, "ttl_12h_tokens", None)) or 0
-    return TokenUsage(input_count, cached, output, writes, not long_writes)
+    long_writes = (
+        lifetimes.get("ttl_12h_tokens") if isinstance(lifetimes, dict)
+        else getattr(lifetimes, "ttl_12h_tokens", None)
+    )
+    return TokenUsage(input_count, cached or 0, output, writes,
+                      cache_reads_reported=cached is not None,
+                      default_cache_lifetime=not long_writes)
 
 
-def _estimate(model, usage, *, embeddings=False, chat_overrides=False, tier=None):
+def _estimate(model, usage, *, embeddings=False, chat_overrides=False, tier=None,
+              explicit_cache=False):
     if usage is None:
         return "missing_usage", None
     if isinstance(tier, str) and tier not in ("default", "standard"):
@@ -90,7 +97,10 @@ def _estimate(model, usage, *, embeddings=False, chat_overrides=False, tier=None
         return "unknown_price", None
 
     writes = usage.cache_write_tokens or 0
-    if (model == TERRA and (usage.cache_write_tokens is None or usage.input_tokens > 272_000)
+    # Normal Responses can omit the cache-write field. An explicitly cached
+    # request needs a reported write count to estimate its charges.
+    if (model == TERRA and (not usage.cache_reads_reported or usage.input_tokens > 272_000)
+            or (explicit_cache and usage.cache_write_tokens is None)
             or not usage.default_cache_lifetime
             or usage.cached_input_tokens + writes > usage.input_tokens
             or (writes and model != TERRA)):
@@ -111,7 +121,8 @@ def _failure_outcome(error):
     return "error"
 
 
-def _record_call(operation, model, started, outcome, usage, *, embeddings=False, tier=None):
+def _record_call(operation, model, started, outcome, usage, *, embeddings=False, tier=None,
+                 explicit_cache=False):
     labels = (operation, model_label(model))
     metrics.increment(metrics.MODEL_CALLS, *labels, outcome)
     metrics.observe(metrics.MODEL_DURATION, started, operation)
@@ -122,14 +133,15 @@ def _record_call(operation, model, started, outcome, usage, *, embeddings=False,
                               amount=usage.cached_input_tokens)
             metrics.increment(metrics.MODEL_TOKENS, *labels, "output", amount=usage.output_tokens)
     coverage, cost = _estimate(model, usage, embeddings=embeddings,
-                               chat_overrides=operation == "reply", tier=tier)
+                               chat_overrides=operation == "reply", tier=tier,
+                               explicit_cache=explicit_cache)
     metrics.increment(metrics.MODEL_COST_COVERAGE, *labels, coverage)
     if cost is not None:
         metrics.increment(metrics.MODEL_COST, *labels, amount=cost)
 
 
 async def model_call(call, *, model, operation=None, timeout=None, embeddings=False,
-                     usage_totals=None):
+                     usage_totals=None, explicit_cache=False):
     """Observe one SDK invocation, including its retries and caller deadline."""
     started = time.monotonic()
     try:
@@ -156,7 +168,7 @@ async def model_call(call, *, model, operation=None, timeout=None, embeddings=Fa
                    "provider_error" if status in ("failed", "cancelled", "queued", "in_progress")
                    else "success")
         _record_call(operation, model, started, outcome, usage, embeddings=embeddings,
-                     tier=getattr(response, "service_tier", None))
+                     tier=getattr(response, "service_tier", None), explicit_cache=explicit_cache)
     return response, usage
 
 
