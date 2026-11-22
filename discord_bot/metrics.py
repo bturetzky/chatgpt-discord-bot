@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import time
+from contextlib import contextmanager
 
 from aiohttp import web
 from prometheus_client import (
@@ -131,3 +132,78 @@ MODEL_COST_COVERAGE = Counter(
     PREFIX + "model_cost_coverage_total", "Availability of a cost estimate by logical call.",
     ("operation", "model", "status"), registry=REGISTRY,
 )
+
+
+DISCOVERY_RUNS = Counter(PREFIX + "discovery_runs_total", "Terminal reserved discovery runs.",
+                         ("outcome",), registry=REGISTRY)
+DISCOVERY_SELECTIONS = Counter(PREFIX + "discovery_selections_total", "Selected discovery drafts.",
+                               registry=REGISTRY)
+DISCOVERY_ATTEMPTS = Counter(PREFIX + "discovery_delivery_attempts_total", "Discovery send attempts.",
+                             registry=REGISTRY)
+DISCOVERY_DELIVERIES = Counter(PREFIX + "discovery_deliveries_total", "Selected draft delivery outcomes.",
+                               ("outcome",), registry=REGISTRY)
+DISCOVERY_DEFERRALS = Counter(PREFIX + "discovery_deferrals_total", "Persisted discovery deferrals.",
+                              ("reason",), registry=REGISTRY)
+MEMORY_WINDOWS = Counter(PREFIX + "memory_extraction_windows_total", "Memory extraction window outcomes.",
+                         ("outcome",), registry=REGISTRY)
+MEMORY_CANDIDATES = Counter(PREFIX + "memory_candidate_outcomes_total", "Memory candidate dispositions.",
+                            ("outcome",), registry=REGISTRY)
+REACTION_DECISIONS = Counter(PREFIX + "reaction_decisions_total", "Autonomous reaction evaluations.",
+                             ("trigger", "outcome"), registry=REGISTRY)
+REACTION_ATTEMPTS = Counter(PREFIX + "reaction_delivery_attempts_total", "Discord add-reaction attempts.",
+                            ("source",), registry=REGISTRY)
+REACTION_DELIVERIES = Counter(PREFIX + "reaction_deliveries_total", "Discord reaction delivery outcomes.",
+                              ("source", "outcome"), registry=REGISTRY)
+REACTION_SKIPS = Counter(PREFIX + "reaction_skips_total", "Autonomous reaction scheduling gates.",
+                         ("trigger", "reason"), registry=REGISTRY)
+
+WORKER_RUNNING = Gauge(PREFIX + "worker_running", "Whether the background task is running.",
+                       ("worker",), registry=REGISTRY)
+WORKER_CYCLES = Counter(PREFIX + "worker_cycles_total", "Terminal worker cycles.",
+                        ("worker", "outcome"), registry=REGISTRY)
+WORKER_LAST_SUCCESS = Gauge(
+    PREFIX + "worker_last_success_timestamp_seconds", "Unix time of the last clean worker cycle.",
+    ("worker",), registry=REGISTRY,
+)
+WORKER_CYCLE_STARTED = Gauge(
+    PREFIX + "worker_cycle_started_timestamp_seconds", "Unix start time of current work, or zero.",
+    ("worker",), registry=REGISTRY,
+)
+
+for worker in ("discovery", "autonomous_memory", "reaction_poller", "reaction_evaluator",
+               "archive_reconciliation"):
+    for gauge in (WORKER_RUNNING, WORKER_LAST_SUCCESS, WORKER_CYCLE_STARTED):
+        gauge.labels(worker)
+
+
+@contextmanager
+def worker_running(worker):
+    set_gauge(WORKER_RUNNING, 1, worker)
+    try:
+        yield
+    finally:
+        set_gauge(WORKER_RUNNING, 0, worker)
+
+
+@contextmanager
+def worker_cycle(worker):
+    outcome = "success"
+    set_gauge(WORKER_CYCLE_STARTED, time.time(), worker)
+
+    def finish(result):
+        nonlocal outcome
+        outcome = result
+
+    try:
+        yield finish
+    except asyncio.CancelledError:
+        outcome = "cancelled"
+        raise
+    except Exception:
+        outcome = "failed"
+        raise
+    finally:
+        set_gauge(WORKER_CYCLE_STARTED, 0, worker)
+        increment(WORKER_CYCLES, worker, outcome)
+        if outcome in ("success", "idle"):
+            set_gauge(WORKER_LAST_SUCCESS, time.time(), worker)

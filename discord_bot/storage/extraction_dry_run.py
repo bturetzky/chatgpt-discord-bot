@@ -5,6 +5,7 @@ import re
 import unicodedata
 from datetime import datetime, timezone
 
+from .. import metrics
 from ..handlers.usage_metrics import model_call
 from openai import AsyncOpenAI
 
@@ -68,7 +69,7 @@ def _canonical(summary):
 
 async def dry_run(
     connection, *, guild_id, since, until, max_windows=5, max_rows=1000,
-    max_messages=40, model, bot_author_id=None, api_key=None, client=None, observe_usage=False,
+    max_messages=40, model, bot_author_id=None, api_key=None, client=None, autonomous=False,
 ):
     """Explicit bounded slice; stores proposed candidates locally only.
 
@@ -99,6 +100,8 @@ async def dry_run(
         for window in windows:
             if not any(row[3] != bot_author_id for row in window.messages):
                 counts["skipped"] += 1
+                if autonomous:
+                    metrics.increment(metrics.MEMORY_WINDOWS, "skipped")
                 continue
             row = connection.execute(
                 "SELECT status FROM extraction_batches WHERE batch_id=?",
@@ -106,6 +109,8 @@ async def dry_run(
             ).fetchone()
             if row[0] == "completed":
                 counts["skipped"] += 1
+                if autonomous:
+                    metrics.increment(metrics.MEMORY_WINDOWS, "skipped")
                 continue
             connection.execute(
                 """UPDATE extraction_batches SET status='processing',
@@ -115,7 +120,7 @@ async def dry_run(
                 response, usage = await model_call(client.responses.create(
                     model=model, instructions=EXTRACTION_INSTRUCTIONS,
                     input=_input(window, bot_author_id), max_output_tokens=1200,
-                ), model=model, operation="memory_extraction" if observe_usage else None,
+                ), model=model, operation="memory_extraction" if autonomous else None,
                     timeout=45)
                 candidates = parse_candidates(response.output_text, window, bot_author_id)
                 input_tokens = usage.input_tokens if usage is not None else 0
@@ -171,6 +176,8 @@ async def dry_run(
                     connection.execute("ROLLBACK")
                     raise
                 counts["processed"] += 1
+                if autonomous:
+                    metrics.increment(metrics.MEMORY_WINDOWS, "processed")
                 counts["candidates"] += len(candidates)
                 counts["input_tokens"] += input_tokens
                 counts["output_tokens"] += output_tokens
@@ -181,6 +188,8 @@ async def dry_run(
                     (type(exc).__name__[:80], window.batch_id),
                 )
                 counts["failed"] += 1
+                if autonomous:
+                    metrics.increment(metrics.MEMORY_WINDOWS, "failed")
                 logging.warning("Culture extraction dry-run failed: type=%s", type(exc).__name__)
     finally:
         if owns_client:

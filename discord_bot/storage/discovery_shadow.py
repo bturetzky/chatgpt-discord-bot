@@ -31,6 +31,7 @@ MAX_RESULTS = 5
 LIMITS = {"searches": 10, "fetches": 10, "model_calls": 20, "embedding_calls": 3}
 DAY = 24 * 60 * 60
 DEFAULT_INTERVAL = DAY
+DEFERRED_ACTIVE = object()
 CANDIDATE_COOLDOWN = DAY
 CONTEXT_CHARS = 60_000
 LINK = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
@@ -191,10 +192,13 @@ class DiscoveryShadow:
         try:
             reservation = self.reserve_locked(channel_hints, int(self.clock()))
             self.db.execute("COMMIT")
-            return reservation
         except Exception:
             self.db.execute("ROLLBACK")
             raise
+        if reservation is DEFERRED_ACTIVE:
+            metrics.increment(metrics.DISCOVERY_DEFERRALS, "active")
+            return None
+        return reservation
 
     def reserve_locked(self, channel_hints, now):
         if not discovery_allowed(now):
@@ -262,6 +266,7 @@ class DiscoveryShadow:
                 """INSERT INTO discovery_runs(guild_id, channel_id, started_at, outcome)
                    VALUES (?, ?, ?, 'deferred_active')""", (guild_id, channel, now),
             )
+            return DEFERRED_ACTIVE
         return None
 
     def context(self, guild_id, channel, eligible):
@@ -686,10 +691,11 @@ class DiscoveryShadow:
     async def run_once(self, channel_hints):
         reservation = self.reserve(channel_hints)
         if reservation is None:
-            return
+            return "idle"
         run, guild_id, channel = reservation
         started = time.monotonic()
         outcome = "provider_error"
+        delivery = None
         stage = "context"
         trace = {"events": []}
         try:
@@ -713,13 +719,17 @@ class DiscoveryShadow:
                     run, guild_id, channel, channel_hints[guild_id, channel],
                     eligible, windows, memories, trace,
                 )
-                if outcome == "complete" and trace.get("selected_url") and self.sender is not None:
+                if trace.get("selected_url"):
+                    metrics.increment(metrics.DISCOVERY_SELECTIONS)
+                    delivery = "suppressed"
+                if outcome == "complete" and delivery is not None and self.sender is not None:
                     stage = "delivery"
                     if not discovery_allowed(self.clock()):
                         outcome = "deferred_quiet_hours"
                     elif self.active(guild_id, channel):
                         outcome = "deferred_after_work"
                     else:
+                        delivery = "failed"
                         candidate = self.db.execute(
                             """SELECT draft, COALESCE(source_url, url)
                                FROM discovery_candidates WHERE run_id=? AND url=?""",
@@ -731,6 +741,8 @@ class DiscoveryShadow:
                                 # Record intent before sending; never replay an uncertain send.
                                 trace["delivery"] = {"status": "attempting"}
                                 self.record(run, trace)
+                                metrics.increment(metrics.DISCOVERY_ATTEMPTS)
+                                delivery = "uncertain"
                                 try:
                                     await self.sender(channel, content)
                                 except Exception as error:
@@ -739,10 +751,13 @@ class DiscoveryShadow:
                                     trace["delivery"] = {"status": "uncertain",
                                                          "error_type": type(error).__name__}
                                 else:
+                                    delivery = "sent"
                                     trace["delivery"] = {"status": "sent"}
                             else:
+                                delivery = "invalid_draft"
                                 trace["delivery"] = {"status": "invalid_length"}
                         else:
+                            delivery = "invalid_draft"
                             trace["delivery"] = {"status": "missing_draft"}
         except asyncio.CancelledError:
             outcome = "interrupted"
@@ -751,23 +766,41 @@ class DiscoveryShadow:
             log_run_failure(run, stage, error)
             trace["failure"] = {"stage": stage, "type": type(error).__name__}
         finally:
-            self.db.execute("BEGIN IMMEDIATE")
+            if delivery is not None:
+                metrics.increment(metrics.DISCOVERY_DELIVERIES, delivery)
             try:
-                if trace.get("selected_url"):
-                    self.db.execute(
-                        "UPDATE discovery_candidates SET reason='selected' WHERE run_id=? AND url=?",
-                        (run, trace["selected_url"]),
-                    )
-                self.db.execute(
-                    "UPDATE discovery_runs SET outcome=?, trace=?, duration_ms=? WHERE id=?",
-                    (outcome, json.dumps(trace, ensure_ascii=False), int((time.monotonic() - started) * 1000), run),
-                )
-                self.db.execute("COMMIT")
+                self._finish_run(run, started, outcome, trace)
             except Exception:
-                self.db.execute("ROLLBACK")
+                metrics.increment(metrics.DISCOVERY_RUNS, "storage_error")
                 raise
+            else:
+                metrics.increment(metrics.DISCOVERY_RUNS, outcome)
+        if outcome == "provider_error":
+            return "failed"
+        if "failure" in trace or delivery in ("failed", "uncertain", "invalid_draft"):
+            return "partial_failure"
+        return "success"
+
+    def _finish_run(self, run, started, outcome, trace):
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            if trace.get("selected_url"):
+                self.db.execute(
+                    "UPDATE discovery_candidates SET reason='selected' WHERE run_id=? AND url=?",
+                    (run, trace["selected_url"]),
+                )
+            self.db.execute(
+                "UPDATE discovery_runs SET outcome=?, trace=?, duration_ms=? WHERE id=?",
+                (outcome, json.dumps(trace, ensure_ascii=False), int((time.monotonic() - started) * 1000), run),
+            )
+            self.db.execute("COMMIT")
+        except Exception:
+            self.db.execute("ROLLBACK")
+            raise
 
     async def run_forever(self, channel_hints):
-        while True:
-            await self.run_once(channel_hints())
-            await asyncio.sleep(60)
+        with metrics.worker_running("discovery"):
+            while True:
+                with metrics.worker_cycle("discovery") as finish:
+                    finish(await self.run_once(channel_hints()))
+                await asyncio.sleep(60)

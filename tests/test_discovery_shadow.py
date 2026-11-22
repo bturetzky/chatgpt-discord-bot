@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 from contextlib import redirect_stdout
 from io import StringIO
@@ -24,6 +25,7 @@ from discord_bot.storage.discovery_shadow import (
     canonical_url, discovery_allowed, discovery_interval_seconds,
 )
 from discord_bot.storage.message_archive import utc_iso
+from tests.test_prometheus_metrics import sample
 
 URL = "https://example.org/releases/lunar"
 QUOTE = "The Lunar Colony expansion adds cooperative missions and launches this Friday."
@@ -631,7 +633,7 @@ class ShadowTests(IsolatedAsyncioTestCase):
         self.now = pacific_timestamp(8)
         self.random_slot.stop()
         with patch('discord_bot.storage.discovery_shadow.secrets.randbelow', return_value=3 * 3600) as draw:
-            await self.worker().run_once(self.hints)
+            self.assertEqual(await self.worker().run_once(self.hints), "idle")
             self.assertEqual(self.db.execute("SELECT count(*) FROM discovery_runs").fetchone()[0], 0)
             self.assertEqual(self.db.execute(
                 "SELECT scheduled_at FROM discovery_daily_schedule",
@@ -639,7 +641,7 @@ class ShadowTests(IsolatedAsyncioTestCase):
             self.database.close()
             self.database.open()
             self.now = pacific_timestamp(10, 59)
-            await self.worker().run_once(self.hints)
+            self.assertEqual(await self.worker().run_once(self.hints), "idle")
             self.assertEqual(self.db.execute("SELECT count(*) FROM discovery_runs").fetchone()[0], 0)
             self.now = pacific_timestamp(11)
             await self.worker().run_once(self.hints)
@@ -652,11 +654,61 @@ class ShadowTests(IsolatedAsyncioTestCase):
         self.responses(SEARCH, FETCH, {**PROPOSE, "draft": DRAFT}, APPROVED, FINISH)
         worker = self.worker()
         worker.sender = sender
-        await worker.run_once(self.hints)
+        selected = sample("discovery_selections_total")
+        attempts = sample("discovery_delivery_attempts_total")
+        sent = sample("discovery_deliveries_total", outcome="sent")
+        self.assertEqual(await worker.run_once(self.hints), "success")
         sender.assert_awaited_once()
+        self.assertEqual(sample("discovery_selections_total"), selected + 1)
+        self.assertEqual(sample("discovery_delivery_attempts_total"), attempts + 1)
+        self.assertEqual(sample("discovery_deliveries_total", outcome="sent"), sent + 1)
         content = sender.await_args.args[1]
         self.assertEqual(content.count(URL), 1)
         self.assertEqual(content, f"{DRAFT}\n<{URL}>")
+
+    async def test_delivery_metrics_survive_finalization_failure(self):
+        self.responses(SEARCH, FETCH, {**PROPOSE, "draft": DRAFT}, APPROVED, FINISH)
+        worker = self.worker()
+        worker.sender = AsyncMock()
+        sent = sample("discovery_deliveries_total", outcome="sent")
+        failed = sample("discovery_runs_total", outcome="storage_error")
+        with patch.object(worker, "_finish_run", side_effect=sqlite3.OperationalError):
+            with self.assertRaises(sqlite3.OperationalError):
+                await worker.run_once(self.hints)
+        self.assertEqual(sample("discovery_deliveries_total", outcome="sent"), sent + 1)
+        self.assertEqual(sample("discovery_runs_total", outcome="storage_error"), failed + 1)
+
+    async def test_selected_discovery_suppressed_at_send_time(self):
+        worker = self.worker()
+        worker.sender = AsyncMock()
+        selected = sample("discovery_selections_total")
+        attempts = sample("discovery_delivery_attempts_total")
+        suppressed = sample("discovery_deliveries_total", outcome="suppressed")
+
+        async def select(*args):
+            args[-1]["selected_url"] = URL
+            self.now = pacific_timestamp(22)
+            return "complete"
+
+        with patch.object(worker, "explore", side_effect=select):
+            await worker.run_once(self.hints)
+        worker.sender.assert_not_awaited()
+        self.assertEqual(sample("discovery_selections_total"), selected + 1)
+        self.assertEqual(sample("discovery_delivery_attempts_total"), attempts)
+        self.assertEqual(sample("discovery_deliveries_total", outcome="suppressed"), suppressed + 1)
+
+    async def test_cancelled_discovery_send_is_uncertain(self):
+        self.responses(SEARCH, FETCH, {**PROPOSE, "draft": DRAFT}, APPROVED, FINISH)
+        worker = self.worker()
+        worker.sender = AsyncMock(side_effect=asyncio.CancelledError)
+        attempts = sample("discovery_delivery_attempts_total")
+        uncertain = sample("discovery_deliveries_total", outcome="uncertain")
+        sent = sample("discovery_deliveries_total", outcome="sent")
+        with self.assertRaises(asyncio.CancelledError):
+            await worker.run_once(self.hints)
+        self.assertEqual(sample("discovery_delivery_attempts_total"), attempts + 1)
+        self.assertEqual(sample("discovery_deliveries_total", outcome="uncertain"), uncertain + 1)
+        self.assertEqual(sample("discovery_deliveries_total", outcome="sent"), sent)
 
     async def test_overdue_overnight_run_reserves_once_at_opening_after_restart(self):
         self.db.execute("INSERT INTO discovery_runs(guild_id, channel_id, started_at) VALUES ('1', '2', ?)",

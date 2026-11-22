@@ -107,6 +107,35 @@ class ModelMetricsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sample("model_cost_coverage_total", **labels, status="missing_usage"),
                          missing + 1)
 
+    async def test_sdk_retry_reports_one_call_and_one_usage_sample(self):
+        operation, model = "memory_evaluation_embedding", "text-embedding-ada-002"
+        labels = {"operation": operation, "model": model}
+        calls = sample("model_calls_total", **labels, outcome="success")
+        tokens = sample("model_tokens_total", **labels, kind="input")
+        totals = {"embeddings_requests": 0, "embedding_tokens": 0}
+        attempts = 0
+
+        def transport(_request):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                return httpx.Response(429, headers={"Retry-After": "0.001"},
+                                      json={"error": {"message": "test retry"}})
+            return httpx.Response(200, json={
+                "object": "list", "model": model,
+                "data": [{"index": 0, "object": "embedding", "embedding": [0.25]}],
+                "usage": {"prompt_tokens": 7, "total_tokens": 7},
+            })
+
+        http = httpx.AsyncClient(transport=httpx.MockTransport(transport))
+        async with AsyncOpenAI(api_key="test", http_client=http, max_retries=1) as client:
+            await model_call(client.embeddings.create(model=model, input=["test"]),
+                             model=model, operation=operation, embeddings=True, usage_totals=totals)
+        self.assertEqual(attempts, 2)
+        self.assertEqual(sample("model_calls_total", **labels, outcome="success"), calls + 1)
+        self.assertEqual(sample("model_tokens_total", **labels, kind="input"), tokens + 7)
+        self.assertEqual(totals, {"embeddings_requests": 1, "embedding_tokens": 7})
+
     def test_sync_embedding_uses_reported_prompt_tokens(self):
         labels = {"operation": "reply_recall_embedding", "model": "text-embedding-ada-002"}
         before = sample("model_tokens_total", **labels, kind="input")

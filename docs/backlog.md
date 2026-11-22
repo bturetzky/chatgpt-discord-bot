@@ -30,13 +30,13 @@ Dev Discord acceptance is pending for hourly quiet-channel evaluation, the 10-me
 
 **Codex boundary:** Implement targeted update/delete handling in SQLite and Pinecone, prevent retired memories from reappearing, and handle legacy vectors with missing provenance conservatively. Test correction, deletion, source edits/deletes, retries and retrieval after removal. No general multi-guild ACL system or wholesale legacy migration.
 
-### Proactive external discovery — finish shadow review, then live posting
+### Proactive external discovery — operator verification and delivery guardrails
 
-**Pending operator verification:** Review the contextual exploration worker in dev before considering a separate live-posting PR. Use the [dev acceptance procedure](operations.md#discovery-shadow-dev-acceptance) to assess conversational relevance, novelty, source grounding, privacy, duration and cost. Include an older find or an adjacent interest, an already-discussed item under different wording, and a run that ends without a selected post. Confirm durable scheduling and morning deferral, compare reported within-run cache reuse on post-rollout runs, and inspect rejection explanations alongside drafts. CI and rollout checks cover deployment and startup.
+**Pending operator verification:** Review contextual exploration and opt-in delivery on dev. Use the [dev acceptance procedure](operations.md#discovery-shadow-dev-acceptance) to assess conversational relevance, novelty, source grounding, privacy, duration, and cost. Confirm the persisted daily schedule, check for a clean no-selection run, and verify that a delivered post includes one source link. CI and rollout checks cover deployment and startup.
 
-### Phase 2 — guarded live posting (separate approval and PR)
+### Guarded live posting follow-up
 
-Only after the operator accepts Phase 1 candidate quality: implement an **explicit opt-in** posting switch, channel allowlist, durable server-wide weekly cap (initially 1–2), per-channel and server cooldowns, story-level dedupe, source verification at posting time where appropriate, permissions/rate-limit/error handling, and an immediate kill switch. Reserve/record posting intent and reconcile ambiguous delivery outcomes rather than blindly retrying and duplicating messages. Preserve manual dev acceptance and manual production promotion; do not silently enable production posting.
+Current code gates discovery at startup, rechecks activity and quiet hours at send time, and records send intent. After operator acceptance of candidate quality, add a channel allowlist, durable server-wide weekly cap (initially 1–2), per-channel and server cooldowns, story-level dedupe, source verification at posting time where appropriate, permissions/rate-limit/error handling, and an immediate kill switch. Reserve/record posting intent and reconcile ambiguous delivery outcomes rather than blindly retrying and duplicating messages. Preserve manual dev acceptance and manual production promotion; do not silently enable production posting.
 
 **Phase 2 acceptance:** demonstrate in dev that only permitted channels receive source-linked openers, active discussions are not interrupted, weekly/cooldown limits survive restart, duplicate stories are not reposted, provider/Discord failures are safe, and disabling posting stops further messages. Production enablement is a separate operator decision.
 

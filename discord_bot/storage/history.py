@@ -4,21 +4,27 @@ from datetime import datetime, timedelta, timezone
 
 import discord
 
+from .. import metrics
+
 
 async def reconcile_recent(client, archive, *, limit_per_channel=100):
     """Replay recent messages on startup; duplicates and tombstones remain safe."""
-    for guild in client.guilds:
-        for channel in guild.text_channels:
-            if not channel.permissions_for(guild.me).read_message_history:
-                continue
-            count = 0
-            try:
-                async for message in channel.history(limit=limit_per_channel):
-                    archive.upsert(message)
-                    count += 1
-                logging.info("History reconciliation: channel=%s scanned=%d", channel.id, count)
-            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-                logging.exception("History reconciliation unavailable: channel=%s", channel.id)
+    with metrics.worker_running("archive_reconciliation"), metrics.worker_cycle(
+        "archive_reconciliation"
+    ) as finish:
+        for guild in client.guilds:
+            for channel in guild.text_channels:
+                if not channel.permissions_for(guild.me).read_message_history:
+                    continue
+                count = 0
+                try:
+                    async for message in channel.history(limit=limit_per_channel):
+                        archive.upsert(message)
+                        count += 1
+                    logging.info("History reconciliation: channel=%s scanned=%d", channel.id, count)
+                except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                    finish("partial_failure")
+                    logging.exception("History reconciliation unavailable: channel=%s", channel.id)
 
 
 async def backfill_channel(channel, archive, *, limit, cutoff, dry_run=False):

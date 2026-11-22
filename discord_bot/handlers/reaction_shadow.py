@@ -9,8 +9,10 @@ import time
 from uuid import uuid4
 
 import discord
-from .usage_metrics import model_call
 from openai import AsyncOpenAI
+
+from .. import metrics
+from .usage_metrics import model_call
 
 from ..reaction_emoji import usable_guild_emoji
 
@@ -47,20 +49,24 @@ class ReactionShadow:
             self.worker = asyncio.create_task(self._run(), name="reaction-windows")
 
     async def _run(self):
-        while True:
-            try:
-                due = self.db.execute(
-                    """SELECT channel_id FROM messages
-                       WHERE guild_id=? AND reaction_queued_at > 0 AND deleted_at IS NULL
-                       GROUP BY channel_id HAVING COUNT(*) >= ? OR MIN(reaction_queued_at) <= ?
-                       ORDER BY MIN(reaction_queued_at)""",
-                    (self.guild_id, self.MESSAGE_THRESHOLD, time.time() - self.INTERVAL),
-                ).fetchall()
-                for (channel_id,) in due:
-                    self._schedule(channel_id)
-            except Exception:
-                logging.exception("Reaction window poll failed")
-            await asyncio.sleep(self.POLL_INTERVAL)
+        with metrics.worker_running("reaction_poller"):
+            while True:
+                try:
+                    with metrics.worker_cycle("reaction_poller") as finish:
+                        due = self.db.execute(
+                            """SELECT channel_id FROM messages
+                               WHERE guild_id=? AND reaction_queued_at > 0 AND deleted_at IS NULL
+                               GROUP BY channel_id HAVING COUNT(*) >= ? OR MIN(reaction_queued_at) <= ?
+                               ORDER BY MIN(reaction_queued_at)""",
+                            (self.guild_id, self.MESSAGE_THRESHOLD, time.time() - self.INTERVAL),
+                        ).fetchall()
+                        for (channel_id,) in due:
+                            self._schedule(channel_id)
+                        if not due:
+                            finish("idle")
+                except Exception:
+                    logging.exception("Reaction window poll failed")
+                await asyncio.sleep(self.POLL_INTERVAL)
 
     def observe_message(self, message):
         if (self.closed or message.guild is None or str(message.guild.id) != self.guild_id
@@ -133,10 +139,13 @@ class ReactionShadow:
         key = (channel_id, message_id)
         trigger = "pile_on" if message_id is not None else "conversation_window"
         if self._retry_delayed(channel_id):
+            metrics.increment(metrics.REACTION_SKIPS, trigger, "model_retry_delay")
             logging.debug("Reaction skipped: trigger=%s channel_id=%s reason=model_retry_delay",
                           trigger, channel_id)
             return
         if key in self.pending or len(self.pending) >= 16:
+            metrics.increment(metrics.REACTION_SKIPS, trigger,
+                              "pending" if key in self.pending else "queue_full")
             logging.info("Reaction skipped: trigger=%s channel_id=%s message_id=%s reason=%s",
                          trigger, channel_id, message_id,
                          "pending" if key in self.pending else "queue_full")
@@ -148,51 +157,59 @@ class ReactionShadow:
     async def _process(self, channel_id, message_id, trigger, force):
         try:
             async with self.lock:
-                if message_id is not None:
-                    skip = self._pile_on_skip(channel_id, message_id)
+                # The lock holder owns both gauges until it leaves this scope.
+                with metrics.worker_running("reaction_evaluator"), metrics.worker_cycle(
+                    "reaction_evaluator"
+                ) as finish:
+                    if message_id is not None:
+                        skip = self._pile_on_skip(channel_id, message_id)
+                        if skip:
+                            finish("idle")
+                            metrics.increment(metrics.REACTION_SKIPS, trigger, skip)
+                            logging.info("Reaction skipped: trigger=%s channel_id=%s message_id=%s reason=%s",
+                                         trigger, channel_id, message_id, skip)
+                            return
+                    candidates = self.db.execute(
+                        """SELECT message_id, reaction_queued_at FROM messages
+                           WHERE guild_id=? AND channel_id=? AND reaction_queued_at > 0
+                             AND deleted_at IS NULL AND (? IS NULL OR message_id=?)
+                           ORDER BY reaction_queued_at, created_at, message_id LIMIT ?""",
+                        (self.guild_id, channel_id, message_id, message_id, self.WINDOW_SIZE),
+                    ).fetchall()
+                    count = len(candidates)
+                    skip = None
+                    if not count:
+                        skip = "no_new_messages"
+                    elif (message_id is None and not force and count < self.MESSAGE_THRESHOLD
+                          and candidates[0][1] > time.time() - self.INTERVAL):
+                        skip = "not_due"
+                    elif self._retry_delayed(channel_id):
+                        skip = "model_retry_delay"
+                    elif self.db.execute(
+                        """SELECT COUNT(*) FROM shadow_evaluations
+                           WHERE guild_id=? AND evaluated_at >= datetime('now', '-24 hours')""",
+                        (self.guild_id,),
+                    ).fetchone()[0] >= self.max_evaluations:
+                        skip = "evaluation_budget"
                     if skip:
-                        logging.info("Reaction skipped: trigger=%s channel_id=%s message_id=%s reason=%s",
-                                     trigger, channel_id, message_id, skip)
+                        finish("idle")
+                        metrics.increment(metrics.REACTION_SKIPS, trigger, skip)
+                        logging.info("Reaction skipped: trigger=%s channel_id=%s new_messages=%d reason=%s",
+                                     trigger, channel_id, count, skip)
                         return
-                candidates = self.db.execute(
-                    """SELECT message_id, reaction_queued_at FROM messages
-                       WHERE guild_id=? AND channel_id=? AND reaction_queued_at > 0
-                         AND deleted_at IS NULL AND (? IS NULL OR message_id=?)
-                       ORDER BY reaction_queued_at, created_at, message_id LIMIT ?""",
-                    (self.guild_id, channel_id, message_id, message_id, self.WINDOW_SIZE),
-                ).fetchall()
-                count = len(candidates)
-                skip = None
-                if not count:
-                    skip = "no_new_messages"
-                elif (message_id is None and not force and count < self.MESSAGE_THRESHOLD
-                      and candidates[0][1] > time.time() - self.INTERVAL):
-                    skip = "not_due"
-                elif self._retry_delayed(channel_id):
-                    skip = "model_retry_delay"
-                elif self.db.execute(
-                    """SELECT COUNT(*) FROM shadow_evaluations
-                       WHERE guild_id=? AND evaluated_at >= datetime('now', '-24 hours')""",
-                    (self.guild_id,),
-                ).fetchone()[0] >= self.max_evaluations:
-                    skip = "evaluation_budget"
-                if skip:
-                    logging.info("Reaction skipped: trigger=%s channel_id=%s new_messages=%d reason=%s",
-                                 trigger, channel_id, count, skip)
-                    return
 
-                candidate_ids = [row[0] for row in candidates]
-                context = self._context(channel_id, candidate_ids, pile_on=message_id is not None)
-                evaluation_id = str(uuid4())
-                self.db.execute(
-                    """INSERT INTO shadow_evaluations
-                       (message_id, guild_id, channel_id, trigger, status, new_message_count)
-                       VALUES (?, ?, ?, ?, 'reserved', ?)""",
-                    (evaluation_id, self.guild_id, channel_id, trigger, count),
-                )
-                logging.info("Reaction evaluating: trigger=%s channel_id=%s new_messages=%d context_messages=%d",
-                             trigger, channel_id, count, len(context))
-                await self._evaluate(evaluation_id, channel_id, candidate_ids, context, trigger)
+                    candidate_ids = [row[0] for row in candidates]
+                    context = self._context(channel_id, candidate_ids, pile_on=message_id is not None)
+                    evaluation_id = str(uuid4())
+                    self.db.execute(
+                        """INSERT INTO shadow_evaluations
+                           (message_id, guild_id, channel_id, trigger, status, new_message_count)
+                           VALUES (?, ?, ?, ?, 'reserved', ?)""",
+                        (evaluation_id, self.guild_id, channel_id, trigger, count),
+                    )
+                    logging.info("Reaction evaluating: trigger=%s channel_id=%s new_messages=%d context_messages=%d",
+                                 trigger, channel_id, count, len(context))
+                    finish(await self._evaluate(evaluation_id, channel_id, candidate_ids, context, trigger))
         except Exception:
             logging.exception("Reaction evaluation failed: trigger=%s channel_id=%s", trigger, channel_id)
 
@@ -276,7 +293,11 @@ class ReactionShadow:
                 text={"format": {"type": "json_object"}},
                 store=False,
             ), model=self.model, operation="reaction", timeout=25)
+        except asyncio.CancelledError:
+            metrics.increment(metrics.REACTION_DECISIONS, trigger, "cancelled")
+            raise
         except Exception as exc:
+            metrics.increment(metrics.REACTION_DECISIONS, trigger, "failed")
             reason = type(exc).__name__
             self.db.execute(
                 """UPDATE shadow_evaluations SET status='failed', reason_category=? WHERE message_id=?""",
@@ -284,7 +305,7 @@ class ReactionShadow:
             )
             logging.warning("Reaction model failure: trigger=%s channel_id=%s new_messages=%d reason=%s",
                             trigger, channel_id, len(candidate_ids), reason)
-            return
+            return "failed"
 
         input_tokens = usage.input_tokens if usage is not None else 0
         output_tokens = usage.output_tokens if usage is not None else 0
@@ -328,6 +349,8 @@ class ReactionShadow:
             self.db.execute("ROLLBACK")
             raise
 
+        metrics.increment(metrics.REACTION_DECISIONS, trigger, decision or "invalid")
+        delivery = None
         if decision == "react":
             try:
                 outcome = await self._post(evaluation_id, channel_id, message_id, emoji)
@@ -339,6 +362,11 @@ class ReactionShadow:
                 outcome = "uncertain" if attempt == "attempting" else "failed"
                 logging.exception("Unexpected reaction posting failure: message_id=%s outcome=%s",
                                   message_id, outcome)
+            delivery = {
+                "posted": "emitted", "uncertain": "uncertain", "failed": "failed",
+                "http_error": "failed", "forbidden": "failed", "unavailable": "failed",
+            }.get(outcome, "suppressed")
+            metrics.increment(metrics.REACTION_DELIVERIES, "proactive", delivery)
             self.db.execute(
                 """UPDATE shadow_evaluations SET posting_outcome=?,
                    posted_at=CASE WHEN ?='posted' THEN CURRENT_TIMESTAMP END
@@ -349,6 +377,9 @@ class ReactionShadow:
                      "status=%s decision=%s reason=%s emoji=%s outcome=%s input_tokens=%d output_tokens=%d",
                      trigger, channel_id, len(candidate_ids), message_id, status, decision, reason, emoji,
                      outcome, input_tokens, output_tokens)
+        if decision is None or delivery in ("failed", "uncertain"):
+            return "partial_failure"
+        return "success"
 
     def _is_deleted(self, message_id):
         return self.db.execute(
@@ -400,7 +431,12 @@ class ReactionShadow:
                 "UPDATE shadow_evaluations SET posting_outcome='attempting' WHERE message_id=?",
                 (evaluation_id,),
             )
-            await message.add_reaction(emoji)
+            metrics.increment(metrics.REACTION_ATTEMPTS, "proactive")
+            try:
+                await message.add_reaction(emoji)
+            except asyncio.CancelledError:
+                metrics.increment(metrics.REACTION_DELIVERIES, "proactive", "uncertain")
+                raise
             return "posted"
         except discord.NotFound:
             return "unavailable"
